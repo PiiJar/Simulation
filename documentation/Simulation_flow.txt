@@ -1,0 +1,156 @@
+SIMULATION FLOW DOCUMENTATION
+===============================
+
+This document describes the step-by-step execution flow of the production line simulation.
+Each step builds upon the previous ones, creating a complete simulation pipeline.
+
+IMPORTANT: This document serves as a reference for rollback purposes if development goes wrong.
+Each step has been tested and verified to work correctly as described.
+
+===============================
+INITIALIZATION PHASE
+===============================
+
+STEP 1: CREATE SIMULATION WORKSPACE
+-----------------------------------
+File: test_step1.py / init_output_directory.py
+Status: ✅ TESTED AND WORKING
+
+What it does:
+- Creates timestamped simulation folder (format: YYYY-MM-DD_HH-MM-SS)
+- Copies complete Initialization/ folder to simulation workspace
+- Copies complete Documentation/ folder to simulation workspace  
+- Creates Logs/ folder for CSV logging
+- Initializes simulation_log.csv with headers: Timestamp,Type,Description
+- Records INIT type events in the log
+
+Input files:
+- Initialization/Line_Situation.csv
+- Initialization/Production.csv
+- Initialization/Stations.csv
+- Initialization/Transporters.csv
+- Initialization/Treatment_program_001.csv
+- Initialization/Treatment_program_002.csv
+- Initialization/Treatment_program_003.csv
+- Documentation/Log_types.txt
+- Documentation/Simulation_flow.txt (this file)
+
+Output structure:
+output/YYYY-MM-DD_HH-MM-SS/
+├── Initialization/ (complete copy)
+├── Documentation/ (complete copy)
+└── Logs/
+    └── simulation_log.csv (initialized)
+
+Log entries created:
+- INIT: Simulation started in folder [path]
+- INIT: Initialization files count: [number]
+- INIT: Initialization file: [filename] (for each file)
+
+Rollback point: This step can be run independently to create a clean workspace.
+
+===============================
+TREATMENT PROGRAM SETUP PHASE
+===============================
+
+STEP 2: SETUP TREATMENT PROGRAMS
+--------------------------------
+File: test_step2.py
+Status: ✅ TESTED AND WORKING
+
+What it does:
+- Reads Production.csv from the simulation workspace (output/…/Initialization/Production.csv)
+- For each batch (row) in Production.csv:
+    - Determines the treatment program number (e.g. 001)
+    - Copies the corresponding Treatment_program_XXX.csv from Initialization/
+    - Names the new file as Batch_<batch>_Treatment_program_<program>.csv (both numbers always 3 digits, e.g. Batch_001_Treatment_program_001.csv)
+    - Adds CalcTime column (initialized with MinTime values)
+- All new files are created in Original_programs/ in the simulation workspace
+- Records SETUP type events in simulation_log.csv
+
+Input:
+- output/YYYY-MM-DD_HH-MM-SS/Initialization/Production.csv
+- output/YYYY-MM-DD_HH-MM-SS/Initialization/Treatment_program_XXX.csv
+
+Output:
+- output/YYYY-MM-DD_HH-MM-SS/Original_programs/Batch_XXX_Treatment_program_XXX.csv (CalcTime column included)
+
+Log entries created:
+- SETUP: Original_programs folder created
+- SETUP: Treatment programs created: [count]
+- SETUP: Created treatment program: Batch_XXX_Treatment_program_XXX.csv (for each program)
+
+Rollback point: Step 1 + Step 2 creates a complete workspace with original programs ready.
+
+===============================
+ORIGINAL MATRIX GENERATION PHASE
+===============================
+
+STEP 3: GENERATE ORIGINAL LINE MATRIX
+-------------------------------------
+File: test_step3.py
+Status: ✅ TESTED AND WORKING
+
+What it does:
+- Reads all batch programs from Original_programs/ in the simulation workspace
+- For each batch and each program step:
+    - Calculates the transfer phases for the hoist:
+        - Phase_1: Move to lift position (always 0 in original, hoist is assumed to be at lift station)
+        - Phase_2: Lift at lift station (calculated)
+        - Phase_3: Move from lift station to drop station (calculated)
+        - Phase_4: Drop at drop station (calculated)
+    - Uses correct station coordinates for each phase
+    - Updates previous station after each step to ensure correct distances
+- Writes the resulting line_matrix_original.csv to Logs/ in the simulation workspace
+- Records MATRIX type events in simulation_log.csv
+
+Input:
+- output/YYYY-MM-DD_HH-MM-SS/Original_programs/Batch_XXX_Treatment_program_XXX.csv
+- output/YYYY-MM-DD_HH-MM-SS/Initialization/Stations.csv
+
+Output:
+- output/YYYY-MM-DD_HH-MM-SS/Logs/line_matrix_original.csv (with all transfer phases)
+
+Log entries created:
+- MATRIX: Started generating original line matrix
+- MATRIX: Processing batch [batch], program [program], start time [time]
+- MATRIX: Loaded program [program] for batch [batch], stages: [count]
+- MATRIX: Original line matrix created with [count] stages
+- MATRIX: Matrix saved to [file]
+
+Rollback point: Step 1 + Step 2 + Step 3 creates a workspace with a fully calculated original matrix.
+
+===============================
+VISUALIZATION PHASE
+===============================
+
+STEP 4: VISUALIZE ORIGINAL MATRIX
+---------------------------------
+File: visualize_original_matrix.py
+Status: ✅ TESTED AND WORKING
+
+What it does:
+- Visualizes the production process for each batch on a timeline.
+- All data for visualization (stations, times, transfer phases) is read directly from line_matrix_original.csv.
+- Each row of the matrix is visualized:
+  * Lift phase (lift): at the previous station, duration Phase_2
+  * Horizontal move (move): from the previous station to the current one, duration Phase_3
+  * Sink phase (sink): at the current station, duration Phase_4
+  * Processing time (processing): at the current station, duration CalcTime
+- The starting station of the first transfer is always the Station value of the first row of the batch.
+- Visualization does not perform any calculations, but directly uses the values from the matrix.
+- The result is a timeline chart showing all transfer phases and processing at the correct stations and times.
+
+Input:
+- output/YYYY-MM-DD_HH-MM-SS/Logs/line_matrix_original.csv
+
+Output:
+- output/YYYY-MM-DD_HH-MM-SS/Logs/visualization_timeline.png (or similar, depending on implementation)
+
+Log entries created:
+- VISUALIZATION: Started visualizing original matrix
+- VISUALIZATION: Processed batch [batch], visualized [elements] elements
+- VISUALIZATION: Saved visualization to [file]
+
+Rollback point: Step 1 + Step 2 + Step 3 + Step 4 creates a complete workspace with visualized original matrix.
+
