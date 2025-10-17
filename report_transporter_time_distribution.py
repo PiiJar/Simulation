@@ -45,18 +45,14 @@ def report_transporter_time_distribution(output_dir):
         station_names = df_stations["Name"].values
         unique_names = []
         color_map = {}
-        palette = [
-            'tab:orange', 'tab:green', 'tab:red', 'tab:purple', 'tab:brown',
-            'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan', 'tab:blue', 'tab:green', 'tab:red'
-        ]
+        import matplotlib.pyplot as plt
+        cmap = plt.get_cmap('tab20')
+        palette = [cmap(i) for i in range(20)]
         color_idx = 0
         for name in station_names:
             if name == 'Rinse':
                 color_map[name] = 'royalblue'
             elif name not in color_map:
-                # Vältä sininen muille
-                while palette[color_idx] == 'tab:blue':
-                    color_idx += 1
                 color_map[name] = palette[color_idx % len(palette)]
                 color_idx += 1
         for num, xpos, name in zip(station_numbers, x_positions, station_names):
@@ -129,17 +125,21 @@ def report_transporter_time_distribution(output_dir):
     result = {}
     for transporter_id, group in df.groupby("Transporter"):
         group = group[group["Phase"].isin([0, 1, 2, 3, 4])].copy()
+        # Kokonaisaika: ensimmäisestä nostosta (Phase 2, Start_Time) viimeiseen laskuun (Phase 4, End_Time)
         phase2 = group[group["Phase"] == 2]
         phase4 = group[group["Phase"] == 4]
         if phase2.empty or phase4.empty:
             continue
         t_start = phase2["Start_Time"].min()
         t_end = phase4["End_Time"].max()
+        # Rajaa mukaan vain rivit tältä väliltä
         group = group[(group["Start_Time"] >= t_start) & (group["End_Time"] <= t_end)]
+        total_time = t_end - t_start
         for phase in range(0, 5):
             phase_rows = group[group["Phase"] == phase]
             total = (phase_rows["End_Time"] - phase_rows["Start_Time"]).sum()
             result.setdefault(phase, {})[transporter_id] = total
+        result.setdefault('total_time', {})[transporter_id] = total_time
 
     # Muodosta DataFrame: rivit = vaiheet, sarakkeet = transporterit
     phases = list(range(0, 5))
@@ -263,6 +263,22 @@ def report_transporter_time_distribution(output_dir):
         else:
             html_content += f"<td class='center'><b>{val:.1f}</b></td>"
     html_content += "</tr>\n"
+
+    # Kokonaisaika ja kuormitusprosentti -rivi
+    html_content += "            <tr>\n                <td><b>Total time (s)</b></td>"
+    for tid in transporters:
+        total_time = result['total_time'][tid]
+        html_content += f"<td class='center'>{total_time:.2f}</td>"
+    html_content += "</tr>\n"
+
+    html_content += "            <tr>\n                <td><b>Utilization (%)</b></td>"
+    for tid in transporters:
+        total_time = result['total_time'][tid]
+        active_time = sum(result.get(phase, {}).get(tid, 0.0) for phase in range(1, 5))  # kaikki aktiivivaiheet
+        utilization = 100.0 * active_time / total_time if total_time > 0 else 0.0
+        html_content += f"<td class='center'>{utilization:.1f}</td>"
+    html_content += "</tr>\n"
+
     html_content += f"""
         </tbody>
     </table>

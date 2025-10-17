@@ -93,10 +93,12 @@ def test_step_5(output_dir):
     # Alusta logger
     from simulation_logger import init_logger
     init_logger(output_dir)
+    import traceback
     try:
         generate_transporter_tasks(output_dir)
         end = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
         print(f"[{end}] VAIHE 5 - NOSTIMIEN TEHTÄVIEN KÄSITTELY - VALMIS")
     except Exception as e:
         print(f"❌ VIRHE vaiheessa 5: {e}")
+        traceback.print_exc()
         raise

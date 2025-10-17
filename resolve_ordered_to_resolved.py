@@ -22,6 +22,28 @@ def stretch_resolved_tasks(resolved_df):
             df.loc[mask, 'Sink_time'] += shift
     return df
 
+def resolve_ordered_to_resolved(output_dir):
+    logs_dir = os.path.join(output_dir, "Logs")
+    ordered_file = os.path.join(logs_dir, "transporter_tasks_ordered.csv")
+    resolved_file = os.path.join(logs_dir, "transporter_tasks_resolved.csv")
+    df = pd.read_csv(ordered_file)
+    if 'Parallel_group' not in df.columns:
+        df['Parallel_group'] = 0
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(df)-1):
+            curr = df.iloc[i]
+            next_ = df.iloc[i+1]
+            if (curr['Transporter_id'] == next_['Transporter_id'] and
+                curr['Sink_stat'] == next_['Lift_stat'] and
+                curr['Parallel_group'] == 0 and next_['Parallel_group'] == 0):
+                # Vaihda järjestys
+                df.iloc[i], df.iloc[i+1] = next_, curr
+                changed = True
+    df.to_csv(resolved_file, index=False)
+    return resolved_file
+
 def main(input_file, output_file):
     df = pd.read_csv(input_file)
     # Kaikki vaihe-sarakkeet (Phase_1...Phase_4) kopioidaan sellaisenaan

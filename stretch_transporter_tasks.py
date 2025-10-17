@@ -6,6 +6,7 @@ import math
 from simulation_logger import get_logger
 import numpy as np
 import datetime
+from transporter_physics import calculate_physics_transfer_time, calculate_lift_time, calculate_sink_time
 
 def get_program_step_info(batch, program, stage, lift_stat, program_cache, logger, production_cache=None):
     """
@@ -104,33 +105,7 @@ def calculate_physics_move_time(x1, x2, max_speed, acc_time, dec_time):
         return 0.0
     acceleration = max_speed / acc_time
     deceleration = max_speed / dec_time
-    d_accel = 0.5 * acceleration * acc_time**2
-    d_decel = 0.5 * deceleration * dec_time**2
-    if d_accel + d_decel >= distance:
-        # Kolmioprofiili: max nopeutta ei saavuteta
-        combined_factor = 0.5 * acceleration * (1 + (acc_time/dec_time))
-        t_accel_actual = np.sqrt(distance / combined_factor)
-        t_decel_actual = (acc_time / dec_time) * t_accel_actual
-        t_constant = 0
-        profile = "kolmio"
-    else:
-        # Trapezoidiprofiili: max nopeus saavutetaan
-        t_accel_actual = acc_time
-        t_decel_actual = dec_time
-        d_accel_actual = d_accel
-        d_decel_actual = d_decel
-        d_constant = distance - d_accel_actual - d_decel_actual
-        t_constant = d_constant / max_speed
-        profile = "trapezi"
-    total_time = t_accel_actual + t_constant + t_decel_actual
-    # Lisätään vaihe- ja asematiedot, jos ne on annettu kwargs-parametrina
-    phase_info = ""
-    if hasattr(calculate_physics_move_time, "_debug_context") and calculate_physics_move_time._debug_context:
-        phase_info = f" vaihe={calculate_physics_move_time._debug_context.get('phase','?')} asema_from={calculate_physics_move_time._debug_context.get('from','?')} asema_to={calculate_physics_move_time._debug_context.get('to','?')}"
-    # Ei debug-tulostuksia
-    # Tyhjennä konteksti käytön jälkeen
-    calculate_physics_move_time._debug_context = None
-    return total_time
+        # POISTETTU: käytä vain transporter_physics.py:n funktioita
 
 def stretch_tasks(output_dir="output", input_file=None):
     logger = get_logger()
@@ -215,18 +190,22 @@ def stretch_tasks(output_dir="output", input_file=None):
                 df_stretched.at[i, col] = int(round(df_stretched.at[i, col]))
                 df_stretched.at[i+1, col] = int(round(df_stretched.at[i+1, col]))
         # Phase_1 lasketaan aina fysiikan mukaan, mutta venytysvaiheessa required_gap = 0 (transporter oletetaan valmiiksi nostoasemalla)
-        x1 = station_x.get(int(df_stretched.at[i, "Sink_stat"]))
-        x2 = station_x.get(int(df_stretched.at[i+1, "Lift_stat"]))
-        if x1 is None or x2 is None:
-            phase_1 = 0
+        # Käytä vain transporter_physics.py:n funktioita
+        # Hae asema- ja nostintiedot DataFrameistä
+        sink_stat = int(df_stretched.at[i, "Sink_stat"])
+        lift_stat = int(df_stretched.at[i+1, "Lift_stat"])
+        sink_row = stations_df[stations_df['Number'] == sink_stat]
+        lift_row = stations_df[stations_df['Number'] == lift_stat]
+        transporter_id = int(df_stretched.at[i, "Transporter_id"])
+        transporter_row = transp_df[transp_df['Transporter_id'] == transporter_id]
+        if sink_row.empty or lift_row.empty or transporter_row.empty:
+            print(f"[ERROR] Puuttuva asema- tai nostintieto: sink_stat={sink_stat}, lift_stat={lift_stat}, transporter_id={transporter_id}")
+            phase_1 = None
         else:
-            calculate_physics_move_time._debug_context = {
-                'phase': int(df_stretched.at[i+1, 'Stage']) if 'Stage' in df_stretched.columns else '?',
-                'from': int(df_stretched.at[i, 'Sink_stat']) if 'Sink_stat' in df_stretched.columns else '?',
-                'to': int(df_stretched.at[i+1, 'Lift_stat']) if 'Lift_stat' in df_stretched.columns else '?'
-            }
-            phase_1 = calculate_physics_move_time(x1, x2, max_speed, acc_time, dec_time)
+            phase_1 = int(round(calculate_physics_transfer_time(sink_row.iloc[0], lift_row.iloc[0], transporter_row.iloc[0])))
         df_stretched.at[i+1, 'Phase_1'] = phase_1
+        if phase_1 is None:
+            raise RuntimeError(f"[ERROR] Liikeaikaa ei voitu laskea riville {i+1}: sink_stat={sink_stat}, lift_stat={lift_stat}, transporter_id={transporter_id}")
         
         # TÄRKEÄ: Venytys tehdään VAIN jos kyse on SAMAN NOSTIMEN tehtävistä
         # Eri nostimien tehtävät eivät vaikuta toisiinsa

@@ -56,6 +56,7 @@ def extract_transporter_tasks(output_dir):
     stations_file = os.path.join(output_dir, "Initialization", "Stations.csv")
     transporters_file = os.path.join(output_dir, "Initialization", "Transporters.csv")
     production_file = os.path.join(output_dir, "Initialization", "Production.csv")
+    start_positions_file = os.path.join(output_dir, "Initialization", "Transporters_start_positions.csv")
     
     if not os.path.exists(stations_file):
         raise FileNotFoundError(f"Stations.csv ei löydy: {stations_file}")
@@ -63,10 +64,15 @@ def extract_transporter_tasks(output_dir):
         raise FileNotFoundError(f"Transporters.csv ei löydy: {transporters_file}")
     if not os.path.exists(production_file):
         raise FileNotFoundError(f"Production.csv ei löydy: {production_file}")
-    
+    if not os.path.exists(start_positions_file):
+        raise FileNotFoundError(f"Transporters_start_positions.csv ei löydy: {start_positions_file}")
+
     stations_df = pd.read_csv(stations_file)
     transporters_df = pd.read_csv(transporters_file)
     production_df = pd.read_csv(production_file)
+    start_positions_df = pd.read_csv(start_positions_file)
+    # Strip whitespace from column names to avoid KeyError due to leading spaces
+    start_positions_df.columns = start_positions_df.columns.str.strip()
     
     # Luo batch-treatment_program -> start_station mapping
     production_df["Batch"] = production_df["Batch"].astype(int)
@@ -75,6 +81,12 @@ def extract_transporter_tasks(output_dir):
         (row["Batch"], row["Treatment_program"]): int(row["Start_station"])
         for _, row in production_df.iterrows()
     }
+
+    # Lue nostimien alkupaikat tiedostosta
+    transporter_start_positions = {}
+    for _, row in start_positions_df.iterrows():
+        # Use correct column names from CSV: 'Transporter' and 'Start_station'
+        transporter_start_positions[int(row['Transporter'])] = int(row['Start_station'])
     
     try:
         # Lue venytetty matriisi
@@ -164,14 +176,7 @@ def extract_transporter_tasks(output_dir):
             # Seuraa jokaisen nostimen viimeistä Phase_4_stop aikaa
             transporter_last_stop = {}
             
-            # Laske nostimien alkupaikat - PAKOTETUT ARVOT
-            transporter_start_positions = {}
-            
-            # PAKOTETUT ALOITUSPAIKAT:
-            transporter_start_positions[1] = 101  # Nostin 1 -> asema 101
-            transporter_start_positions[2] = 113  # Nostin 2 -> asema 113  
-            transporter_start_positions[3] = 126  # Nostin 3 -> asema 126
-            transporter_start_positions[4] = 137  # Nostin 4 -> asema 137
+            # Nostimien alkupaikat luetaan nyt tiedostosta (ks. yllä)
             
             # Lisää Phase-sarakkeet (kokonaislukuina)
             tasks_df["Phase_0_start"] = 0
@@ -310,15 +315,16 @@ def create_detailed_movements(output_dir):
     stations_df = pd.read_csv(stations_file)
     production_df = pd.read_csv(production_file)
     
-    # Laske nostimien alkupaikat - PAKOTETUT ARVOT
+    # Laske nostimien alkupaikat tiedostosta (dynaaminen, ei kovakoodauksia)
+    start_positions_file = os.path.join(output_dir, "Initialization", "Transporters_start_positions.csv")
+    start_positions_df = pd.read_csv(start_positions_file)
+    start_positions_df.columns = start_positions_df.columns.str.strip()
     transporter_start_positions = {}
+    for _, row in start_positions_df.iterrows():
+        transporter_start_positions[int(row['Transporter'])] = int(row['Start_station'])
     
-    # PAKOTETUT ALOITUSPAIKAT:
-    transporter_start_positions[1] = 101  # Nostin 1 -> asema 101
-    transporter_start_positions[2] = 113  # Nostin 2 -> asema 113  
-    transporter_start_positions[3] = 126  # Nostin 3 -> asema 126
-    transporter_start_positions[4] = 130  # Nostin 4 -> asema 130
-    transporter_start_positions[5] = 140  # Nostin 5 -> asema 140
+    # PAKOTETUT ALOITUSPAIKAT: (POISTETTU, käytä vain CSV-tiedostoa)
+    # Ei yhtään kovakoodattua nostimen alkupaikkaa – kaikki luetaan CSV:stä
     
     movements = []
     
@@ -415,18 +421,50 @@ def create_detailed_movements(output_dir):
             # Jos nostin ei ole jo alkupaikassa
             if current_location != start_position:
                 # Laske siirtoaika takaisin alkupaikkaan
-                current_station_info = stations_df[stations_df['Number'] == current_location].iloc[0]
-                start_station_info = stations_df[stations_df['Number'] == start_position].iloc[0]
-                transporter_info = transporters_df[transporters_df['Transporter_id'] == transporter_id].iloc[0]
-                
+                filtered_current = stations_df[stations_df['Number'] == current_location]
+                filtered_start = stations_df[stations_df['Number'] == start_position]
+                if filtered_current.empty:
+                    msg = (
+                        f"VIRHE: Nykyistä asemaa {current_location} ei löydy Stations.csv:stä!\n"
+                        f"Haettu arvo: {current_location}\n"
+                        f"Mahdolliset asemat: {stations_df['Number'].unique()}\n"
+                        f"DataFrame: {filtered_current.to_string(index=False)}\n"
+                        f"Tarkista tiedosto: Stations.csv ja käsittelyohjelmat."
+                    )
+                    print(msg)
+                    raise RuntimeError(msg)
+                if filtered_start.empty:
+                    msg = (
+                        f"VIRHE: Alkupaikkaa {start_position} ei löydy Stations.csv:stä!\n"
+                        f"Haettu arvo: {start_position}\n"
+                        f"Mahdolliset asemat: {stations_df['Number'].unique()}\n"
+                        f"DataFrame: {filtered_start.to_string(index=False)}\n"
+                        f"Tarkista tiedosto: Stations.csv ja käsittelyohjelmat."
+                    )
+                    print(msg)
+                    raise RuntimeError(msg)
+                try:
+                    current_station_info = filtered_current.iloc[0]
+                    start_station_info = filtered_start.iloc[0]
+                    transporter_info = transporters_df[transporters_df['Transporter_id'] == transporter_id].iloc[0]
+                except IndexError:
+                    msg = (
+                        f"VIRHE: Aseman ({current_location}) tai alkupaikan ({start_position}) tietoja ei löydy Stations.csv:stä!\n"
+                        f"Haetut arvot: current_location={current_location}, start_position={start_position}\n"
+                        f"Mahdolliset asemat: {stations_df['Number'].unique()}\n"
+                        f"Tarkista tiedosto: Stations.csv ja käsittelyohjelmat."
+                    )
+                    print(msg)
+                    raise RuntimeError(msg)
+
                 try:
                     transfer_duration = int(round(calculate_physics_transfer_time(current_station_info, start_station_info, transporter_info)))
                 except:
                     transfer_duration = 10  # Oletusaika jos fysiikkalaskenta epäonnistuu
-                
+
                 return_start_time = transporter_final_times[transporter_id]
                 return_end_time = return_start_time + transfer_duration
-                
+
                 # Lisää Phase 1: Siirto alkupaikkaan
                 movements.append({
                     'Transporter': transporter_id,

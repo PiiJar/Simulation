@@ -46,9 +46,24 @@ def check_station_conflict(all_tasks, parallel_stations, entry_time, exit_time, 
     """
     for test_station in parallel_stations:
         # Laske fysiikkapohjaiset siirtoajat tälle asemalle
-        transporter = transporters_df.iloc[0]
-        from_station_row = stations_df[stations_df['Number'] == current_station].iloc[0]
-        to_station_row = stations_df[stations_df['Number'] == test_station].iloc[0]
+        try:
+            transporter = transporters_df.iloc[0]
+        except IndexError:
+            raise RuntimeError(f"VIRHE: Nostinta ei löydy Transporters.csv:stä! DataFrame: {transporters_df}")
+        filtered_from = stations_df[stations_df['Number'] == current_station]
+        if filtered_from.empty:
+            raise RuntimeError(f"VIRHE: Asemaa {current_station} ei löydy Stations.csv:stä! Tarkista syötetiedostot ja käsittelyohjelmat. Mahdolliset asemat: {stations_df['Number'].unique()}")
+        try:
+            from_station_row = filtered_from.iloc[0]
+        except IndexError:
+            raise RuntimeError(f"VIRHE: Asemaa {current_station} ei löydy Stations.csv:stä! DataFrame: {filtered_from}")
+        filtered_to = stations_df[stations_df['Number'] == test_station]
+        if filtered_to.empty:
+            raise RuntimeError(f"VIRHE: Asemaa {test_station} ei löydy Stations.csv:stä! Tarkista syötetiedostot ja käsittelyohjelmat. Mahdolliset asemat: {stations_df['Number'].unique()}")
+        try:
+            to_station_row = filtered_to.iloc[0]
+        except IndexError:
+            raise RuntimeError(f"VIRHE: Asemaa {test_station} ei löydy Stations.csv:stä! DataFrame: {filtered_to}")
         
         lift_time = calculate_lift_time(from_station_row, transporter)
         transfer_time = calculate_physics_transfer_time(from_station_row, to_station_row, transporter)
@@ -63,7 +78,13 @@ def check_station_conflict(all_tasks, parallel_stations, entry_time, exit_time, 
         for existing_task in all_tasks:
             if existing_task['Station'] == test_station:
                 # Realistinen vaihtoajan laskenta
-                prev_station_row = stations_df[stations_df['Number'] == existing_task['Station']].iloc[0]
+                filtered_prev = stations_df[stations_df['Number'] == existing_task['Station']]
+                if filtered_prev.empty:
+                    raise RuntimeError(f"VIRHE: Asemaa {existing_task['Station']} (existing_task) ei löydy Stations.csv:stä! Tarkista syötetiedostot ja käsittelyohjelmat. Mahdolliset asemat: {stations_df['Number'].unique()}")
+                try:
+                    prev_station_row = filtered_prev.iloc[0]
+                except IndexError:
+                    raise RuntimeError(f"VIRHE: Asemaa {existing_task['Station']} (existing_task) ei löydy Stations.csv:stä! DataFrame: {filtered_prev}")
                 prev_lift = calculate_lift_time(prev_station_row, transporter)
                 prev_transfer = calculate_physics_transfer_time(prev_station_row, from_station_row, transporter)
                 prev_sink = calculate_sink_time(from_station_row, transporter)
@@ -146,11 +167,27 @@ def generate_matrix_original(output_dir, step_logging=True):
                 parallel_stations = list(range(min_stat, max_stat + 1))
 
                 # Laske fysiikkapohjaiset siirtoajat (yleinen laskenta)
-                transporter = transporters_df.iloc[0]
-                from_station_row = stations_df[stations_df['Number'] == current_station].iloc[0]
+
+                try:
+                    transporter = transporters_df.iloc[0]
+                except IndexError:
+                    raise RuntimeError(f"VIRHE: Nostinta ei löydy Transporters.csv:stä! DataFrame: {transporters_df}")
+                filtered_from = stations_df[stations_df['Number'] == current_station]
+                if filtered_from.empty:
+                    raise RuntimeError(f"VIRHE: Asemaa {current_station} ei löydy Stations.csv:stä! Tarkista syötetiedostot ja käsittelyohjelmat. Mahdolliset asemat: {stations_df['Number'].unique()}")
+                try:
+                    from_station_row = filtered_from.iloc[0]
+                except IndexError:
+                    raise RuntimeError(f"VIRHE: Asemaa {current_station} ei löydy Stations.csv:stä! DataFrame: {filtered_from}")
 
                 # Käytä ensimmäistä asemaa transport_time laskentaan (arvio)
-                to_station_row = stations_df[stations_df['Number'] == min_stat].iloc[0]
+                filtered_to = stations_df[stations_df['Number'] == min_stat]
+                if filtered_to.empty:
+                    raise RuntimeError(f"VIRHE: Asemaa {min_stat} (min_stat) ei löydy Stations.csv:stä! Tarkista syötetiedostot ja käsittelyohjelmat. Mahdolliset asemat: {stations_df['Number'].unique()}")
+                try:
+                    to_station_row = filtered_to.iloc[0]
+                except IndexError:
+                    raise RuntimeError(f"VIRHE: Asemaa {min_stat} (min_stat) ei löydy Stations.csv:stä! DataFrame: {filtered_to}")
                 lift_time = calculate_lift_time(from_station_row, transporter)
                 transfer_time = calculate_physics_transfer_time(from_station_row, to_station_row, transporter)
                 sink_time = calculate_sink_time(to_station_row, transporter)
@@ -191,11 +228,33 @@ def generate_matrix_original(output_dir, step_logging=True):
                         for existing_task in all_tasks:
                             if existing_task['Station'] == test_station:
                                 # Sama vaihtoaika-logiikka kuin check_station_conflict funktiossa
-                                transporter = transporters_df.iloc[0]
-                                from_station_row = stations_df[stations_df['Number'] == current_station].iloc[0]
-                                to_station_row = stations_df[stations_df['Number'] == test_station].iloc[0]
 
-                                prev_station_row = stations_df[stations_df['Number'] == existing_task['Station']].iloc[0]
+                                try:
+                                    transporter = transporters_df.iloc[0]
+                                except IndexError:
+                                    raise RuntimeError(f"VIRHE: Nostinta ei löydy Transporters.csv:stä! DataFrame: {transporters_df}")
+                                filtered_from = stations_df[stations_df['Number'] == current_station]
+                                if filtered_from.empty:
+                                    raise RuntimeError(f"VIRHE: Asemaa {current_station} ei löydy Stations.csv:stä! Tarkista syötetiedostot ja käsittelyohjelmat. Mahdolliset asemat: {stations_df['Number'].unique()}")
+                                try:
+                                    from_station_row = filtered_from.iloc[0]
+                                except IndexError:
+                                    raise RuntimeError(f"VIRHE: Asemaa {current_station} ei löydy Stations.csv:stä! DataFrame: {filtered_from}")
+                                filtered_to = stations_df[stations_df['Number'] == test_station]
+                                if filtered_to.empty:
+                                    raise RuntimeError(f"VIRHE: Asemaa {test_station} ei löydy Stations.csv:stä! Tarkista syötetiedostot ja käsittelyohjelmat. Mahdolliset asemat: {stations_df['Number'].unique()}")
+                                try:
+                                    to_station_row = filtered_to.iloc[0]
+                                except IndexError:
+                                    raise RuntimeError(f"VIRHE: Asemaa {test_station} ei löydy Stations.csv:stä! DataFrame: {filtered_to}")
+
+                                filtered_prev = stations_df[stations_df['Number'] == existing_task['Station']]
+                                if filtered_prev.empty:
+                                    raise RuntimeError(f"VIRHE: Asemaa {existing_task['Station']} (existing_task) ei löydy Stations.csv:stä! Tarkista syötetiedostot ja käsittelyohjelmat. Mahdolliset asemat: {stations_df['Number'].unique()}")
+                                try:
+                                    prev_station_row = filtered_prev.iloc[0]
+                                except IndexError:
+                                    raise RuntimeError(f"VIRHE: Asemaa {existing_task['Station']} (existing_task) ei löydy Stations.csv:stä! DataFrame: {filtered_prev}")
                                 prev_lift = calculate_lift_time(prev_station_row, transporter)
                                 prev_transfer = calculate_physics_transfer_time(prev_station_row, from_station_row, transporter)
                                 prev_sink = calculate_sink_time(from_station_row, transporter)

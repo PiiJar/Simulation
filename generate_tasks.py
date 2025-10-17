@@ -18,9 +18,28 @@ def select_capable_transporter(lift_station, sink_station, stations_df, transpor
     Returns:
         pd.Series: Valittu nostin tai None jos mikään ei pysty
     """
+    # Alustetaan koordinaatit varmasti olemassa oleviksi
+    lift_x = float('nan')
+    sink_x = float('nan')
     # Hae asemien x-koordinaatit
-    lift_x = stations_df[stations_df['Number'] == lift_station]['X Position'].iloc[0]
-    sink_x = stations_df[stations_df['Number'] == sink_station]['X Position'].iloc[0]
+    filtered_lift = stations_df[stations_df['Number'] == lift_station]
+    if filtered_lift.empty:
+        raise RuntimeError(f"VIRHE: Nostoasemaa {lift_station} ei löydy Stations.csv:stä! Tarkista line_matrix_original.csv, käsittelyohjelmat ja asema-aineisto.")
+    try:
+        lift_x = filtered_lift['X Position'].iloc[0]
+    except IndexError:
+        msg = f"VIRHE: Nostoasema {lift_station} ei löydy Stations.csv:stä! Haettu arvo: {lift_station}, mahdolliset asemat: {stations_df['Number'].unique()}"
+        print(msg)
+        raise RuntimeError(msg)
+    filtered_sink = stations_df[stations_df['Number'] == sink_station]
+    if filtered_sink.empty:
+        raise RuntimeError(f"VIRHE: Laskuasemaa {sink_station} ei löydy Stations.csv:stä! Tarkista line_matrix_original.csv, käsittelyohjelmat ja asema-aineisto.")
+    try:
+        sink_x = filtered_sink['X Position'].iloc[0]
+    except IndexError:
+        msg = f"VIRHE: Laskuasema {sink_station} ei löydy Stations.csv:stä! Haettu arvo: {sink_station}, mahdolliset asemat: {stations_df['Number'].unique()}"
+        print(msg)
+        raise RuntimeError(msg)
     
     # Käy läpi nostimet järjestyksessä
     for _, transporter in transporters_df.iterrows():
@@ -31,7 +50,9 @@ def select_capable_transporter(lift_station, sink_station, stations_df, transpor
             return transporter
 
     # Jos mikään nostin ei pysty, keskeytä simulaatio yhdellä selkeällä virheilmoituksella
-    raise RuntimeError(f"[ERROR] Nostintehtävälle ei löytynyt sopivaa nostinta! Nostoasema: {lift_station}, laskuasema: {sink_station}, nostoasema X: {lift_x}, laskuasema X: {sink_x}")
+    msg = f"[ERROR] Nostintehtävälle ei löytynyt sopivaa nostinta! Nostoasema: {lift_station}, laskuasema: {sink_station}"
+    print(msg)
+    raise RuntimeError(msg)
 
 def generate_tasks(output_dir):
     """Luo kuljetintehtävät line_matrix_original.csv:n perusteella"""
@@ -77,7 +98,13 @@ def generate_tasks(output_dir):
             # Etsi stage 1 rivi tälle batchille ja ohjelmalle
             stage1_row = df[(df["Batch"] == batch) & (df["Treatment_program"] == program) & (df["Stage"] == 1)]
             if not stage1_row.empty:
-                stage1_row = stage1_row.iloc[0]
+                if len(stage1_row) == 0:
+                    raise RuntimeError(f"VIRHE: Stage 1 -riviä ei löydy batchille {batch}, ohjelmalle {program} line_matrix_original.csv:stä!")
+                try:
+                    stage1_row = stage1_row.iloc[0]
+                except IndexError:
+                    print(f"VIRHE: Stage 1 -riviä ei löydy batchille {batch}, ohjelmalle {program} line_matrix_original.csv:stä! DataFrame: {stage1_row}")
+                    raise RuntimeError(f"VIRHE: Stage 1 -riviä ei löydy batchille {batch}, ohjelmalle {program} line_matrix_original.csv:stä! DataFrame: {stage1_row}")
                 start_station = batch_start_station[key]
                 stage1_station = int(stage1_row["Station"])
                 # Valitse oikea nostin tälle tehtävälle
@@ -92,11 +119,37 @@ def generate_tasks(output_dir):
                 if "Start_time" in production_df.columns:
                     # Oletetaan muoto HH:MM:SS
                     try:
-                        start_time = pd.to_timedelta(production_df[(production_df["Batch"] == batch) & (production_df["Treatment_program"] == program)]["Start_time"].iloc[0]).total_seconds()
+                        start_time_series = production_df[(production_df["Batch"] == batch) & (production_df["Treatment_program"] == program)]["Start_time"]
+                        if len(start_time_series) == 0:
+                            raise RuntimeError(f"VIRHE: Production.csv:stä ei löydy Start_time-arvoa batchille {batch}, ohjelmalle {program}!\n"
+                                               f"Haettu: Batch={batch}, Treatment_program={program}\n"
+                                               f"Mahdolliset batchit: {production_df['Batch'].unique()}\n"
+                                               f"Mahdolliset ohjelmat: {production_df['Treatment_program'].unique()}\n"
+                                               f"DataFrame: {start_time_series.to_string(index=False)}\n"
+                                               f"Tarkista tiedosto: Production.csv ja käsittelyohjelmat.")
+                        start_time = pd.to_timedelta(start_time_series.iloc[0]).total_seconds()
+                    except IndexError:
+                        msg = (
+                            f"VIRHE: Production.csv:stä ei löydy Start_time-arvoa batchille {batch}, ohjelmalle {program}!\n"
+                            f"Haettu: Batch={batch}, Treatment_program={program}\n"
+                            f"Mahdolliset batchit: {production_df['Batch'].unique()}\n"
+                            f"Mahdolliset ohjelmat: {production_df['Treatment_program'].unique()}\n"
+                            f"DataFrame: {start_time_series.to_string(index=False)}\n"
+                            f"Tarkista tiedosto: Production.csv ja käsittelyohjelmat."
+                        )
+                        print(msg)
+                        raise RuntimeError(msg)
                     except Exception:
                         start_time = None
                 if start_time is None and "Start_time_seconds" in production_df.columns:
-                    start_time = float(production_df[(production_df["Batch"] == batch) & (production_df["Treatment_program"] == program)]["Start_time_seconds"].iloc[0])
+                    prod_row = production_df[(production_df["Batch"] == batch) & (production_df["Treatment_program"] == program)]
+                    if len(prod_row) == 0:
+                        raise RuntimeError(f"VIRHE: Production.csv:stä ei löydy riviä batchille {batch}, ohjelmalle {program}!")
+                    try:
+                        start_time = float(prod_row["Start_time_seconds"].iloc[0])
+                    except IndexError:
+                        print(f"VIRHE: Production.csv:stä ei löydy riviä batchille {batch}, ohjelmalle {program}! DataFrame: {prod_row}")
+                        raise RuntimeError(f"VIRHE: Production.csv:stä ei löydy riviä batchille {batch}, ohjelmalle {program}! DataFrame: {prod_row}")
                 # Jos ei löydy, käytä stage 1 EntryTime
                 if start_time is None:
                     start_time = float(stage1_row["EntryTime"])
@@ -120,7 +173,13 @@ def generate_tasks(output_dir):
                                (df["Stage"] == 1)]
                 
                 if not stage1_row.empty:
-                    stage1_row = stage1_row.iloc[0]
+                    if len(stage1_row) == 0:
+                        raise RuntimeError(f"VIRHE: Stage 1 -riviä ei löydy batchille {row['Batch']}, ohjelmalle {row['Treatment_program']} line_matrix_original.csv:stä!")
+                    try:
+                        stage1_row = stage1_row.iloc[0]
+                    except IndexError:
+                        print(f"VIRHE: Stage 1 -riviä ei löydy batchille {row['Batch']}, ohjelmalle {row['Treatment_program']} line_matrix_original.csv:stä! DataFrame: {stage1_row}")
+                        raise RuntimeError(f"VIRHE: Stage 1 -riviä ei löydy batchille {row['Batch']}, ohjelmalle {row['Treatment_program']} line_matrix_original.csv:stä! DataFrame: {stage1_row}")
                     key = (int(row["Batch"]), int(row["Treatment_program"]))
                     
                     if key in batch_start_station:
@@ -189,13 +248,33 @@ def generate_tasks(output_dir):
             key = (row["Batch"], row["Treatment_program"])
             # Etsi askel 1 asema samalle batchille ja ohjelmalle
             step1_row = df[(df["Batch"] == row["Batch"]) & (df["Treatment_program"] == row["Treatment_program"]) & (df["Stage"] == 1)]
-            if (
-                key in batch_start_station
-                and int(row["Lift_stat"]) == batch_start_station[key]
-                and not step1_row.empty
-                and int(row["Sink_stat"]) == int(step1_row.iloc[0]["Station"])
-            ):
-                return True
+            if key in batch_start_station and int(row["Lift_stat"]) == batch_start_station[key] and not step1_row.empty:
+                if len(step1_row) == 0:
+                    batch_val = row['Batch']
+                    program_val = row['Treatment_program']
+                    station_val = row['Sink_stat']
+                    batch_type = type(batch_val)
+                    program_type = type(program_val)
+                    station_type = type(station_val)
+                    # Etsi kaikki rivit, joissa yksittäinen kenttä täsmää mutta muut eivät
+                    batch_only = df[(df['Batch'] == batch_val) & ~((df['Treatment_program'] == program_val) & (df['Station'] == station_val))]
+                    program_only = df[(df['Treatment_program'] == program_val) & ~((df['Batch'] == batch_val) & (df['Station'] == station_val))]
+                    station_only = df[(df['Station'] == station_val) & ~((df['Batch'] == batch_val) & (df['Treatment_program'] == program_val))]
+                    msg = (
+                        f"VIRHE: line_matrix_original.csv:stä puuttuu rivi, jossa Batch={batch_val} ({batch_type}), Treatment_program={program_val} ({program_type}), Station={station_val} ({station_type}).\n"
+                        f"Simulaatio yritti hakea seuraavaa vaihetta, mutta yhtään täsmäävää riviä ei löytynyt.\n"
+                        f"(Haettu: df[(df['Batch'] == {batch_val}) & (df['Treatment_program'] == {program_val}) & (df['Station'] == {station_val})], löytyi: {len(step1_row)})\n"
+                        f"\nAlla kaikki rivit, joissa VAIN Batch täsmää mutta muut eivät:\n{batch_only.to_string(index=False)}\n"
+                        f"\nAlla kaikki rivit, joissa VAIN Treatment_program täsmää mutta muut eivät:\n{program_only.to_string(index=False)}\n"
+                        f"\nAlla kaikki rivit, joissa VAIN Station täsmää mutta muut eivät:\n{station_only.to_string(index=False)}\n"
+                    )
+                    raise RuntimeError(msg)
+                try:
+                    if int(row["Sink_stat"]) == int(step1_row.iloc[0]["Station"]):
+                        return True
+                except IndexError:
+                    print(f"VIRHE: Stage 1 -riviä ei löydy batchille {row['Batch']}, ohjelmalle {row['Treatment_program']} line_matrix_original.csv:stä! DataFrame: {step1_row}")
+                    raise RuntimeError(f"VIRHE: Stage 1 -riviä ei löydy batchille {row['Batch']}, ohjelmalle {row['Treatment_program']} line_matrix_original.csv:stä! DataFrame: {step1_row}")
             return False
         tasks_df = tasks_df[tasks_df.apply(is_valid_stage0, axis=1)].reset_index(drop=True)
         # Pakota kaikki ohjelma-, vaihe-, asema- ja aikakentät kokonaisluvuiksi sekuntitarkkuudella

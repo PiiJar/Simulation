@@ -82,7 +82,9 @@ def test_main():
         from report_transporter_time_distribution import report_transporter_time_distribution
         report_transporter_time_distribution(output_dir)
     except Exception as e:
+        import traceback
         print(f"❌ VIRHE simulaatiossa: {e}")
+        traceback.print_exc()
         return
 
 if __name__ == "__main__":
