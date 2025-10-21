@@ -281,6 +281,16 @@ def stretch_tasks(output_dir="output", input_file=None):
                 batch_str = f"{int(batch):03d}"
                 program_str = f"{int(program):03d}"
                 prog_filename = f"Batch_{batch_str}_Treatment_program_{program_str}.csv"
+                # Tulosta vain kiinnostavat siirrot
+                tulosta_debug = False
+                # Erä 2: 301->303 ja 303->307
+                if int(batch) == 2 and ((int(lift_stat) == 301 and 'Sink_stat' in df_stretched.columns and int(df_stretched.at[i+1, 'Sink_stat']) == 303) or (int(lift_stat) == 303 and int(df_stretched.at[i+1, 'Sink_stat']) == 307)):
+                    tulosta_debug = True
+                # Erä 1: 308->309
+                if int(batch) == 1 and int(lift_stat) == 308 and 'Sink_stat' in df_stretched.columns and int(df_stretched.at[i+1, 'Sink_stat']) == 309:
+                    tulosta_debug = True
+                if tulosta_debug:
+                    print(f"[VENYTYS DEBUG] Yritetään päivittää käsittelyohjelmaa: Batch={batch}, Program={program}, Stage={stage}, Lift_stat={lift_stat}, File={prog_filename}")
                 if int(stage) == 0:
                     # Stage 0: Päivitä Production.csv cache
                     if production_cache is not None:
@@ -311,6 +321,26 @@ def stretch_tasks(output_dir="output", input_file=None):
                             # TERMINAALITULOSTUS: Ilmoita kun venytys vaikuttaa käsittelyohjelmaan
                             # print(f"[VENYTYS] Päivitetään käsittelyohjelma: {prog_filename} | Stage={stage} | Lift_stat={lift_stat} | CalcTime {old_calctime} -> {new_calctime} (shift={shift_ceil})")
                         else:
+                            print("\n[VENYTYS DEBUG] Käsittelyohjelman päivitys epäonnistui!")
+                            print(f"  Ohjelmatiedosto: {prog_filename}")
+                            print(f"  Stage (haettu): {stage}")
+                            print(f"  Lift_stat (haettu): {lift_stat}")
+                            print(f"  mask_stage.sum(): {mask_stage.sum()}")
+                            if 'mask_stat' in locals():
+                                print(f"  mask_stat.sum(): {mask_stat.sum()}")
+                            print(f"  mask.any(): {mask.any()}")
+                            print(f"  Stage-sarakkeen arvot: {list(prog_df['Stage'].unique())}")
+                            if 'MinStat' in prog_df.columns:
+                                print(f"  MinStat-sarakkeen arvot: {list(prog_df['MinStat'].unique())}")
+                            if 'MaxStat' in prog_df.columns:
+                                print(f"  MaxStat-sarakkeen arvot: {list(prog_df['MaxStat'].unique())}")
+                            print(f"  mask_stage: {list(mask_stage)}")
+                            if 'mask_stat' in locals():
+                                print(f"  mask_stat: {list(mask_stat)}")
+                            print(f"  MinStat: {list(minstat) if 'minstat' in locals() else 'N/A'}")
+                            print(f"  MaxStat: {list(maxstat) if 'maxstat' in locals() else 'N/A'}")
+                            print(f"  DataFrame shape: {prog_df.shape}")
+                            print(f"  DataFrame columns: {list(prog_df.columns)}\n")
                             logger.log_error(f"VENYTYS EI ONNISTU: {prog_filename} Stage={stage} lift_stat={lift_stat} | Ei täsmää yhtään riviä (mask.any() == False)")
                             logger.log_error(f"  Stage-sarakkeen arvot: {prog_df['Stage'].unique()}")
                             if 'MinStat' in prog_df.columns:
