@@ -309,7 +309,7 @@ def stretch_tasks(output_dir="output", input_file=None):
                             # Muokkaa suoraan sekuntiarvoa
                             program_cache[prog_filename].loc[mask, "CalcTime_seconds"] = new_calctime
                             # TERMINAALITULOSTUS: Ilmoita kun venytys vaikuttaa käsittelyohjelmaan
-                            print(f"[VENYTYS] Päivitetään käsittelyohjelma: {prog_filename} | Stage={stage} | Lift_stat={lift_stat} | CalcTime {old_calctime} -> {new_calctime} (shift={shift_ceil})")
+                            # print(f"[VENYTYS] Päivitetään käsittelyohjelma: {prog_filename} | Stage={stage} | Lift_stat={lift_stat} | CalcTime {old_calctime} -> {new_calctime} (shift={shift_ceil})")
                         else:
                             logger.log_error(f"VENYTYS EI ONNISTU: {prog_filename} Stage={stage} lift_stat={lift_stat} | Ei täsmää yhtään riviä (mask.any() == False)")
                             logger.log_error(f"  Stage-sarakkeen arvot: {prog_df['Stage'].unique()}")

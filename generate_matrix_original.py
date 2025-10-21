@@ -282,20 +282,69 @@ def generate_matrix_original(output_dir, step_logging=True):
                     break
 
             if not conflict_found:
-                # Kaikki vaiheet ok, lisää tehtävät
+                # Kaikki vaiheet ok, mutta tarkistetaan myös nostinkapasiteetti
+                # Selvitä kaikki nostimet, joita tämän erän tehtävät käyttävät
+                # Oletetaan että Transporter-id tulee treatment-ohjelmasta tai oletuksena 1
+                # Jos Transporter ei ole taskissa, lisätään se oletuksena 1
+                for t in tasks:
+                    if 'Transporter' not in t:
+                        t['Transporter'] = 1
+
+                nostin_ids = set(t['Transporter'] for t in tasks)
+                viivastys = None
+                for nostin_id in nostin_ids:
+                    era_nostintehtavat = sorted([t for t in tasks if t['Transporter'] == nostin_id], key=lambda x: x['EntryTime'])
+                    if not era_nostintehtavat:
+                        continue
+                    jaksot = []
+                    jakso = []
+                    prev_exit = None
+                    for t in era_nostintehtavat:
+                        if not jakso:
+                            jakso = [t]
+                        else:
+                            if prev_exit is not None and t['EntryTime'] > prev_exit + 1e-6:
+                                jaksot.append(jakso)
+                                jakso = [t]
+                            else:
+                                jakso.append(t)
+                        prev_exit = t['ExitTime']
+                    if jakso:
+                        jaksot.append(jakso)
+                    for jakso in jaksot:
+                        aikaikkuna_alku = jakso[0]['EntryTime']
+                        aikaikkuna_loppu = jakso[-1]['ExitTime']
+                        aikaikkuna = aikaikkuna_loppu - aikaikkuna_alku
+                        kaikki_nostimen_tehtavat = [
+                            t for t in all_tasks + tasks
+                            if t['Transporter'] == nostin_id
+                            and t['EntryTime'] < aikaikkuna_loppu and t['ExitTime'] > aikaikkuna_alku
+                            and 1 <= int(t.get('Stage', 0)) <= 4
+                        ]
+                        tehtava_aika_summa = sum(
+                            min(t['ExitTime'], aikaikkuna_loppu) - max(t['EntryTime'], aikaikkuna_alku)
+                            for t in kaikki_nostimen_tehtavat
+                            if max(t['EntryTime'], aikaikkuna_alku) < min(t['ExitTime'], aikaikkuna_loppu)
+                        )
+                        if tehtava_aika_summa > aikaikkuna:
+                            erotus = tehtava_aika_summa - aikaikkuna
+                            viivastys = max(viivastys or 0, erotus)
+                            break  # Jos yksikin aikaikkuna ylittyy, keskeytä nostimen tarkistus
+                    if viivastys is not None:
+                        break  # Jos yksikin nostin vaatii viivästystä, keskeytä kaikkien nostimien tarkistus
+                if viivastys is not None:
+                    batch_start_time += viivastys
+                    conflict_found = True
+                    continue
+                # Kaikki nostimet ok, lisää tehtävät
                 all_tasks.extend(tasks)
-                # logger.log("BATCH", f"Batch {batch_id} scheduled with {len(tasks)} tasks, final start: {batch_start_time:.1f}s")
-                # Päivitä production_df:lle uusi start-aika (AINA, oli muuttunut tai ei)
                 def seconds_to_hms(seconds):
                     h = int(seconds // 3600)
                     m = int((seconds % 3600) // 60)
                     s = int(seconds % 60)
                     return f"{h:02d}:{m:02d}:{s:02d}"
-                old_hms = production_df.loc[production_df['Batch'] == batch_id, 'Start_time'].values[0] if len(production_df.loc[production_df['Batch'] == batch_id, 'Start_time'].values) > 0 else None
-                old_sec = production_df.loc[production_df['Batch'] == batch_id, 'Start_time_seconds'].values[0] if len(production_df.loc[production_df['Batch'] == batch_id, 'Start_time_seconds'].values) > 0 else None
                 new_hms = seconds_to_hms(batch_start_time)
                 new_sec = int(round(batch_start_time))
-                # logger.log("BATCH", f"Batch {batch_id}: Start_time {old_hms} -> {new_hms}, Start_time_seconds {old_sec} -> {new_sec}")
                 production_df.loc[production_df['Batch'] == batch_id, 'Start_time'] = new_hms
                 production_df.loc[production_df['Batch'] == batch_id, 'Start_time_seconds'] = new_sec
                 break
