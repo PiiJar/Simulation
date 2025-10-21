@@ -15,20 +15,25 @@ import os
 from simulation_logger import SimulationLogger
 from transporter_physics import calculate_physics_transfer_time, calculate_lift_time, calculate_sink_time
 
+
 def time_to_seconds(time_str):
     """Muunna aika sekunneiksi"""
     if isinstance(time_str, (int, float)):
         return float(time_str)
-    
     time_str = str(time_str).strip()
     if 's' in time_str:
         return float(time_str.replace('s', ''))
-    
     parts = time_str.split(':')
     if len(parts) == 3:
         h, m, s = map(float, parts)
         return h * 3600 + m * 60 + s
     return float(time_str)
+
+def seconds_to_hms(seconds):
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 def load_production_data(output_dir):
     """Lataa tuotantodata"""
@@ -152,6 +157,9 @@ def generate_matrix_original(output_dir, step_logging=True):
             current_time = batch_start_time
             current_station = start_station
             conflict_found = False
+            # Päivitä production_df aina, kun batch_start_time muuttuu (venytys)
+            new_hms = None
+            new_sec = None
 
             # Käy käsittelyohjelman vaiheet läpi (älä tee ylimääräistä Stage 0 -riviä)
             for stage_idx in range(len(program_df)):
@@ -283,9 +291,6 @@ def generate_matrix_original(output_dir, step_logging=True):
 
             if not conflict_found:
                 # Kaikki vaiheet ok, mutta tarkistetaan myös nostinkapasiteetti
-                # Selvitä kaikki nostimet, joita tämän erän tehtävät käyttävät
-                # Oletetaan että Transporter-id tulee treatment-ohjelmasta tai oletuksena 1
-                # Jos Transporter ei ole taskissa, lisätään se oletuksena 1
                 for t in tasks:
                     if 'Transporter' not in t:
                         t['Transporter'] = 1
@@ -329,24 +334,52 @@ def generate_matrix_original(output_dir, step_logging=True):
                         if tehtava_aika_summa > aikaikkuna:
                             erotus = tehtava_aika_summa - aikaikkuna
                             viivastys = max(viivastys or 0, erotus)
-                            break  # Jos yksikin aikaikkuna ylittyy, keskeytä nostimen tarkistus
+                            break
                     if viivastys is not None:
-                        break  # Jos yksikin nostin vaatii viivästystä, keskeytä kaikkien nostimien tarkistus
+                        break
                 if viivastys is not None:
                     batch_start_time += viivastys
+                    # Päivitä production_df heti kun batch_start_time muuttuu (venytys)
+                    new_hms = seconds_to_hms(batch_start_time)
+                    new_sec = int(round(batch_start_time))
+                    production_df.loc[production_df['Batch'] == batch_id, 'Start_time'] = new_hms
+                    production_df.loc[production_df['Batch'] == batch_id, 'Start_time_seconds'] = new_sec
+                    # Päivitä käsittelyohjelman CalcTime vastaamaan venytettyjä arvoja
+                    if 'CalcTime' in program_df.columns:
+                        # Päivitä oikea ohjelmavaihe: MinStat <= t['Station'] <= MaxStat ja Stage==t['Stage']
+                        for t in tasks:
+                            for idx in range(len(program_df)):
+                                stage = int(program_df.at[idx, 'Stage']) if 'Stage' in program_df.columns else None
+                                minstat = int(program_df.at[idx, 'MinStat']) if 'MinStat' in program_df.columns else None
+                                maxstat = int(program_df.at[idx, 'MaxStat']) if 'MaxStat' in program_df.columns else None
+                                if minstat is not None and maxstat is not None and stage == t['Stage'] and minstat <= t['Station'] <= maxstat:
+                                    program_df.at[idx, 'CalcTime'] = seconds_to_hms(t['CalcTime'])
+                                    # print(f"[VENYTYS] Batch {batch_id}, Stage {t['Stage']}, Station {t['Station']} (ohjelma idx {idx}, MinStat {minstat}, MaxStat {maxstat}), uusi CalcTime: {seconds_to_hms(t['CalcTime'])}")
+                        # Tallenna päivitetty käsittelyohjelma tiedostoon
+                        program_file = os.path.join(output_dir, "original_programs", f"Batch_{batch_id:03d}_Treatment_program_{treatment_program:03d}.csv")
+                        program_df.to_csv(program_file, index=False)
                     conflict_found = True
                     continue
                 # Kaikki nostimet ok, lisää tehtävät
                 all_tasks.extend(tasks)
-                def seconds_to_hms(seconds):
-                    h = int(seconds // 3600)
-                    m = int((seconds % 3600) // 60)
-                    s = int(seconds % 60)
-                    return f"{h:02d}:{m:02d}:{s:02d}"
+                # Päivitä production_df myös onnistuneen suorituksen jälkeen (varmistus)
                 new_hms = seconds_to_hms(batch_start_time)
                 new_sec = int(round(batch_start_time))
                 production_df.loc[production_df['Batch'] == batch_id, 'Start_time'] = new_hms
                 production_df.loc[production_df['Batch'] == batch_id, 'Start_time_seconds'] = new_sec
+                # Päivitä käsittelyohjelman CalcTime vastaamaan venytettyjä arvoja oikeaan ohjelmavaiheeseen
+                if 'CalcTime' in program_df.columns:
+                    for t in tasks:
+                        for idx in range(len(program_df)):
+                            stage = int(program_df.at[idx, 'Stage']) if 'Stage' in program_df.columns else None
+                            minstat = int(program_df.at[idx, 'MinStat']) if 'MinStat' in program_df.columns else None
+                            maxstat = int(program_df.at[idx, 'MaxStat']) if 'MaxStat' in program_df.columns else None
+                            if minstat is not None and maxstat is not None and stage == t['Stage'] and minstat <= t['Station'] <= maxstat:
+                                program_df.at[idx, 'CalcTime'] = seconds_to_hms(t['CalcTime'])
+                                # Ei tulosteta mitään terminaaliin
+                    # Tallenna päivitetty käsittelyohjelma tiedostoon
+                    program_file = os.path.join(output_dir, "original_programs", f"Batch_{batch_id:03d}_Treatment_program_{treatment_program:03d}.csv")
+                    program_df.to_csv(program_file, index=False)
                 break
 
         if attempt >= max_attempts - 1:
