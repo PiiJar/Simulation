@@ -34,13 +34,37 @@ def analyze_monotonicity(output_root="output"):
                     'Batch': row.get('Batch', ''),
                     'Phase': row.get('Phase', ''),
                     'From_Station': row.get('From_Station', ''),
-                    'To_Station': row.get('To_Station', '')
+                    'To_Station': row.get('To_Station', ''),
+                    'RowIdx': idx
                 })
             prev_end = end
+
+    # Lue nostintehtävät (stretched)
+    tasks_file = os.path.join(logs_dir, "transporter_tasks_stretched.csv")
+    if os.path.exists(tasks_file):
+        tasks_df = pd.read_csv(tasks_file)
+    else:
+        tasks_df = None
+
     if errors:
-        print("LÖYTYI AJASSA TAAKSEPÄIN SIIRTYMIÄ:")
-        for err in errors:
+        print("LÖYTYI AJASSA TAAKSEPÄIN SIIRTYMIÄ (max 5):")
+        for err in errors[:5]:
             print(f"Nostin {err['Transporter']} | Movement_ID {err['Movement_ID']} | Batch {err['Batch']} | Phase {err['Phase']} | {err['From_Station']}->{err['To_Station']} | Edellinen loppu: {err['Prev_End']} | Seuraava alku: {err['Start']}")
+            # Etsi liittyvä nostintehtävä
+            if tasks_df is not None:
+                # Yritetään täsmätä Transporter_id, Batch, mahdollisesti Stage
+                match = tasks_df[(tasks_df['Transporter_id'] == err['Transporter']) & (tasks_df['Batch'] == err['Batch'])]
+                if not match.empty:
+                    # Jos movementin Phase on 1/2/3/4, yritetään täsmätä Stage
+                    if 'Phase' in err and str(err['Phase']).isdigit():
+                        # Stage = Phase movementissa, mutta voi olla eri numerointi, joten näytetään kaikki batchin tehtävät
+                        print("  Liittyvät nostintehtävät (batch):")
+                        print(match.to_string(index=False, max_rows=5))
+                    else:
+                        print("  Liittyvä nostintehtävä:")
+                        print(match.head(1).to_string(index=False))
+                else:
+                    print("  Ei löytynyt täsmäävää nostintehtävää batchille.")
     else:
         print("Ei ajassa taaksepäin siirtymiä.")
 
