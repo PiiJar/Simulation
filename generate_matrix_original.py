@@ -94,8 +94,11 @@ def check_station_conflict(all_tasks, parallel_stations, entry_time, exit_time, 
                 prev_transfer = calculate_physics_transfer_time(prev_station_row, from_station_row, transporter)
                 prev_sink = calculate_sink_time(from_station_row, transporter)
                 changeover_time = (prev_lift + prev_transfer + prev_sink) + transport_time
-                
-                if test_entry_time < existing_task['ExitTime'] + changeover_time:
+                # Lasketaan existing_taskin todellinen varausaika
+                existing_start = existing_task['EntryTime']
+                existing_end = existing_task['ExitTime'] + changeover_time
+                # Jos aikavälit menevät päällekkäin, hylätään
+                if not (test_exit_time <= existing_start or test_entry_time >= existing_end):
                     has_conflict = True
                     break
         
