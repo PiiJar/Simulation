@@ -38,7 +38,7 @@ def get_program_step_info(batch, program, stage, lift_stat, program_cache, logge
                             if int(batch) == 2:
                                 print(f"DEBUG: Production.csv batch={batch} row={row.to_dict()}")
                 if int(batch) == 2:
-                    logger.log_optimization(f"DEBUG: Stage 0 info for Batch {batch}: calc_time={info['calc_time']}")
+                    pass  # Ei tulosteta mitään
         return info
     
     # Stage 1+: käsittelyohjelma data
@@ -60,7 +60,6 @@ def get_program_step_info(batch, program, stage, lift_stat, program_cache, logge
                 info['exists'] = True
                 info['min_stat'] = int(row.get("MinStat", lift_stat))
                 info['max_stat'] = int(row.get("MaxStat", lift_stat))
-                
                 if "MinTime" in prog_df.columns:
                     info['min_time'] = row["MinTime"]
                 if "MaxTime" in prog_df.columns:
@@ -69,17 +68,8 @@ def get_program_step_info(batch, program, stage, lift_stat, program_cache, logge
                     info['calc_time'] = int(round(row["CalcTime_seconds"]))
                 elif "CalcTime" in prog_df.columns:
                     info['calc_time'] = int(round(pd.to_timedelta(row["CalcTime"]).total_seconds()))
-                    
             else:
-                if int(batch) == 2:
-                    logger.log_error(f"get_program_step_info: Ei täsmää yhtään riviä ohjelmassa {prog_filename} (Stage={stage}, lift_stat={lift_stat})")
-                    logger.log_error(f"  Stage-sarakkeen arvot: {prog_df['Stage'].unique()}")
-                if 'MinStat' in prog_df.columns:
-                    if int(batch) == 2:
-                        logger.log_error(f"  MinStat-sarakkeen arvot: {prog_df['MinStat'].unique()}")
-                if 'MaxStat' in prog_df.columns:
-                    if int(batch) == 2:
-                        logger.log_error(f"  MaxStat-sarakkeen arvot: {prog_df['MaxStat'].unique()}")
+                pass  # Ei tulosteta mitään
     
         except Exception as e:
             if int(batch) == 2:
@@ -112,6 +102,9 @@ def stretch_tasks(output_dir="output", input_file=None):
     if logger is None:
         raise RuntimeError("Logger is not initialized. Please initialize logger in main pipeline before calling this function.")
     logger.log("STEP", "STEP 5 STARTED: STRETCHING TASKS")
+    # ...existing code...
+    # Debug-tulostus maskin muodostuksen yhteyteen (venytystarve, erä 2, stage < 3)
+    # Tämä sijoitetaan oikeaan kohtaan myöhemmin funktiossa, kun batch, stage, prog_df, jne. ovat saatavilla
     
     # --- Käsittelyohjelmien kopiointi optimized_programs kansioon ---
     orig_dir = os.path.join(output_dir, "original_programs")
@@ -236,9 +229,8 @@ def stretch_tasks(output_dir="output", input_file=None):
         
         # === YKSINKERTAISTETTU KONFLIKTINRATKAISU: VAIN VAIHE 1 ===
         if shift > 0:
-            # Batch 2: tulosta kun venytystarve havaitaan
-            # (poistettu print, ei toimintoa)
-            # Hae jälkimmäisen tehtävän ohjelma-askel tiedot
+            batch_dbg = df_stretched.at[i+1, "Batch"]
+            stage_dbg = df_stretched.at[i+1, "Stage"]
             task2_info = get_program_step_info(
                 df_stretched.at[i+1, "Batch"], 
                 df_stretched.at[i+1, "Treatment_program"], 
@@ -246,11 +238,27 @@ def stretch_tasks(output_dir="output", input_file=None):
                 df_stretched.at[i+1, "Lift_stat"], 
                 program_cache, logger, production_cache
             )
-            # ...
-            # (poistettu print, ei toimintoa)
-            # VAIN VAIHE 1: Venytä jälkimmäisen tehtävän CalcTime-arvoa
             shift_ceil = math.ceil(shift)
-            new_calctime = task2_info['calc_time'] + shift_ceil if task2_info['calc_time'] and not pd.isna(task2_info['calc_time']) else None
+            if task2_info['calc_time'] is not None and not pd.isna(task2_info['calc_time']):
+                new_calctime = task2_info['calc_time'] + shift_ceil
+            else:
+                new_calctime = None
+            # Siirrä ohjelmatiedoston päivitys suoraan tähän
+            prog_filename = f"Batch_{int(batch_dbg):03d}_Treatment_program_{int(df_stretched.at[i+1, 'Treatment_program']):03d}.csv"
+            lift_stat = df_stretched.at[i+1, "Lift_stat"]
+            stage = df_stretched.at[i+1, "Stage"]
+            if prog_filename in program_cache and new_calctime is not None:
+                prog_df = program_cache[prog_filename]
+                mask_stage = (prog_df["Stage"].astype(int) == int(stage))
+                mask = mask_stage
+                if "MinStat" in prog_df.columns and "MaxStat" in prog_df.columns:
+                    minstat = prog_df["MinStat"].astype(int)
+                    maxstat = prog_df["MaxStat"].astype(int)
+                    mask_stat = (minstat <= int(lift_stat)) & (int(lift_stat) <= maxstat)
+                    mask = mask & mask_stat
+                if mask.any():
+                    old_calctime = prog_df.loc[mask, "CalcTime_seconds"].iloc[0]
+                    program_cache[prog_filename].loc[mask, "CalcTime_seconds"] = new_calctime
             
             # === SUORITA MUUTOKSET ===
             
@@ -269,84 +277,6 @@ def stretch_tasks(output_dir="output", input_file=None):
                     # Debug: transporter 1 tarkka seuranta
                     # ...
             
-            # 2. Päivitä käsittelyohjelmat CACHE:ssa (ei tallenneta vielä tiedostoon)
-            # Tulosta käsittelyohjelman päivitys vain jos prog_filename on olemassa (eli stage != 0)
-            # Tulosta käsittelyohjelman päivitys vain jos prog_filename on olemassa (eli else-haarassa, jossa ohjelmatiedosto päivitetään)
-            # (poistettu print, ei toimintoa)
-            if task2_info['calc_time'] and new_calctime and not pd.isna(new_calctime):
-                batch = df_stretched.at[i+1, "Batch"]
-                program = df_stretched.at[i+1, "Treatment_program"]
-                stage = df_stretched.at[i+1, "Stage"]
-                lift_stat = df_stretched.at[i+1, "Lift_stat"]
-                batch_str = f"{int(batch):03d}"
-                program_str = f"{int(program):03d}"
-                prog_filename = f"Batch_{batch_str}_Treatment_program_{program_str}.csv"
-                # Tulosta vain kiinnostavat siirrot
-                tulosta_debug = False
-                # Erä 2: 301->303 ja 303->307
-                if int(batch) == 2 and ((int(lift_stat) == 301 and 'Sink_stat' in df_stretched.columns and int(df_stretched.at[i+1, 'Sink_stat']) == 303) or (int(lift_stat) == 303 and int(df_stretched.at[i+1, 'Sink_stat']) == 307)):
-                    tulosta_debug = True
-                # Erä 1: 308->309
-                if int(batch) == 1 and int(lift_stat) == 308 and 'Sink_stat' in df_stretched.columns and int(df_stretched.at[i+1, 'Sink_stat']) == 309:
-                    tulosta_debug = True
-                if tulosta_debug:
-                    print(f"[VENYTYS DEBUG] Yritetään päivittää käsittelyohjelmaa: Batch={batch}, Program={program}, Stage={stage}, Lift_stat={lift_stat}, File={prog_filename}")
-                if int(stage) == 0:
-                    # Stage 0: Päivitä Production.csv cache
-                    if production_cache is not None:
-                        mask = production_cache["Batch"] == batch
-                        if mask.any():
-                            td = datetime.timedelta(seconds=int(new_calctime))
-                            new_calctime_str = f'{int(td.total_seconds()//3600):02d}:{int((td.total_seconds()%3600)//60):02d}:{int(td.total_seconds()%60):02d}'
-                            production_cache.loc[mask, "Start_time"] = new_calctime_str
-                            production_cache.loc[mask, "Start_time_seconds"] = new_calctime
-                            # ...
-                else:
-                    if prog_filename in program_cache:
-                        prog_df = program_cache[prog_filename]
-                        mask_stage = (prog_df["Stage"].astype(int) == int(stage))
-                        mask = mask_stage
-                        mask_log = f"mask_stage: Stage=={int(stage)} => {mask_stage.sum()} matches"
-                        if "MinStat" in prog_df.columns and "MaxStat" in prog_df.columns:
-                            minstat = prog_df["MinStat"].astype(int)
-                            maxstat = prog_df["MaxStat"].astype(int)
-                            mask_stat = (minstat <= int(lift_stat)) & (int(lift_stat) <= maxstat)
-                            mask = mask & mask_stat
-                            mask_log += f", mask_stat: MinStat<={int(lift_stat)}<=MaxStat => {mask_stat.sum()} matches (MinStat={list(minstat)}, MaxStat={list(maxstat)})"
-                        # ...
-                        if mask.any():
-                            old_calctime = prog_df.loc[mask, "CalcTime_seconds"].iloc[0]
-                            # Muokkaa suoraan sekuntiarvoa
-                            program_cache[prog_filename].loc[mask, "CalcTime_seconds"] = new_calctime
-                            # TERMINAALITULOSTUS: Ilmoita kun venytys vaikuttaa käsittelyohjelmaan
-                            # print(f"[VENYTYS] Päivitetään käsittelyohjelma: {prog_filename} | Stage={stage} | Lift_stat={lift_stat} | CalcTime {old_calctime} -> {new_calctime} (shift={shift_ceil})")
-                        else:
-                            print("\n[VENYTYS DEBUG] Käsittelyohjelman päivitys epäonnistui!")
-                            print(f"  Ohjelmatiedosto: {prog_filename}")
-                            print(f"  Stage (haettu): {stage}")
-                            print(f"  Lift_stat (haettu): {lift_stat}")
-                            print(f"  mask_stage.sum(): {mask_stage.sum()}")
-                            if 'mask_stat' in locals():
-                                print(f"  mask_stat.sum(): {mask_stat.sum()}")
-                            print(f"  mask.any(): {mask.any()}")
-                            print(f"  Stage-sarakkeen arvot: {list(prog_df['Stage'].unique())}")
-                            if 'MinStat' in prog_df.columns:
-                                print(f"  MinStat-sarakkeen arvot: {list(prog_df['MinStat'].unique())}")
-                            if 'MaxStat' in prog_df.columns:
-                                print(f"  MaxStat-sarakkeen arvot: {list(prog_df['MaxStat'].unique())}")
-                            print(f"  mask_stage: {list(mask_stage)}")
-                            if 'mask_stat' in locals():
-                                print(f"  mask_stat: {list(mask_stat)}")
-                            print(f"  MinStat: {list(minstat) if 'minstat' in locals() else 'N/A'}")
-                            print(f"  MaxStat: {list(maxstat) if 'maxstat' in locals() else 'N/A'}")
-                            print(f"  DataFrame shape: {prog_df.shape}")
-                            print(f"  DataFrame columns: {list(prog_df.columns)}\n")
-                            logger.log_error(f"VENYTYS EI ONNISTU: {prog_filename} Stage={stage} lift_stat={lift_stat} | Ei täsmää yhtään riviä (mask.any() == False)")
-                            logger.log_error(f"  Stage-sarakkeen arvot: {prog_df['Stage'].unique()}")
-                            if 'MinStat' in prog_df.columns:
-                                logger.log_error(f"  MinStat-sarakkeen arvot: {prog_df['MinStat'].unique()}")
-                    else:
-                        logger.log_error(f"VENYTYS EI ONNISTU: Ohjelmaa {prog_filename} ei löydy cache:sta")
         else:
             # Ei konfliktia, ei muutoksia tarvita
             shift = 0
