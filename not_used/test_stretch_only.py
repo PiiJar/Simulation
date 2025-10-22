@@ -36,7 +36,7 @@ def test_stretch_only():
     print("Stretch completed!")
     
     # Tarkista muutokset
-    prog_file = os.path.join(output_dir, "optimized_programs", "Batch_001_Treatment_program_001.csv")
+    prog_file = os.path.join(output_dir, "optimized_programs", "batch_001_treatment_program_001.csv")
     if os.path.exists(prog_file):
         with open(prog_file, 'r') as f:
             lines = f.readlines()

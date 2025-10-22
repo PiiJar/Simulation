@@ -31,7 +31,7 @@ def update_programs(output_dir, adjustment_file="calc_time_adjustments.csv"):
     grouped = df.groupby(["Batch", "Program"])
     for (batch, program), group in grouped:
         batch_str = str(int(batch)).zfill(3)  # esim. "001"
-        source_file = f"Treatment_program_batch_{batch_str}.csv"
+        source_file = f"treatment_program_batch_{batch_str}.csv"
         source_path = os.path.join(output_dir, "original_programs", source_file)
         if not os.path.exists(source_path):
             logger.log_error(f"Source program not found: {source_file}")
@@ -64,7 +64,7 @@ def update_programs(output_dir, adjustment_file="calc_time_adjustments.csv"):
                 print(f"      ⚠️  Vaihe {stage} ei löytynyt erän {batch} ohjelmasta")
         out_dir = os.path.join(output_dir, "updated_programs")
         os.makedirs(out_dir, exist_ok=True)
-        output_file = f"Treatment_program_batch_{batch_str}_updated.csv"
+        output_file = f"treatment_program_batch_{batch_str}_updated.csv"
         output_path = os.path.join(out_dir, output_file)
         # Pakota vielä ennen tallennusta kaikki ohjelma-, vaihe- ja aikakentät kokonaisluvuiksi sekuntitarkkuudella
         for col in ["Stage"]:

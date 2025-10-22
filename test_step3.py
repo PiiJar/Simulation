@@ -23,7 +23,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def append_to_log(output_dir, log_type, description):
     """Lisää merkinnän simulation_log.csv:hen"""
-    log_file = os.path.join(output_dir, "Logs", "simulation_log.csv")
+    log_file = os.path.join(output_dir, "logs", "simulation_log.csv")
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     with open(log_file, "a", encoding="utf-8") as f:
@@ -31,7 +31,7 @@ def append_to_log(output_dir, log_type, description):
 
 def load_stations(output_dir):
     """Lataa asemien tiedot Stations.csv:stä"""
-    file_path = os.path.join(output_dir, "Initialization", "Stations.csv")
+    file_path = os.path.join(output_dir, "initialization", "stations.csv")
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Stations.csv ei löydy: {file_path}")
     
@@ -39,7 +39,7 @@ def load_stations(output_dir):
 
 def load_production_batches(output_dir):
     """Lataa Production.csv ja palauttaa tuotantoerien tiedot"""
-    file_path = os.path.join(output_dir, "Initialization", "Production.csv")
+    file_path = os.path.join(output_dir, "initialization", "production.csv")
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Production.csv ei löydy: {file_path}")
     
@@ -215,9 +215,9 @@ def test_step_3(output_dir):
     try:
         # Tarkista että tarvittavat kansiot ovat olemassa
         required_paths = [
-            os.path.join(output_dir, "Initialization"),
+            os.path.join(output_dir, "initialization"),
             os.path.join(output_dir, "original_programs"),
-            os.path.join(output_dir, "Logs")
+            os.path.join(output_dir, "logs")
         ]
         for path in required_paths:
             if not os.path.exists(path):
@@ -262,9 +262,9 @@ def main():
         
         # Tarkista että tarvittavat kansiot ovat olemassa
         required_paths = [
-            os.path.join(output_dir, "Initialization"),
+            os.path.join(output_dir, "initialization"),
             os.path.join(output_dir, "original_programs"),
-            os.path.join(output_dir, "Logs")
+            os.path.join(output_dir, "logs")
         ]
         
         for path in required_paths:

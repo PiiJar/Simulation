@@ -53,13 +53,13 @@ def extract_transporter_tasks(output_dir):
         raise FileNotFoundError(f"line_matrix_stretched.csv ei löydy: {matrix_file}")
     
     # Lataa asema- ja nostintiedot nostinvalintaa varten
-    stations_file = os.path.join(output_dir, "Initialization", "Stations.csv")
-    transporters_file = os.path.join(output_dir, "Initialization", "Transporters.csv")
-    production_file = os.path.join(output_dir, "Initialization", "Production.csv")
-    start_positions_file = os.path.join(output_dir, "Initialization", "Transporters_start_positions.csv")
+    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
+    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
+    start_positions_file = os.path.join(output_dir, "initialization", "transporters_start_positions.csv")
     
     if not os.path.exists(stations_file):
-        raise FileNotFoundError(f"Stations.csv ei löydy: {stations_file}")
+        raise FileNotFoundError(f"stations.csv ei löydy: {stations_file}")
     if not os.path.exists(transporters_file):
         raise FileNotFoundError(f"Transporters.csv ei löydy: {transporters_file}")
     if not os.path.exists(production_file):
@@ -307,16 +307,16 @@ def create_detailed_movements(output_dir):
     tasks_df = pd.read_csv(tasks_file)
     
     # Lataa nostintiedot alkupaikkojen määrittämiseksi
-    transporters_file = os.path.join(output_dir, "Initialization", "Transporters.csv")
-    stations_file = os.path.join(output_dir, "Initialization", "Stations.csv")
-    production_file = os.path.join(output_dir, "Initialization", "Production.csv")
+    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
+    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
     
     transporters_df = pd.read_csv(transporters_file)
     stations_df = pd.read_csv(stations_file)
     production_df = pd.read_csv(production_file)
     
     # Laske nostimien alkupaikat tiedostosta (dynaaminen, ei kovakoodauksia)
-    start_positions_file = os.path.join(output_dir, "Initialization", "Transporters_start_positions.csv")
+    start_positions_file = os.path.join(output_dir, "initialization", "transporters_start_positions.csv")
     start_positions_df = pd.read_csv(start_positions_file)
     start_positions_df.columns = start_positions_df.columns.str.strip()
     transporter_start_positions = {}

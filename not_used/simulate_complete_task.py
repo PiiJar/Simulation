@@ -328,8 +328,8 @@ def main():
     """Main function."""
     
     # Read configuration files
-    transporters_file = os.path.join("Initialization", "Transporters.csv")
-    stations_file = os.path.join("Initialization", "Stations.csv")
+    transporters_file = os.path.join("initialization", "transporters.csv")
+    stations_file = os.path.join("initialization", "stations.csv")
     
     if not os.path.exists(transporters_file) or not os.path.exists(stations_file):
         print("❌ Error: Configuration files not found!")

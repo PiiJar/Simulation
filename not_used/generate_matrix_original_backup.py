@@ -276,19 +276,19 @@ def calculate_changeover_time(station, stations_df, transporters_df):
 
 def load_production_data(output_dir):
     """Lataa Production.csv ja muunna Start_time sekunneiksi"""
-    production_file = os.path.join(output_dir, "initialization", "Production.csv")
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
     df = pd.read_csv(production_file)
     df['Start_time_seconds'] = df['Start_time'].apply(time_to_seconds)
     return df
 
 def load_stations_data():
     """Lataa Stations.csv"""
-    stations_file = "initialization/Stations.csv"
+    stations_file = "initialization/stations.csv"
     return pd.read_csv(stations_file)
 
 def load_transporters_data():
     """Lataa Transporters.csv"""
-    transporters_file = "initialization/Transporters.csv"
+    transporters_file = "initialization/transporters.csv"
     return pd.read_csv(transporters_file)
 
 def load_batch_program(output_dir, batch_id, treatment_program):

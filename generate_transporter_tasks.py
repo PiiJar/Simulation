@@ -52,7 +52,6 @@ def create_transporter_tasks_final(output_dir):
     df_transporter = pd.read_csv(transporter_file)
     df_matrix = pd.read_csv(matrix_file)
     
-    print(f"[DEBUG] Käytetään {source_type} nostintehtäviä: {transporter_file}")
     # Oletetaan, että df_transporter: Batch, Treatment_program, Stage, Lift_stat, Sink_stat, ...
     # df_matrix: Batch, Stage, Station, EntryTime, ExitTime, ...
     lift_times = []

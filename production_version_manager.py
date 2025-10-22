@@ -20,11 +20,11 @@ def save_production_original(output_dir):
     Args:
         output_dir (str): Simulaatiokansion polku
     """
-    production_file = os.path.join(output_dir, "Initialization", "Production.csv")
-    original_file = os.path.join(output_dir, "Initialization", "production_original.csv")
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
+    original_file = os.path.join(output_dir, "initialization", "production_original.csv")
     
     if not os.path.exists(production_file):
-        raise FileNotFoundError(f"Production.csv ei löydy: {production_file}")
+        raise FileNotFoundError(f"production.csv ei löydy: {production_file}")
     
     # Kopioi alkuperäinen tiedosto
     shutil.copy2(production_file, original_file)
@@ -36,11 +36,11 @@ def save_production_after_conflicts(output_dir):
     Args:
         output_dir (str): Simulaatiokansion polku
     """
-    production_file = os.path.join(output_dir, "Initialization", "Production.csv")
-    conflicts_file = os.path.join(output_dir, "Initialization", "production_station_conflicts.csv")
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
+    conflicts_file = os.path.join(output_dir, "initialization", "production_station_conflicts.csv")
     
     if not os.path.exists(production_file):
-        raise FileNotFoundError(f"Production.csv ei löydy: {production_file}")
+        raise FileNotFoundError(f"production.csv ei löydy: {production_file}")
     
     # Lataa tiedosto ja varmista että Start_time_seconds vastaa Start_time arvoa
     df = pd.read_csv(production_file)
@@ -62,9 +62,9 @@ def compare_production_versions(output_dir):
     print("PRODUCTION.CSV VERSIOVERTAILU")
     print("=" * 80)
     
-    original_file = os.path.join(output_dir, "Initialization", "production_original.csv")
-    conflicts_file = os.path.join(output_dir, "Initialization", "production_station_conflicts.csv")
-    current_file = os.path.join(output_dir, "Initialization", "Production.csv")
+    original_file = os.path.join(output_dir, "initialization", "production_original.csv")
+    conflicts_file = os.path.join(output_dir, "initialization", "production_station_conflicts.csv")
+    current_file = os.path.join(output_dir, "initialization", "production.csv")
     
     versions = {
         "Alkuperäinen": original_file,

@@ -33,7 +33,7 @@ def generate_transporter_report(output_dir="output"):
     logger.log_data("Transporter report generation started")
     
     # Paths
-    transporters_file = os.path.join(output_dir, "initialization", "Transporters.csv")
+    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
     reports_dir = os.path.join(output_dir, "reports")
     report_file = os.path.join(reports_dir, "transporter_report.html")
     

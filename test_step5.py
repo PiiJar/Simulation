@@ -48,7 +48,7 @@ def generate_transporter_tasks(output_dir):
     logger.log("TASK", "Step 5 started: Generate transporter tasks from original matrix")
     
     # Read original line matrix
-    matrix_file = os.path.join(output_dir, "Logs", "line_matrix_original.csv")
+    matrix_file = os.path.join(output_dir, "logs", "line_matrix_original.csv")
     if not os.path.exists(matrix_file):
         error_msg = f"Original matrix file not found: {matrix_file}"
         logger.log("ERROR", error_msg)
@@ -72,7 +72,7 @@ def generate_transporter_tasks(output_dir):
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}] VIRHE: Ei nostintehtäviä generoitu!")
         return None, None
     logger.log("TASK", f"Generated {len(tasks_df)} transporter tasks from matrix")
-    tasks_csv = os.path.join(output_dir, "Logs", "transporter_tasks_raw.csv")
+    tasks_csv = os.path.join(output_dir, "logs", "transporter_tasks_raw.csv")
     logger.log("SAVE", f"Transporter tasks saved: {os.path.basename(tasks_csv)}")
     # Järjestä tehtävät
     order_tasks(output_dir)

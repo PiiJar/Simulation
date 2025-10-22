@@ -200,7 +200,7 @@ def main():
     """Main function to run transporter movement visualization."""
     
     # Read transporter parameters
-    transporters_file = os.path.join("Initialization", "Transporters.csv")
+    transporters_file = os.path.join("initialization", "transporters.csv")
     if not os.path.exists(transporters_file):
         print(f"❌ Error: {transporters_file} not found!")
         return

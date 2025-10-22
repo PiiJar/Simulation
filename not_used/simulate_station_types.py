@@ -279,8 +279,8 @@ def main():
     """Main function to run station type movement comparison."""
     
     # Read configuration files
-    transporters_file = os.path.join("Initialization", "Transporters.csv")
-    stations_file = os.path.join("Initialization", "Stations.csv")
+    transporters_file = os.path.join("initialization", "transporters.csv")
+    stations_file = os.path.join("initialization", "stations.csv")
     
     if not os.path.exists(transporters_file):
         print(f"❌ Error: {transporters_file} not found!")

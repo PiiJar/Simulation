@@ -37,7 +37,7 @@ def seconds_to_hms(seconds):
 
 def load_production_data(output_dir):
     """Lataa tuotantodata"""
-    prod_file = os.path.join(output_dir, "initialization", "Production.csv")
+    prod_file = os.path.join(output_dir, "initialization", "production.csv")
     df = pd.read_csv(prod_file)
     
     # Muunna Start_time sekunneiksi
@@ -116,12 +116,12 @@ def load_batch_program(output_dir, batch_id, treatment_program):
 
 def load_stations_data():
     """Lataa asemadata"""
-    stations_file = os.path.join("initialization", "Stations.csv")
+    stations_file = os.path.join("initialization", "stations.csv")
     return pd.read_csv(stations_file)
 
 def load_transporters_data():
     """Lataa nostimet"""
-    transporters_file = os.path.join("initialization", "Transporters.csv")
+    transporters_file = os.path.join("initialization", "transporters.csv")
     return pd.read_csv(transporters_file)
 
 def generate_matrix_original(output_dir, step_logging=True):
@@ -399,8 +399,8 @@ def generate_matrix_original(output_dir, step_logging=True):
     matrix_df.to_csv(logs_file, index=False)
 
 
-    # Tallenna päivitetty production_df takaisin simulaatiokansion Production.csv
-    prod_file = os.path.join(output_dir, "initialization", "Production.csv")
+    # Tallenna päivitetty production_df takaisin simulaatiokansion production.csv
+    prod_file = os.path.join(output_dir, "initialization", "production.csv")
     os.makedirs(os.path.dirname(prod_file), exist_ok=True)
     production_df.to_csv(prod_file, index=False)
 

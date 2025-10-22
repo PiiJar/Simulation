@@ -8,15 +8,15 @@ def generate_original_programs(output_dir, production_csv, treatment_programs_di
     for _, row in production.iterrows():
         batch = row['Batch'].zfill(3)
         program = row['Treatment_program'].zfill(3)
-        src = os.path.join(treatment_programs_dir, f"Treatment_program_{program}.csv")
-        dst = os.path.join(original_programs_dir, f"Batch_{batch}_Treatment_program_{program}.csv")
+        src = os.path.join(treatment_programs_dir, f"treatment_program_{program}.csv")
+        dst = os.path.join(original_programs_dir, f"batch_{batch}_treatment_program_{program}.csv")
         shutil.copyfile(src, dst)
         print(f"Created original program: {dst}")
 
 if __name__ == "__main__":
     generate_original_programs(
-        output_dir=".",
-        production_csv="initialization/Production.csv",
-        treatment_programs_dir="initialization",
-        original_programs_dir="original_programs"
-    )
+            output_dir=".",
+            production_csv="initialization/production.csv",
+            treatment_programs_dir="initialization",
+            original_programs_dir="original_programs"
+        )

@@ -17,7 +17,7 @@ def load_production_batches(output_dir):
         source = "päivitetty"
     else:
         # Jos ei päivitettyä, käytä alkuperäistä
-        file_path = os.path.join(output_dir, "initialization", "Production.csv")
+        file_path = os.path.join(output_dir, "initialization", "production.csv")
         source = "alkuperäinen"
     
     if not os.path.exists(file_path):
@@ -41,13 +41,13 @@ def load_updated_program_for_batch(output_dir, batch_id):
     batch_str = str(int(batch_id)).zfill(3)
     
     # Yritä ensin päivitettyä versiota
-    file_updated = os.path.join(output_dir, "updated_programs", f"Treatment_program_batch_{batch_str}_updated.csv")
+    file_updated = os.path.join(output_dir, "updated_programs", f"treatment_program_batch_{batch_str}_updated.csv")
     if os.path.exists(file_updated):
         df = pd.read_csv(file_updated)
         source = "päivitetty"
     else:
         # Jos ei päivitettyä, käytä alkuperäistä
-        file_original = os.path.join(output_dir, "original_programs", f"Treatment_program_batch_{batch_str}.csv")
+        file_original = os.path.join(output_dir, "original_programs", f"treatment_program_batch_{batch_str}.csv")
         if os.path.exists(file_original):
             df = pd.read_csv(file_original)
             source = "alkuperäinen"

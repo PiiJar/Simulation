@@ -38,13 +38,13 @@ def visualize_batch_route(output_dir):
     """
     
     # Set up logging
-    log_file = os.path.join(output_dir, "Logs", "simulation_log.csv")
+    log_file = os.path.join(output_dir, "logs", "simulation_log.csv")
     
     print(f"Creating route visualization...")
     log_event(log_file, "VISUAL", "Started creating batch route visualization")
     
     # Load matrix file
-    matrix_file = os.path.join(output_dir, "Logs", "line_matrix_original.csv")
+    matrix_file = os.path.join(output_dir, "logs", "line_matrix_original.csv")
     if not os.path.exists(matrix_file):
         error_msg = f"Matrix file not found: {matrix_file}"
         print(f"ERROR: {error_msg}")
@@ -52,7 +52,7 @@ def visualize_batch_route(output_dir):
         raise FileNotFoundError(error_msg)
     
     # Load stations file
-    stations_file = os.path.join(output_dir, "Initialization", "Stations.csv")
+    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
     if not os.path.exists(stations_file):
         error_msg = f"Stations file not found: {stations_file}"
         print(f"ERROR: {error_msg}")
@@ -154,7 +154,7 @@ def visualize_batch_route(output_dir):
     ax.set_ylim(min(all_stations) - station_margin, max(all_stations) + station_margin)
     
     # Save chart
-    output_file = os.path.join(output_dir, "Logs", "batch_route_visualization.png")
+    output_file = os.path.join(output_dir, "logs", "batch_route_visualization.png")
     plt.tight_layout()
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
@@ -194,9 +194,9 @@ def main():
     
     # Verify workspace structure
     required_files = [
-        os.path.join(output_dir, "Logs", "simulation_log.csv"),
-        os.path.join(output_dir, "Logs", "line_matrix_original.csv"),
-        os.path.join(output_dir, "Initialization", "Stations.csv")
+    os.path.join(output_dir, "logs", "simulation_log.csv"),
+    os.path.join(output_dir, "logs", "line_matrix_original.csv"),
+    os.path.join(output_dir, "initialization", "stations.csv")
     ]
     
     for file_path in required_files:

@@ -21,7 +21,7 @@ from create_simulation_directory import create_simulation_directory
 
 class SimulationLogger:
     def __init__(self, output_dir):
-        self.log_file = os.path.join(output_dir, "Logs", "simulation_log.csv")
+        self.log_file = os.path.join(output_dir, "logs", "simulation_log.csv")
         os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
         if not os.path.exists(self.log_file):
             with open(self.log_file, 'w', encoding='utf-8') as f:
@@ -53,7 +53,7 @@ def test_step_1():
 if __name__ == "__main__":
     import argparse
     import glob
-    parser = argparse.ArgumentParser(description="VAIHE 1: Luo simulaatiokansio ja kopioi Initialization")
+    parser = argparse.ArgumentParser(description="VAIHE 1: Luo simulaatiokansio ja kopioi initialization")
     parser.add_argument("--output_dir", required=False, help="Simulaatiokansion polku (valinnainen, luodaan jos puuttuu)")
     args = parser.parse_args()
     output_dir = args.output_dir

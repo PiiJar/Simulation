@@ -5,7 +5,7 @@ from transporter_physics import calculate_physics_transfer_time, calculate_lift_
 
 def load_stations(output_dir):
     """Lataa Stations.csv tiedoston"""
-    stations_file = os.path.join(output_dir, "Initialization", "Stations.csv")
+    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
     if not os.path.exists(stations_file):
         raise FileNotFoundError(f"Stations.csv ei löydy: {stations_file}")
     return pd.read_csv(stations_file)
@@ -59,7 +59,7 @@ def select_available_station(min_stat, max_stat, station_reservations, entry_tim
 
 def load_production_batches_stretched(output_dir):
     """Lataa Production.csv ja palauttaa tuotantoerien tiedot päivitetyillä lähtöajoilla"""
-    file_path = os.path.join(output_dir, "Initialization", "Production.csv")
+    file_path = os.path.join(output_dir, "initialization", "production.csv")
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Production.csv ei löydy: {file_path}")
     df = pd.read_csv(file_path)
@@ -108,14 +108,14 @@ def generate_matrix_stretched_pure(output_dir):
     4. Huomioi rinnakkaiset asemat (MinStat-MaxStat) asemavarausten kanssa
     5. Laskee nostimen fysiikan (Phase_1, Phase_2, Phase_3, Phase_4)
     """
-    logs_dir = os.path.join(output_dir, "Logs")
+    logs_dir = os.path.join(output_dir, "logs")
     optimized_dir = os.path.join(output_dir, "optimized_programs")
     output_file = os.path.join(logs_dir, "line_matrix_stretched.csv")
     
     # Lataa lähtötiedot - päivitetty Production.csv jossa Start_time ON oikein
     production_df = load_production_batches_stretched(output_dir)
     stations_df = load_stations(output_dir)
-    transporters_df = pd.read_csv(os.path.join(output_dir, "Initialization", "Transporters.csv"))
+    transporters_df = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
     
     # Asemavaraukset rinnakkaisten asemien hallintaan
     station_reservations = {}

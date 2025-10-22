@@ -132,7 +132,7 @@ def stretch_tasks(output_dir="output", input_file=None):
     production_cache = None
     
     # Lataa Production.csv
-    production_file = os.path.join(output_dir, "initialization", "Production.csv")
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
     if os.path.exists(production_file):
         production_cache = pd.read_csv(production_file)
     
@@ -149,10 +149,10 @@ def stretch_tasks(output_dir="output", input_file=None):
             program_cache[fname] = prog_df
     
     # --- Tehtävien venytys ---
-    logs_dir = os.path.join(output_dir, "Logs")
+    logs_dir = os.path.join(output_dir, "logs")
     resolved_file = os.path.join(logs_dir, "transporter_tasks_resolved.csv")
     stretched_file = os.path.join(logs_dir, "transporter_tasks_stretched.csv")
-    stations_file = os.path.join(output_dir, "initialization", "Stations.csv")
+    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
     # Kopioi resolved-listan kaikki sarakkeet ja rivit stretched-listaan
     df = pd.read_csv(resolved_file)
     df_stretched = df.copy(deep=True)
@@ -170,7 +170,7 @@ def stretch_tasks(output_dir="output", input_file=None):
     if 'Number' in stations_df.columns:
         stations_df['Number'] = stations_df['Number'].astype(int)
     station_x = dict(zip(stations_df['Number'], stations_df['X Position']))
-    transporters_file = os.path.join(output_dir, "initialization", "Transporters.csv")
+    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
     transp_df = pd.read_csv(transporters_file)
     transp = transp_df.iloc[0]
     max_speed = float(transp.get('Max_speed (mm/s)', 1000))
@@ -312,7 +312,7 @@ def stretch_tasks(output_dir="output", input_file=None):
     
     # Tallenna Production.csv jos muokattu
     if production_cache is not None:
-        production_file = os.path.join(output_dir, "initialization", "Production.csv")
+        production_file = os.path.join(output_dir, "initialization", "production.csv")
         production_cache.to_csv(production_file, index=False)
     # ...
     

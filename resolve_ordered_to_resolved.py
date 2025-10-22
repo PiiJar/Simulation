@@ -23,7 +23,7 @@ def stretch_resolved_tasks(resolved_df):
     return df
 
 def resolve_ordered_to_resolved(output_dir):
-    logs_dir = os.path.join(output_dir, "Logs")
+    logs_dir = os.path.join(output_dir, "logs")
     ordered_file = os.path.join(logs_dir, "transporter_tasks_ordered.csv")
     resolved_file = os.path.join(logs_dir, "transporter_tasks_resolved.csv")
     df = pd.read_csv(ordered_file)

@@ -38,8 +38,8 @@ def visualize_original_matrix(output_dir):
         raise RuntimeError("Logger is not initialized. Please initialize logger in main pipeline before calling this function.")
     logger.log_data("Original matrix visualization started")
     # Load required files
-    matrix_file = os.path.join(output_dir, "Logs", "line_matrix_original.csv")
-    stations_file = os.path.join(output_dir, "Initialization", "Stations.csv")
+    matrix_file = os.path.join(output_dir, "logs", "line_matrix_original.csv")
+    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
     
     for file_path in [matrix_file, stations_file]:
         if not os.path.exists(file_path):
@@ -118,11 +118,11 @@ def visualize_original_matrix(output_dir):
         # Legend poistettu käyttäjän pyynnöstä
         
         # Save chart for this page
-        output_file = os.path.join(output_dir, "Logs", f"original_matrix_timeline_page_{page+1}.png")
-        plt.tight_layout()
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-        logger.log_viz(f"Original matrix timeline page {page+1} saved: {output_file}")
-        output_files.append(output_file)
+    output_file = os.path.join(output_dir, "logs", f"original_matrix_timeline_page_{page+1}.png")
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    logger.log_viz(f"Original matrix timeline page {page+1} saved: {output_file}")
+    output_files.append(output_file)
     logger.log_data("Original matrix visualization completed (paged)")
     return output_files

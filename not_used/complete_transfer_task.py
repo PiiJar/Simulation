@@ -20,7 +20,7 @@ import os
 def load_transporter_parameters(transporter_id=1):
     """Lataa nostimen parametrit Transporters.csv tiedostosta"""
     try:
-        transporters_file = os.path.join("Initialization", "Transporters.csv")
+        transporters_file = os.path.join("initialization", "transporters.csv")
         df = pd.read_csv(transporters_file)
         
         # Etsi oikea nostin
@@ -67,7 +67,7 @@ def get_default_parameters():
 def load_station_info(station_number):
     """Lataa aseman tiedot Stations.csv:stä"""
     try:
-        stations_file = os.path.join("Initialization", "Stations.csv")
+        stations_file = os.path.join("initialization", "stations.csv")
         df = pd.read_csv(stations_file)
         
         station_data = df[df["Number"] == station_number]

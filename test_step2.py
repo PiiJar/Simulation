@@ -22,7 +22,7 @@ from generate_batch_treatment_programs_original import generate_batch_treatment_
 
 def create_original_programs(output_dir):
     """
-    Luo original_programs-kansio ja kopioi käsittelyohjelmat eräkohtaisesti Production.csv:n mukaan.
+    Luo original_programs-kansio ja kopioi käsittelyohjelmat eräkohtaisesti production.csv:n mukaan.
     """
     return generate_batch_treatment_programs_original(output_dir)
 

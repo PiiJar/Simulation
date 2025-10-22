@@ -8,7 +8,7 @@ def resolve_station_conflicts(output_dir="output"):
     logger = get_logger()
     if logger is None:
         raise RuntimeError("Logger is not initialized. Please initialize logger in main pipeline before calling this function.")
-    file_in = os.path.join(output_dir, "Logs", "transporter_tasks_ordered.csv")
+    file_in = os.path.join(output_dir, "logs", "transporter_tasks_ordered.csv")
     if not os.path.exists(file_in):
         logger.log_error(f"transporter_tasks_ordered.csv ei löydy: {file_in}")
         raise FileNotFoundError(f"transporter_tasks_ordered.csv ei löydy: {file_in}")
@@ -58,8 +58,8 @@ def resolve_station_conflicts(output_dir="output"):
 
     # --- Lasketaan Phase_1, Phase_2, Phase_3, Phase_4 ---
     # Lue asema- ja nostintiedot
-    stations_file = os.path.join(output_dir, "Initialization", "Stations.csv")
-    transporters_file = os.path.join(output_dir, "Initialization", "Transporters.csv")
+    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
+    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
     stations_df = pd.read_csv(stations_file)
     if 'Number' in stations_df.columns:
         stations_df['Number'] = stations_df['Number'].astype(int)
@@ -112,14 +112,14 @@ def resolve_station_conflicts(output_dir="output"):
 
     # Tallennetaan CSV: float_formatilla
     os.makedirs(output_dir, exist_ok=True)
-    logs_dir = os.path.join(output_dir, "Logs")
+    logs_dir = os.path.join(output_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
     resolved_file = os.path.join(logs_dir, "transporter_tasks_resolved.csv")
     resolved.to_csv(resolved_file, index=False, float_format='%.2f')
     return resolved
 
     os.makedirs(output_dir, exist_ok=True)
-    logs_dir = os.path.join(output_dir, "Logs")
+    logs_dir = os.path.join(output_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
     resolved_file = os.path.join(logs_dir, "transporter_tasks_resolved.csv")
     resolved.to_csv(resolved_file, index=False)

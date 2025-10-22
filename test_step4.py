@@ -24,7 +24,7 @@ from test_step1 import SimulationLogger
 
 def append_to_log(output_dir, log_type, description):
     """Lisää merkinnän simulation_log.csv:hen"""
-    log_file = os.path.join(output_dir, "Logs", "simulation_log.csv")
+    log_file = os.path.join(output_dir, "logs", "simulation_log.csv")
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     with open(log_file, "a", encoding="utf-8") as f:
@@ -39,7 +39,7 @@ def test_step_4(output_dir):
     print(f"[{start}] VAIHE 4 - ALKUPERÄISEN MATRIISIN VISUALISOINTI - ALKAA")
     try:
         # Tarkista että tarvittavat tiedostot löytyvät
-        matrix_file = os.path.join(output_dir, "Logs", "line_matrix_original.csv")
+        matrix_file = os.path.join(output_dir, "logs", "line_matrix_original.csv")
         if not os.path.exists(matrix_file):
             error_msg = f"Original matrix file not found: {matrix_file}"
             raise FileNotFoundError(error_msg)

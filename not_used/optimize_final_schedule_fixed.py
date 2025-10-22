@@ -198,7 +198,7 @@ def update_production_and_programs(df_original, df_optimized, output_dir, logger
                     # Jos samalle erälle useita Stage 0 tehtäviä, ota ensimmäinen
     
     # Päivitä Production.csv (vain lähtöaikoja)
-    production_file = os.path.join(output_dir, "initialization", "Production.csv")
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
     if os.path.exists(production_file):
         prod_df = pd.read_csv(production_file)
         

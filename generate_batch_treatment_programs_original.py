@@ -9,15 +9,15 @@ def generate_batch_treatment_programs_original(output_dir):
     try:
         original_programs_dir = os.path.join(output_dir, "original_programs")
         os.makedirs(original_programs_dir, exist_ok=True)
-        production_file = os.path.join(output_dir, "Initialization", "Production.csv")
+        production_file = os.path.join(output_dir, "initialization", "production.csv")
         if not os.path.exists(production_file):
-            raise FileNotFoundError(f"Production.csv ei löydy: {production_file}")
+            raise FileNotFoundError(f"production.csv ei löydy: {production_file}")
         production_df = pd.read_csv(production_file)
         created_files = []
         for _, row in production_df.iterrows():
             batch_id = str(row["Batch"]).zfill(3)
             treatment_program = str(row["Treatment_program"]).zfill(3)
-            source_file = os.path.join(output_dir, "Initialization", f"Treatment_program_{treatment_program}.csv")
+            source_file = os.path.join(output_dir, "initialization", f"treatment_program_{treatment_program}.csv")
             if not os.path.exists(source_file):
                 raise FileNotFoundError(f"Käsittelyohjelmaa ei löydy: {source_file}")
             program_df = pd.read_csv(source_file)

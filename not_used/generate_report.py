@@ -14,7 +14,7 @@ def generate_simulation_report(output_dir):
     try:
         production_df = pd.read_csv(os.path.join(output_dir, "Initialization", "Production.csv"))
         stations_df = pd.read_csv("Initialization/Stations.csv")
-        program_df = pd.read_csv(os.path.join(output_dir, "Initialization", "Treatment_program_001.csv"))
+        program_df = pd.read_csv(os.path.join(output_dir, "initialization", "treatment_program_001.csv"))
         
         original_matrix = pd.read_csv(os.path.join(output_dir, "line_matrix_original.csv"))
         updated_matrix = pd.read_csv(os.path.join(output_dir, "line_matrix_updated.csv"))

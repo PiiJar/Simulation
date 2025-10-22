@@ -9,8 +9,8 @@ def order_tasks(output_dir):
     from simulation_logger import get_logger
     logger = get_logger()
     logger.log("STEP", "STEP 5 STARTED: ORDER TASKS")
-    tasks_csv = os.path.join(output_dir, "Logs", "transporter_tasks_raw.csv")
-    ordered_csv = os.path.join(output_dir, "Logs", "transporter_tasks_ordered.csv")
+    tasks_csv = os.path.join(output_dir, "logs", "transporter_tasks_raw.csv")
+    ordered_csv = os.path.join(output_dir, "logs", "transporter_tasks_ordered.csv")
     df = pd.read_csv(tasks_csv)
     # Pakota kaikki ohjelma-, vaihe-, asema- ja aikakentät kokonaisluvuiksi sekuntitarkkuudella
     for col in ["Batch", "Treatment_program", "Stage", "Lift_stat", "Sink_stat"]:

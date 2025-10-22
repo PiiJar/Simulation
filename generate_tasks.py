@@ -67,8 +67,8 @@ def generate_tasks(output_dir):
         raise FileNotFoundError(f"line_matrix_original.csv ei löydy: {matrix_file}")
     
     # Lataa asema- ja nostintiedot nostinvalintaa varten
-    stations_file = os.path.join(output_dir, "Initialization", "Stations.csv")
-    transporters_file = os.path.join(output_dir, "Initialization", "Transporters.csv")
+    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
+    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
     if not os.path.exists(stations_file):
         raise FileNotFoundError(f"Stations.csv ei löydy: {stations_file}")
     if not os.path.exists(transporters_file):
@@ -82,7 +82,7 @@ def generate_tasks(output_dir):
         df = df.sort_values(["Batch", "Stage"]).reset_index(drop=True)
         tasks = []
         # Lue Production.csv start-asemat
-        production_file = os.path.join(os.path.dirname(matrix_file), "..", "Initialization", "Production.csv")
+        production_file = os.path.join(os.path.dirname(matrix_file), "..", "initialization", "production.csv")
         production_df = pd.read_csv(production_file)
         production_df["Batch"] = production_df["Batch"].astype(int)
         production_df["Treatment_program"] = production_df["Treatment_program"].astype(int)
