@@ -103,6 +103,13 @@ def stretch_tasks(output_dir="output", input_file=None):
         raise RuntimeError("Logger is not initialized. Please initialize logger in main pipeline before calling this function.")
     logger.log("STEP", "STEP 5 STARTED: STRETCHING TASKS")
     # ...existing code...
+    # Täsmädebug: Ensimmäisen erän ensimmäinen tehtävä (poistettu)
+    def debug_first_task(df):
+        pass
+    # ...existing code...
+    # ...koodia...
+    # Kun df_stretched on alustettu (esim. pd.read_csv, tms.)
+    # debug_first_task(df_stretched) tähän
     # Debug-tulostus maskin muodostuksen yhteyteen (venytystarve, erä 2, stage < 3)
     # Tämä sijoitetaan oikeaan kohtaan myöhemmin funktiossa, kun batch, stage, prog_df, jne. ovat saatavilla
     
@@ -149,6 +156,7 @@ def stretch_tasks(output_dir="output", input_file=None):
     # Kopioi resolved-listan kaikki sarakkeet ja rivit stretched-listaan
     df = pd.read_csv(resolved_file)
     df_stretched = df.copy(deep=True)
+    # debug_first_task(df_stretched)  # Poistettu debug-tulostus
     # Säilytä alkuperäinen järjestys indeksiin
     df_stretched["_orig_idx"] = range(len(df_stretched))
     # Pakota kaikki ohjelma-, vaihe-, asema- ja aikakentät kokonaisluvuiksi sekuntitarkkuudella
@@ -192,7 +200,7 @@ def stretch_tasks(output_dir="output", input_file=None):
         transporter_id = int(df_stretched.at[i, "Transporter_id"])
         transporter_row = transp_df[transp_df['Transporter_id'] == transporter_id]
         if sink_row.empty or lift_row.empty or transporter_row.empty:
-            print(f"[ERROR] Puuttuva asema- tai nostintieto: sink_stat={sink_stat}, lift_stat={lift_stat}, transporter_id={transporter_id}")
+            # print(f"[ERROR] Puuttuva asema- tai nostintieto: sink_stat={sink_stat}, lift_stat={lift_stat}, transporter_id={transporter_id}")
             phase_1 = None
         else:
             phase_1 = int(round(calculate_physics_transfer_time(sink_row.iloc[0], lift_row.iloc[0], transporter_row.iloc[0])))

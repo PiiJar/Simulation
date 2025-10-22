@@ -131,6 +131,8 @@ def generate_matrix_stretched_pure(output_dir):
 
         prog_df = load_batch_program_optimized(optimized_dir, batch_id, treatment_program)
 
+        # if batch_id == 1:
+        #     print(f"[DEBUG MATRIX] Ensimmäinen erä: batch={batch_id}, start_station={start_station}, start_time_seconds={start_time_seconds}")
         all_rows.append({
             "Batch": batch_id,
             "Program": treatment_program,
@@ -164,7 +166,7 @@ def generate_matrix_stretched_pure(output_dir):
             max_stat = int(prog_row["MaxStat"])
 
             if i == 0:
-                lift_stat = min_stat
+                lift_stat = start_station
             else:
                 lift_stat = previous_sink_stat
 
@@ -189,6 +191,10 @@ def generate_matrix_stretched_pure(output_dir):
             transport_time = phase_2 + phase_3 + phase_4
             entry_time = int(previous_exit + transport_time)
             exit_time = entry_time + int(calc_time)
+
+            # Täsmädebug: Tulosta väliarvot erän 1, vaiheen 1 kohdalla
+            # if batch_id == 1 and stage == 1:
+            #     print(f"[DEBUG MATRIX] batch=1, stage=1, previous_exit={previous_exit}, phase_2={phase_2}, phase_3={phase_3}, phase_4={phase_4}, transport_time={transport_time}, entry_time={entry_time}")
 
             if sink_stat not in station_reservations:
                 station_reservations[sink_stat] = []
