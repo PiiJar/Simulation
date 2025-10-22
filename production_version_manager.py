@@ -42,9 +42,9 @@ def save_production_after_conflicts(output_dir):
     if not os.path.exists(production_file):
         raise FileNotFoundError(f"production.csv ei löydy: {production_file}")
     
-    # Lataa tiedosto ja varmista että Start_time_seconds vastaa Start_time arvoa
+    # Lataa tiedosto ja varmista että Start_time_seconds vastaa Start_station_check arvoa
     df = pd.read_csv(production_file)
-    df["Start_time_seconds"] = pd.to_timedelta(df["Start_time"]).dt.total_seconds()
+    df["Start_time_seconds"] = pd.to_timedelta(df["Start_station_check"]).dt.total_seconds()
     
     # Tallenna korjattu versio
     df.to_csv(conflicts_file, index=False)
@@ -78,7 +78,13 @@ def compare_production_versions(output_dir):
     for version_name, file_path in versions.items():
         if os.path.exists(file_path):
             df = pd.read_csv(file_path)
-            df["Start_time_seconds"] = pd.to_timedelta(df["Start_time"]).dt.total_seconds()
+            # Tukee sekä vanhaa (Start_time) että uutta (Start_stretch) rakennetta
+            if "Start_stretch" in df.columns:
+                df["Start_time_seconds"] = pd.to_timedelta(df["Start_stretch"]).dt.total_seconds()
+            elif "Start_station_check" in df.columns:
+                df["Start_time_seconds"] = pd.to_timedelta(df["Start_station_check"]).dt.total_seconds()
+            elif "Start_time" in df.columns:
+                df["Start_time_seconds"] = pd.to_timedelta(df["Start_time"]).dt.total_seconds()
             dataframes[version_name] = df
             print(f"📊 {version_name}: {len(df)} erää")
         else:

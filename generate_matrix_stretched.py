@@ -64,8 +64,8 @@ def load_production_batches_stretched(output_dir):
         raise FileNotFoundError(f"Production.csv ei löydy: {file_path}")
     df = pd.read_csv(file_path)
     
-    # KORJAUS: Muunna päivitetty Start_time sekunteiksi (ohittaa vanhan Start_time_seconds sarakkeen)
-    df["Start_time_seconds"] = pd.to_timedelta(df["Start_time"]).dt.total_seconds()
+    # Muunna Start_stretch (HH:MM:SS) sekunteiksi laskentaa varten
+    df["Start_time_seconds"] = pd.to_timedelta(df["Start_stretch"]).dt.total_seconds()
     
     return df
 
@@ -116,6 +116,21 @@ def generate_matrix_stretched_pure(output_dir):
     production_df = load_production_batches_stretched(output_dir)
     stations_df = load_stations(output_dir)
     transporters_df = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
+    # Optional: read stretched transporter tasks to reuse Stage 0 sink station decisions
+    stretched_tasks_path = os.path.join(output_dir, "logs", "transporter_tasks_stretched.csv")
+    stretched_tasks_df = None
+    if os.path.exists(stretched_tasks_path):
+        try:
+            stretched_tasks_df = pd.read_csv(stretched_tasks_path)
+            # Varmista oikeat tyypit vertailua varten
+            if 'Batch' in stretched_tasks_df.columns:
+                stretched_tasks_df['Batch'] = stretched_tasks_df['Batch'].astype(int)
+            if 'Stage' in stretched_tasks_df.columns:
+                stretched_tasks_df['Stage'] = stretched_tasks_df['Stage'].astype(int)
+            if 'Sink_stat' in stretched_tasks_df.columns:
+                stretched_tasks_df['Sink_stat'] = stretched_tasks_df['Sink_stat'].astype(int)
+        except Exception:
+            stretched_tasks_df = None
     
     # Asemavaraukset rinnakkaisten asemien hallintaan
     station_reservations = {}
@@ -131,8 +146,39 @@ def generate_matrix_stretched_pure(output_dir):
 
         prog_df = load_batch_program_optimized(optimized_dir, batch_id, treatment_program)
 
-        # if batch_id == 1:
-        #     print(f"[DEBUG MATRIX] Ensimmäinen erä: batch={batch_id}, start_station={start_station}, start_time_seconds={start_time_seconds}")
+    # Stage 0: Laske transport-aika start_station → ensimmäinen käsittelyasema
+        first_prog_row = prog_df.iloc[0]
+        first_min_stat = int(first_prog_row["MinStat"])
+        first_max_stat = int(first_prog_row["MaxStat"])
+        
+        # Valitse kohdestation (Stage 1:n asema)
+        # Ensisijaisesti käytä venytetyn simulaation Stage 0 -päätöstä, jos saatavilla
+        temp_sink_stat = None
+        if stretched_tasks_df is not None:
+            st0 = stretched_tasks_df[(stretched_tasks_df['Batch'] == batch_id) & (stretched_tasks_df['Stage'] == 0)]
+            if not st0.empty:
+                try:
+                    temp_sink_stat = int(st0.iloc[0]['Sink_stat'])
+                except Exception:
+                    temp_sink_stat = None
+        # Muuten valitse ensimmäinen vapaa asema MinStat–MaxStat -väliltä
+        if temp_sink_stat is None:
+            temp_sink_stat = select_available_station(first_min_stat, first_max_stat, station_reservations, 
+                                                      int(start_time_seconds), int(start_time_seconds))
+        
+        # Laske fysiikka Stage 0:lle (start_station → Stage 1 asema)
+        transporter_0 = select_capable_transporter(start_station, temp_sink_stat, stations_df, transporters_df)
+        lift_station_0 = stations_df[stations_df['Number'] == start_station].iloc[0]
+        sink_station_0 = stations_df[stations_df['Number'] == temp_sink_stat].iloc[0]
+        
+        phase_2_0 = calculate_lift_time(lift_station_0, transporter_0)
+        phase_3_0 = calculate_physics_transfer_time(lift_station_0, sink_station_0, transporter_0)
+        phase_4_0 = calculate_sink_time(sink_station_0, transporter_0)
+        transport_time_0 = phase_2_0 + phase_3_0 + phase_4_0
+        # Stage 0 ExitTime = start_time (nostin lähtee liikkeelle start-aikaan)
+        stage0_exit = int(start_time_seconds)
+        
+        # Stage 0 = Tuotannosta ensimmäiselle asemalle siirto
         all_rows.append({
             "Batch": batch_id,
             "Program": treatment_program,
@@ -142,20 +188,21 @@ def generate_matrix_stretched_pure(output_dir):
             "MinTime": 0,
             "MaxTime": 0,
             "CalcTime": 0,
+            # Stage 0 EntryTime on tuotannon start_time
             "EntryTime": int(start_time_seconds),
-            "ExitTime": int(start_time_seconds),
+            "ExitTime": stage0_exit,
             "Phase_1": 0.0,
-            "Phase_2": 0.0,
-            "Phase_3": 0.0,
-            "Phase_4": 0.0
+            "Phase_2": phase_2_0,
+            "Phase_3": phase_3_0,
+            "Phase_4": phase_4_0
         })
 
         if start_station not in station_reservations:
             station_reservations[start_station] = []
-        station_reservations[start_station].append((start_time_seconds, start_time_seconds))
+        station_reservations[start_station].append((start_time_seconds, stage0_exit))
 
-        previous_sink_stat = start_station
-        previous_exit = start_time_seconds
+        previous_sink_stat = temp_sink_stat  # Stage 0 päättyy ensimmäiselle käsittelyasemalle
+        previous_exit = stage0_exit
 
         for i, (_, prog_row) in enumerate(prog_df.iterrows()):
             stage = int(prog_row["Stage"])
@@ -172,7 +219,11 @@ def generate_matrix_stretched_pure(output_dir):
 
             temp_entry = int(previous_exit)
             temp_exit = temp_entry + int(calc_time)
-            sink_stat = select_available_station(min_stat, max_stat, station_reservations, temp_entry, temp_exit)
+            # Ensimmäinen käsittelyvaihe käyttää Stage 0 -valittua asemaa jos saatavilla
+            if i == 0 and previous_sink_stat is not None:
+                sink_stat = int(previous_sink_stat)
+            else:
+                sink_stat = select_available_station(min_stat, max_stat, station_reservations, temp_entry, temp_exit)
 
             transporter = select_capable_transporter(lift_stat, sink_stat, stations_df, transporters_df)
             lift_station_row = stations_df[stations_df['Number'] == lift_stat].iloc[0]

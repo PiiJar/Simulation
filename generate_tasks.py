@@ -86,6 +86,18 @@ def generate_tasks(output_dir):
         production_df = pd.read_csv(production_file)
         production_df["Batch"] = production_df["Batch"].astype(int)
         production_df["Treatment_program"] = production_df["Treatment_program"].astype(int)
+        
+        # Luo Start_time_seconds sarake: käytä Start_station_check jos olemassa, muuten Start_original
+        if 'Start_station_check' in production_df.columns:
+            production_df['Start_time_seconds'] = production_df.apply(
+                lambda row: pd.to_timedelta(row['Start_station_check']).total_seconds() 
+                if pd.notna(row['Start_station_check']) and row['Start_station_check'] != '' 
+                else pd.to_timedelta(row['Start_original']).total_seconds(), 
+                axis=1
+            )
+        else:
+            production_df['Start_time_seconds'] = production_df['Start_original'].apply(lambda x: pd.to_timedelta(x).total_seconds())
+        
         batch_start_station = {
             (row["Batch"], row["Treatment_program"]): int(row["Start_station"])
             for _, row in production_df.iterrows()

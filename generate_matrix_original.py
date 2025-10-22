@@ -40,8 +40,8 @@ def load_production_data(output_dir):
     prod_file = os.path.join(output_dir, "initialization", "production.csv")
     df = pd.read_csv(prod_file)
     
-    # Muunna Start_time sekunneiksi
-    df['Start_time_seconds'] = df['Start_time'].apply(time_to_seconds)
+    # Lue aina Start_original (alkuperäinen matriisi käyttää alkuperäisiä arvoja)
+    df['Start_time_seconds'] = df['Start_original'].apply(time_to_seconds)
     return df
 
 def check_station_conflict(all_tasks, parallel_stations, entry_time, exit_time, transporters_df, stations_df, current_station):
@@ -342,11 +342,16 @@ def generate_matrix_original(output_dir, step_logging=True):
                         break
                 if viivastys is not None:
                     batch_start_time += viivastys
+                    # Päivitä Production.csv Start_station_check heti
+                    prod_idx = production_df[(production_df['Batch'] == batch_id) & 
+                                            (production_df['Treatment_program'] == treatment_program)].index
+                    if len(prod_idx) > 0:
+                        production_df.at[prod_idx[0], 'Start_station_check'] = seconds_to_hms(batch_start_time)
+                        logger.log("BATCH_SHIFT", f"Batch {batch_id} start shifted due to transporter capacity: {seconds_to_hms(start_time)} → {seconds_to_hms(batch_start_time)} (delay: {viivastys:.1f}s)")
+                    
                     # Päivitä production_df heti kun batch_start_time muuttuu (venytys)
                     new_hms = seconds_to_hms(batch_start_time)
                     new_sec = int(round(batch_start_time))
-                    production_df.loc[production_df['Batch'] == batch_id, 'Start_time'] = new_hms
-                    production_df.loc[production_df['Batch'] == batch_id, 'Start_time_seconds'] = new_sec
                     # Päivitä käsittelyohjelman CalcTime vastaamaan venytettyjä arvoja
                     if 'CalcTime' in program_df.columns:
                         # Päivitä oikea ohjelmavaihe: MinStat <= t['Station'] <= MaxStat ja Stage==t['Stage']
@@ -365,11 +370,6 @@ def generate_matrix_original(output_dir, step_logging=True):
                     continue
                 # Kaikki nostimet ok, lisää tehtävät
                 all_tasks.extend(tasks)
-                # Päivitä production_df myös onnistuneen suorituksen jälkeen (varmistus)
-                new_hms = seconds_to_hms(batch_start_time)
-                new_sec = int(round(batch_start_time))
-                production_df.loc[production_df['Batch'] == batch_id, 'Start_time'] = new_hms
-                production_df.loc[production_df['Batch'] == batch_id, 'Start_time_seconds'] = new_sec
                 # Päivitä käsittelyohjelman CalcTime vastaamaan venytettyjä arvoja oikeaan ohjelmavaiheeseen
                 if 'CalcTime' in program_df.columns:
                     for t in tasks:
@@ -383,6 +383,15 @@ def generate_matrix_original(output_dir, step_logging=True):
                     # Tallenna päivitetty käsittelyohjelma tiedostoon
                     program_file = os.path.join(output_dir, "original_programs", f"Batch_{batch_id:03d}_Treatment_program_{treatment_program:03d}.csv")
                     program_df.to_csv(program_file, index=False)
+                
+                # Päivitä Production.csv Start_station_check jos batch_start_time muuttui
+                if batch_start_time != start_time:
+                    prod_idx = production_df[(production_df['Batch'] == batch_id) & 
+                                            (production_df['Treatment_program'] == treatment_program)].index
+                    if len(prod_idx) > 0:
+                        production_df.at[prod_idx[0], 'Start_station_check'] = seconds_to_hms(batch_start_time)
+                        logger.log("BATCH_SHIFT", f"Batch {batch_id} start shifted: {seconds_to_hms(start_time)} → {seconds_to_hms(batch_start_time)} (delay: {batch_start_time - start_time:.1f}s)")
+                
                 break
 
         if attempt >= max_attempts - 1:
@@ -397,7 +406,6 @@ def generate_matrix_original(output_dir, step_logging=True):
     os.makedirs(logs_dir, exist_ok=True)
     logs_file = os.path.join(logs_dir, "line_matrix_original.csv")
     matrix_df.to_csv(logs_file, index=False)
-
 
     # Tallenna päivitetty production_df takaisin simulaatiokansion production.csv
     prod_file = os.path.join(output_dir, "initialization", "production.csv")
