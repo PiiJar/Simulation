@@ -210,16 +210,21 @@ def extract_transporter_tasks(output_dir):
                     # Phase 1: Siirto edellisestä sijainista nostoasemalle
                     if transporter_id in transporter_last_stop:
                         # Etsi edellinen tehtävä samalta nostimelta
-                        prev_tasks = tasks_df[(tasks_df["Transporter"] == transporter_id) & (tasks_df.index < idx)]
+                        prev_tasks = tasks_df[(tasks_df["Transporter_id"] == transporter_id) & (tasks_df.index < idx)]
+                        debug_print = (int(transporter_id) == 1 and idx < 3)
                         if not prev_tasks.empty:
                             last_sink = prev_tasks.iloc[-1]["Sink_stat"]
                             last_sink_info = stations_df[stations_df['Number'] == last_sink].iloc[0]
                             phase_1_duration = int(round(calculate_physics_transfer_time(last_sink_info, lift_station_info, transporter_info)))
+                            if debug_print:
+                                print(f"[DEBUG] idx={idx} Transporter_id={transporter_id} prev_tasks löytyi: last_sink={last_sink}, lift_station={lift_station}, phase_1_duration={phase_1_duration}")
                         else:
                             # Ensimmäinen tehtävä: alkupaikasta nostoasemalle
                             start_position = transporter_start_positions[transporter_id]
                             start_station_info = stations_df[stations_df['Number'] == start_position].iloc[0]
                             phase_1_duration = int(round(calculate_physics_transfer_time(start_station_info, lift_station_info, transporter_info)))
+                            if debug_print:
+                                print(f"[DEBUG] idx={idx} Transporter_id={transporter_id} prev_tasks TYHJÄ: start_position={start_position}, lift_station={lift_station}, phase_1_duration={phase_1_duration}")
                     else:
                         # Ensimmäinen tehtävä: alkupaikasta nostoasemalle
                         start_position = transporter_start_positions[transporter_id]

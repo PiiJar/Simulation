@@ -193,9 +193,6 @@ def stretch_tasks(output_dir="output", input_file=None):
             if col in df_stretched.columns:
                 df_stretched.at[i, col] = int(round(df_stretched.at[i, col]))
                 df_stretched.at[i+1, col] = int(round(df_stretched.at[i+1, col]))
-        # Phase_1 lasketaan aina fysiikan mukaan, mutta venytysvaiheessa required_gap = 0 (transporter oletetaan valmiiksi nostoasemalla)
-        # Käytä vain transporter_physics.py:n funktioita
-        # Hae asema- ja nostintiedot DataFrameistä
         sink_stat = int(df_stretched.at[i, "Sink_stat"])
         lift_stat = int(df_stretched.at[i+1, "Lift_stat"])
         sink_row = stations_df[stations_df['Number'] == sink_stat]
@@ -203,106 +200,53 @@ def stretch_tasks(output_dir="output", input_file=None):
         transporter_id = int(df_stretched.at[i, "Transporter_id"])
         transporter_row = transp_df[transp_df['Transporter_id'] == transporter_id]
         if sink_row.empty or lift_row.empty or transporter_row.empty:
-            # print(f"[ERROR] Puuttuva asema- tai nostintieto: sink_stat={sink_stat}, lift_stat={lift_stat}, transporter_id={transporter_id}")
             phase_1 = None
         else:
             phase_1 = int(round(calculate_physics_transfer_time(sink_row.iloc[0], lift_row.iloc[0], transporter_row.iloc[0])))
         df_stretched.at[i+1, 'Phase_1'] = phase_1
         if phase_1 is None:
             raise RuntimeError(f"[ERROR] Liikeaikaa ei voitu laskea riville {i+1}: sink_stat={sink_stat}, lift_stat={lift_stat}, transporter_id={transporter_id}")
-        
-        # TÄRKEÄ: Venytys tehdään VAIN jos kyse on SAMAN NOSTIMEN tehtävistä
-        # Eri nostimien tehtävät eivät vaikuta toisiinsa
-        if df_stretched.at[i, "Transporter_id"] != df_stretched.at[i+1, "Transporter_id"]:
-            shift = 0  # Ei venytystä eri nostimien välillä
-        else:
-            # Jos peräkkäiset tehtävät ovat eri erää TAI eri nostinta, nostin joutuu siirtymään: käytä Phase_1 siirtoaikana
-            if (df_stretched.at[i, "Batch"] != df_stretched.at[i+1, "Batch"] or 
-                df_stretched.at[i, "Transporter_id"] != df_stretched.at[i+1, "Transporter_id"]):
-                required_gap = phase_1
-            else:
-                required_gap = 0
-            # Siirrettävä määrä (venytys) lasketaan vain saman nostimen tehtäville
+
+        # Venytys tehdään aina, jos kyseessä on sama nostin ja shift > 0
+        if df_stretched.at[i, "Transporter_id"] == df_stretched.at[i+1, "Transporter_id"]:
+            required_gap = phase_1 if (df_stretched.at[i, "Batch"] != df_stretched.at[i+1, "Batch"]) else 0
             shift = (df_stretched.at[i, "Sink_time"] + required_gap) - df_stretched.at[i+1, "Lift_time"]
-
-            # DEBUG: Nostin 2, erät 5,6,7 ja asemat 110-124
-            curr_transporter = int(df_stretched.at[i, "Transporter_id"])
-            curr_batch = int(df_stretched.at[i, "Batch"])
-            curr_sink_stat = int(df_stretched.at[i, "Sink_stat"])
-            next_batch = int(df_stretched.at[i+1, "Batch"])
-            next_lift_stat = int(df_stretched.at[i+1, "Lift_stat"])
-
-            # ...debug-tulostukset poistettu, ei if-haaraa...
-
-            # Yksinkertainen debug kaikille nostimen 1 tehtäville (säilytetään entisellään)
-            # Kaikki debug-tulostukset poistettu vaiheesta 5
-        
-        # === YKSINKERTAISTETTU KONFLIKTINRATKAISU: VAIN VAIHE 1 ===
-        if shift > 0:
-            # Venytys = siirretään tehtävän (i+1) alkua niin, että Phase_1 ehtii väliin.
-            # Lisäksi VENYTETÄÄN kyseisen erän kyseisen askeleen CalcTimea täsmälleen shift_ceil sekunnilla.
-            shift_ceil = math.ceil(shift)
-
-            # Nostintehtävän siirto vaikuttaa nostoaseman aikaan
-            # Jos Lift_stat = Start_station → päivitä Production.csv Start_time
-            # Jos Lift_stat = käsittelyohjelman asema → päivitä sen aseman CalcTime
-            batch_dbg = df_stretched.at[i+1, "Batch"]
-            lift_stat = int(df_stretched.at[i+1, "Lift_stat"])
-            stage_dbg = int(df_stretched.at[i+1, "Stage"])
-            
-            # Tarkista onko nostoasema aloitusasema
-            if production_cache is not None:
-                prod_mask = production_cache["Batch"] == batch_dbg
-                if prod_mask.any():
-                    start_station = int(production_cache.loc[prod_mask, "Start_station"].iloc[0])
-                    if lift_stat == start_station:
-                        # Päivitä Production.csv Start_time
-                        if "Start_time_seconds" in production_cache.columns:
-                            old_start = production_cache.loc[prod_mask, "Start_time_seconds"].iloc[0]
-                            production_cache.loc[prod_mask, "Start_time_seconds"] = old_start + shift_ceil
-            
-            # Jos nostoasema on käsittelyohjelman asema, päivitä sen CalcTime
-            if program_cache is not None:
-                prog_id = int(df_stretched.at[i+1, "Treatment_program"])
-                prog_filename = f"Batch_{int(batch_dbg):03d}_Treatment_program_{prog_id:03d}.csv"
-                
-                if prog_filename in program_cache:
-                    prog_df = program_cache[prog_filename]
-                    # Etsi askel jossa MinStat <= Lift_stat <= MaxStat
-                    if "MinStat" in prog_df.columns and "MaxStat" in prog_df.columns and "CalcTime_seconds" in prog_df.columns:
-                        for idx in prog_df.index:
-                            minstat = int(prog_df.at[idx, "MinStat"])
-                            maxstat = int(prog_df.at[idx, "MaxStat"])
-                            if minstat <= lift_stat <= maxstat:
-                                current_calctime = prog_df.at[idx, "CalcTime_seconds"]
-                                program_cache[prog_filename].at[idx, "CalcTime_seconds"] = current_calctime + shift_ceil
-                                break
-            
-            # === SUORITA MUUTOKSET ===
-            
-            # 1. Päivitä KAIKKI saman erän siirtotehtävät (Lift_time, Sink_time)
-            batch = df_stretched.at[i+1, "Batch"]
-            shift_int = math.ceil(shift)
-            
-            # ⭐ KORJAUS: Aloita i+1:stä, ei i+2:sta!
-            for j in range(i+1, n):
-                if df_stretched.at[j, "Batch"] == batch:
-                    old_lift = df_stretched.at[j, "Lift_time"]
-                    old_sink = df_stretched.at[j, "Sink_time"]
-                    df_stretched.at[j, "Lift_time"] += shift_int
-                    df_stretched.at[j, "Sink_time"] += shift_int
-                    
-                    # Batch 2, stage 1: tulosta kun venytys päivitetään _stretched-tiedostoon
-                    # (poistettu print, ei toimintoa)
-                    # Debug: transporter 1 tarkka seuranta
-                    # ...
-            
-        else:
-            # Ei konfliktia, ei muutoksia tarvita
-            shift = 0
-        
-    # --- ÄLÄ VAIHDA RIVIEN JÄRJESTYSTÄ! Järjestys pysyy kuten _resolved-listassa. ---
+            if shift > 0:
+                shift_ceil = math.ceil(shift)
+                # Päivitä käsittelyohjelman CalcTime ja/tai Production.csv kuten aiemmin
+                batch_dbg = df_stretched.at[i+1, "Batch"]
+                lift_stat = int(df_stretched.at[i+1, "Lift_stat"])
+                stage_dbg = int(df_stretched.at[i+1, "Stage"])
+                if production_cache is not None:
+                    prod_mask = production_cache["Batch"] == batch_dbg
+                    if prod_mask.any():
+                        start_station = int(production_cache.loc[prod_mask, "Start_station"].iloc[0])
+                        if lift_stat == start_station:
+                            if "Start_time_seconds" in production_cache.columns:
+                                old_start = production_cache.loc[prod_mask, "Start_time_seconds"].iloc[0]
+                                production_cache.loc[prod_mask, "Start_time_seconds"] = old_start + shift_ceil
+                if program_cache is not None:
+                    prog_id = int(df_stretched.at[i+1, "Treatment_program"])
+                    prog_filename = f"Batch_{int(batch_dbg):03d}_Treatment_program_{prog_id:03d}.csv"
+                    if prog_filename in program_cache:
+                        prog_df = program_cache[prog_filename]
+                        if "MinStat" in prog_df.columns and "MaxStat" in prog_df.columns and "CalcTime_seconds" in prog_df.columns:
+                            for idx_prog in prog_df.index:
+                                minstat = int(prog_df.at[idx_prog, "MinStat"])
+                                maxstat = int(prog_df.at[idx_prog, "MaxStat"])
+                                if minstat <= lift_stat <= maxstat:
+                                    old_val = prog_df.at[idx_prog, "CalcTime_seconds"]
+                                    prog_df.at[idx_prog, "CalcTime_seconds"] = float(old_val) + float(shift_ceil)
+                                    print(f"[DEBUG] CalcTime-päivitys: Batch={batch_dbg} Stage={prog_df.at[idx_prog, 'Stage']} Stat={lift_stat} {old_val}s -> {prog_df.at[idx_prog, 'CalcTime_seconds']}s (+{shift_ceil}s)")
+                                    break
+                # Siirrä seuraavaa tehtävää ja sen batchin kaikkia myöhempiä tehtäviä
+                batch_next = df_stretched.at[i+1, "Batch"]
+                for j in range(i+1, n):
+                    if df_stretched.at[j, "Batch"] == batch_next:
+                        df_stretched.at[j, "Lift_time"] += shift_ceil
+                        df_stretched.at[j, "Sink_time"] += shift_ceil
         i += 1
+    # --- ÄLÄ VAIHDA RIVIEN JÄRJESTYSTÄ! Järjestys pysyy kuten _resolved-listassa. ---
     
     # ⭐ KRIITTINEN: ÄLÄ muuta _resolved-listan järjestystä! Venytys vain siirtää aikoja, ei järjestä rivejä uudelleen.
     # Järjestys säilyy täsmälleen kuten _resolved-listassa.
@@ -320,10 +264,10 @@ def stretch_tasks(output_dir="output", input_file=None):
         if col in df_stretched.columns:
             df_stretched[col] = df_stretched[col].apply(lambda x: int(round(x)))
     df_stretched.to_csv(stretched_file, index=False)
-    
+
     # --- UUSI: Tallenna kaikki muokatut tiedostot cache:sta takaisin levylle ---
     # ...
-    
+
     # Tallenna Production.csv jos muokattu
     if production_cache is not None:
         # Konvertoi Start_time_seconds takaisin HH:MM:SS-muotoon Start_stretch-sarakkeeseen
@@ -336,7 +280,7 @@ def stretch_tasks(output_dir="output", input_file=None):
         production_file = os.path.join(output_dir, "initialization", "production.csv")
         production_cache.to_csv(production_file, index=False)
     # ...
-    
+
     # Tallenna kaikki käsittelyohjelmat
     for prog_filename, prog_df in program_cache.items():
         # Konvertoi CalcTime_seconds takaisin HH:MM:SS-muotoon CalcTime-sarakkeeseen
@@ -348,7 +292,7 @@ def stretch_tasks(output_dir="output", input_file=None):
         prog_file = os.path.join(optimized_dir, prog_filename)
         prog_df.to_csv(prog_file, index=False)
     # ...
-    
+
     logger.log("STEP", "STEP 5 COMPLETED: STRETCHING TASKS")
     return df_stretched
 if __name__ == "__main__":
