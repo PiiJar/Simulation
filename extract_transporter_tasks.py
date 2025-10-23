@@ -36,8 +36,8 @@ def extract_transporter_tasks(output_dir):
     """
     Lukee venytetyn matriisin ja muodostaa nostintehtävälistan fysiikka-aikojen kanssa.
     
-    Otsikkorivi: Transporter, Batch, Start_Time, Lift_Stat, Sink_stat, 
-                 Phase_0_start, Phase_1_start, Phase_2_start, Phase_3_start, Phase_4_stop
+    Otsikkorivi: Transporter_id, Batch, Treatment_program, Start_Time, Lift_Stat, Sink_stat, 
+                 Phase_0_start, Phase_1_start, Phase_2_start, Phase_3_start, Phase_4_start, Phase_4_stop
     """
     logger = get_logger()
     if logger is None:
@@ -106,9 +106,7 @@ def extract_transporter_tasks(output_dir):
                         and row["Batch"] == next_row["Batch"]
                         and row["Treatment_program"] == next_row["Treatment_program"]
                     ):
-                        # Onko tämä Production.csv:n start_station ja onko laskuasema käsittelyohjelman askel 1 asema?
                         key = (int(row["Batch"]), int(row["Treatment_program"]))
-                        # Etsi askel 1 asema samalle batchille ja ohjelmalle
                         step1_row = df[(df["Batch"] == row["Batch"]) & (df["Treatment_program"] == row["Treatment_program"]) & (df["Stage"] == 1)]
                         if (
                             key in batch_start_station
@@ -116,22 +114,23 @@ def extract_transporter_tasks(output_dir):
                             and not step1_row.empty
                             and int(next_row["Station"]) == int(step1_row.iloc[0]["Station"])
                         ):
-                            # Valitse oikea nostin tälle tehtävälle (start_station -> step1_station)
                             transporter = select_capable_transporter(
-                                int(row["Station"]),           # lift_station = start_station
-                                int(next_row["Station"]),      # sink_station = step1_station
-                                stations_df, 
+                                int(row["Station"]),
+                                int(next_row["Station"]),
+                                stations_df,
                                 transporters_df
                             )
                             tasks.append({
-                                "Transporter": int(transporter['Transporter_id']),
+                                "Transporter_id": int(transporter['Transporter_id']),
                                 "Batch": int(row["Batch"]),
-                                "Start_Time": float(row["ExitTime"]),  # Käytä ExitTime, ei EntryTime
+                                "Treatment_program": int(row["Treatment_program"]),
+                                "Stage": int(row["Stage"]),
+                                "Lift_Time": float(row["ExitTime"]),
                                 "Lift_Stat": int(row["Station"]),
-                                "Sink_stat": int(next_row["Station"])
+                                "Sink_stat": int(next_row["Station"]),
+                                "Sink_time": float(next_row["EntryTime"])
                             })
                 continue
-                
             # Ohita, jos seuraava rivi puuttuu, on eri batchia tai on stage = 0
             if idx + 1 >= len(df):
                 continue
@@ -140,44 +139,42 @@ def extract_transporter_tasks(output_dir):
                 continue
             if row["Batch"] != next_row["Batch"] or row["Treatment_program"] != next_row["Treatment_program"]:
                 continue
-            
-            # Valitse oikea nostin tälle tehtävälle (current_station -> next_station)
             transporter = select_capable_transporter(
-                int(row["Station"]),           # lift_station = current_station  
-                int(next_row["Station"]),      # sink_station = next_station
-                stations_df, 
+                int(row["Station"]),
+                int(next_row["Station"]),
+                stations_df,
                 transporters_df
             )
-            
             tasks.append({
-                "Transporter": int(transporter['Transporter_id']),
+                "Transporter_id": int(transporter['Transporter_id']),
                 "Batch": int(row["Batch"]),
-                "Start_Time": float(row["ExitTime"]),  # Käytä ExitTime, ei EntryTime
+                "Treatment_program": int(row["Treatment_program"]),
+                "Stage": int(row["Stage"]),
+                "Lift_Time": float(row["ExitTime"]),
                 "Lift_Stat": int(row["Station"]),
-                "Sink_stat": int(next_row["Station"])
+                "Sink_stat": int(next_row["Station"]),
+                "Sink_time": float(next_row["EntryTime"])
             })
         
         # Luo DataFrame
         tasks_df = pd.DataFrame(tasks)
-        
         if len(tasks_df) > 0:
+            # Yhtenäistä sarakeotsikot heti, jotta myöhemmät viittaukset toimivat
+            tasks_df = tasks_df.rename(columns={
+                "Lift_Stat": "Lift_stat",
+                "Lift_Time": "Lift_time"
+            })
+            # Sink_time on jo laskettu task-dictissä, ei tarvitse täyttää uudelleen
             # Järjestä nostinkohtaisesti aikajärjestykseen
-            tasks_df = tasks_df.sort_values(["Transporter", "Start_Time"]).reset_index(drop=True)
-            
+            tasks_df = tasks_df.sort_values(["Transporter_id", "Lift_time"]).reset_index(drop=True)
             # Pakota kaikki kentät kokonaisluvuiksi/float:iksi
-            for col in ["Transporter", "Batch", "Lift_Stat", "Sink_stat"]:
+            for col in ["Transporter_id", "Batch", "Treatment_program", "Stage", "lift_stat", "Sink_stat"]:
                 if col in tasks_df.columns:
                     tasks_df[col] = tasks_df[col].astype(int)
-            if "Start_Time" in tasks_df.columns:
-                tasks_df["Start_Time"] = tasks_df["Start_Time"].apply(lambda x: int(round(x)))
-            
+            if "Lift_time" in tasks_df.columns:
+                tasks_df["Lift_time"] = tasks_df["Lift_time"].apply(lambda x: int(round(x)))
             # Lisää fysiikka-aikojen laskenta
-            
-            # Seuraa jokaisen nostimen viimeistä Phase_4_stop aikaa
             transporter_last_stop = {}
-            
-            # Nostimien alkupaikat luetaan nyt tiedostosta (ks. yllä)
-            
             # Lisää Phase-sarakkeet (kokonaislukuina)
             tasks_df["Phase_0_start"] = 0
             tasks_df["Phase_1_start"] = 0  
@@ -187,22 +184,27 @@ def extract_transporter_tasks(output_dir):
             tasks_df["Phase_4_stop"] = 0
             
             for idx, row in tasks_df.iterrows():
-                transporter_id = row["Transporter"]
-                lift_station = row["Lift_Stat"]
+                transporter_id = row["Transporter_id"]
+                batch = row["Batch"]
+                lift_station = row["Lift_stat"]
                 sink_station = row["Sink_stat"]
-                arrival_time = row["Start_Time"]  # Tämä on erän ExitTime nostoasemalta
-                
+                arrival_time = row["Lift_time"]  # Tämä on erän ExitTime nostoasemalta
+
+                # Debug-tulostus nostin 3, erä 1
+                if int(transporter_id) == 3 and int(batch) == 1:
+                    print(f"[DEBUG] Käsitellään nostin 3, erä 1: idx={idx}, lift_station={lift_station}, sink_station={sink_station}, arrival_time={arrival_time}")
+
                 # Hae asematiedot fysiikkalaskentoja varten
                 lift_station_info = stations_df[stations_df['Number'] == lift_station].iloc[0]
                 sink_station_info = stations_df[stations_df['Number'] == sink_station].iloc[0]
                 transporter_info = transporters_df[transporters_df['Transporter_id'] == transporter_id].iloc[0]
-                
+
                 # NOSTIMEN TEHTÄVÄN LOGIIKKA:
                 # Start_Time = Phase_2_start = erän ExitTime nostoasemalta (LUKITTU)
                 # Phase 0 ja 1 lasketaan taaksepäin, Phase 3 ja 4 eteenpäin
-                
+
                 # phase_2_start = arrival_time  # Tämä on erän ExitTime = nostimen tehtävän alku
-                
+
                 # Laske fysiikka-ajat
                 try:
                     # Phase 1: Siirto edellisestä sijainista nostoasemalle
@@ -223,21 +225,25 @@ def extract_transporter_tasks(output_dir):
                         start_position = transporter_start_positions[transporter_id]
                         start_station_info = stations_df[stations_df['Number'] == start_position].iloc[0]
                         phase_1_duration = int(round(calculate_physics_transfer_time(start_station_info, lift_station_info, transporter_info)))
-                    
+
                     # Phase 2: Nostoaika nostoasemalla
                     phase_2_duration = int(round(calculate_lift_time(lift_station_info, transporter_info)))
-                    
+
                     # Phase 3: Siirtoaika nostoasemalta laskuasemalle (kuormalla)
                     phase_3_duration = int(round(calculate_physics_transfer_time(lift_station_info, sink_station_info, transporter_info)))
-                    
+
                     # Phase 4: Laskuaika laskuasemalla
                     phase_4_duration = int(round(calculate_sink_time(sink_station_info, transporter_info)))
-                    
+
                 except Exception as e:
                     phase_1_duration = 5  # Siirtoaika
                     phase_2_duration = 5  # Nostoaika
                     phase_3_duration = 5  # Siirtoaika kuormalla
                     phase_4_duration = 5  # Laskuaika
+
+                # Debug-tulostus vaiheajoista nostin 3, erä 1
+                if int(transporter_id) == 3 and int(batch) == 1:
+                    print(f"[DEBUG] phase_1_duration={phase_1_duration}, phase_2_duration={phase_2_duration}, phase_3_duration={phase_3_duration}, phase_4_duration={phase_4_duration}")
                 
                 # Laske fysiikka-ajat - LUOTA MATRIISIN LASKENTAAN:
                 # Phase_2_start = Start_Time (erän ExitTime) - EHDOTTOMASTI LUKITTU
@@ -270,6 +276,12 @@ def extract_transporter_tasks(output_dir):
         
         # Tallenna
         output_file = os.path.join(logs_dir, "transporter_tasks_from_matrix.csv")
+        # Järjestetään sarakkeet samaan järjestykseen kuin stretched-tiedostossa
+        columns = [
+            "Transporter_id", "Batch", "Treatment_program", "Stage", "Lift_stat", "Lift_time", "Sink_stat", "Sink_time",
+            "Phase_0_start", "Phase_1_start", "Phase_2_start", "Phase_3_start", "Phase_4_start", "Phase_4_stop"
+        ]
+        tasks_df = tasks_df[columns]
         tasks_df.to_csv(output_file, index=False)
         
         logger.log("STEP", "STEP 8.6 COMPLETED: EXTRACT TRANSPORTER TASKS FROM STRETCHED MATRIX")
@@ -305,6 +317,11 @@ def create_detailed_movements(output_dir):
     
     # Lataa tehtävät
     tasks_df = pd.read_csv(tasks_file)
+    # Yhtenäistä sarakeotsikot, jotta myöhemmät viittaukset toimivat
+    tasks_df = tasks_df.rename(columns={
+        "Lift_Stat": "lift_stat",
+        "Lift_Time": "Lift_time"
+    })
     
     # Lataa nostintiedot alkupaikkojen määrittämiseksi
     transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
@@ -333,11 +350,9 @@ def create_detailed_movements(output_dir):
     
     # Käsittele tehtävät lineaarisesti
     for _, task in tasks_df.iterrows():
-        transporter_id = int(task['Transporter'])
-        
+        transporter_id = int(task['Transporter_id'])
         # Phase 1:n lähtöpaikka on nostimen edellinen sijainti
         phase_1_from_station = transporter_last_location[transporter_id]
-        
         # Luo täsmälleen 5 liikettä per tehtävä (Phase 0-4)
         # Stop-ajat lasketaan: prev_stop = next_start (paitsi Phase_4_stop)
         movements.extend([
@@ -358,7 +373,7 @@ def create_detailed_movements(output_dir):
                 'Start_Time': int(task['Phase_1_start']),
                 'End_Time': int(task['Phase_2_start']),  # prev_stop = next_start
                 'From_Station': phase_1_from_station,
-                'To_Station': int(task['Lift_Stat']),
+                'To_Station': int(task['Lift_stat']),
                 'Description': 'Siirto nostoasemalle'
             },
             {
@@ -367,8 +382,8 @@ def create_detailed_movements(output_dir):
                 'Phase': 2,
                 'Start_Time': int(task['Phase_2_start']),
                 'End_Time': int(task['Phase_3_start']),  # prev_stop = next_start
-                'From_Station': int(task['Lift_Stat']),
-                'To_Station': int(task['Lift_Stat']),
+                'From_Station': int(task['Lift_stat']),
+                'To_Station': int(task['Lift_stat']),
                 'Description': 'Nostaminen'
             },
             {
@@ -377,7 +392,7 @@ def create_detailed_movements(output_dir):
                 'Phase': 3,
                 'Start_Time': int(task['Phase_3_start']),
                 'End_Time': int(task['Phase_4_start']),  # prev_stop = next_start
-                'From_Station': int(task['Lift_Stat']),
+                'From_Station': int(task['Lift_stat']),
                 'To_Station': int(task['Sink_stat']),
                 'Description': 'Siirto laskuasemalle'
             },
@@ -400,7 +415,7 @@ def create_detailed_movements(output_dir):
     # Etsi jokaisen nostimen viimeisen tehtävän Phase_4_stop
     transporter_final_times = {}
     for transporter_id in transporter_start_positions.keys():
-        transporter_tasks = tasks_df[tasks_df['Transporter'] == transporter_id]
+        transporter_tasks = tasks_df[tasks_df['Transporter_id'] == transporter_id]
         if not transporter_tasks.empty:
             last_task = transporter_tasks.iloc[-1]
             transporter_final_times[transporter_id] = int(last_task['Phase_4_stop'])
