@@ -33,6 +33,7 @@ from test_step6 import test_step_6
 from test_step7 import test_step_7
 from extract_transporter_tasks import extract_transporter_tasks
 from generate_transporters_movement import generate_transporters_movement
+from config import USE_CPSAT_OPTIMIZATION
 import os
 
 def test_main():
@@ -57,7 +58,19 @@ def test_main():
         test_step_4(output_dir)
 
         # VAIHE 5: Nostimien tehtävien käsittely
-        test_step_5(output_dir)
+        if USE_CPSAT_OPTIMIZATION:
+            # CP-SAT optimointi (Google OR-Tools)
+            print(f"\n{'='*60}")
+            print(f"KÄYTETÄÄN CP-SAT OPTIMOINTIA (config.py: USE_CPSAT_OPTIMIZATION=True)")
+            print(f"{'='*60}\n")
+            from test_step_5_cpsat import test_step_5_cpsat
+            test_step_5_cpsat(output_dir)
+        else:
+            # Perinteinen greedy-algoritmi
+            print(f"\n{'='*60}")
+            print(f"KÄYTETÄÄN PERINTEISTÄ GREEDY-ALGORITMIA (config.py: USE_CPSAT_OPTIMIZATION=False)")
+            print(f"{'='*60}\n")
+            test_step_5(output_dir)
 
         # VAIHE 6: Muokatun matriisin luonti (käyttää aina fysiikkaa)
         generate_matrix_stretched(output_dir)
