@@ -469,9 +469,16 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
         print(f"    Lisätty {empty_transfer_count} nostimen tyhjän siirtymän rajoitetta")
     
     # RAJOITE 4: Aseman vapautuminen ennen seuraavaa erää
-    # Sama erä ei voi olla asemalla kahdesti, JA
-    # Eri erät eivät voi olla samalla asemalla päällekkäin
-    # Tämä tarkoittaa: Erän A pitää poistua (end) ennen kuin Erä B saapuu (start) TAI päinvastoin
+    # FYYSINEN RAJOITE: Nostin ei voi laskea uutta erää altaaseen ennen kuin edellinen on nostettu pois!
+    # 
+    # Aikajana per erä asemalla:
+    #   [EntryTime] --Sink--> [Sink valmis] --CalcTime--> [Lift alkaa] --Lift--> [Lift valmis]
+    # 
+    # Rajoite: Erä A:n Lift täytyy VALMISTUA ennen kuin Erä B:n Sink voi ALKAA
+    #   → B.EntryTime >= A.EntryTime + sink_time + calc_time + lift_time
+    #   → B.EntryTime >= A.end (koska A.end = A.start + sink + calc + lift)
+    # 
+    # TAI päinvastoin: A.EntryTime >= B.end
     print(f"  Lisätään disjunktiiviset rajoitteet asemille...")
     
     # Kerää kaikki tehtävät asemakohtaisesti
@@ -489,14 +496,17 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
                 station_tasks[station_id] = []
             
             task = task_vars[(batch_id, stage)]
+            
             station_tasks[station_id].append({
                 'batch': batch_id,
                 'stage': stage,
-                'start': task['start'],  # Sink alkaa
-                'end': task['end'],      # Lift valmis
+                'start': task['start'],  # EntryTime (Sink alkaa)
+                'end': task['end'],      # Lift valmis (nostinoperaatio kokonaan valmis)
             })
     
     # Lisää rajoitteet: jokaisella asemalla erien välillä disjunktio
+    # RAJOITE: A.end <= B.start TAI B.end <= A.start
+    # (A:n Lift valmis ennen B:n Sink alkaa TAI päinvastoin)
     constraints_added = 0
     for station_id, tasks in station_tasks.items():
         # Jokainen pari tehtäviä samalla asemalla
@@ -506,16 +516,18 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
                 task_b = tasks[j]
                 
                 # Jos eri erät, lisää disjunktio:
-                # JOKO A päättyy ennen kuin B alkaa TAI B päättyy ennen kuin A alkaa
+                # JOKO A:n Lift valmis ennen B:n Sink alkaa TAI päinvastoin
                 if task_a['batch'] != task_b['batch']:
                     # Luo boolean: onko A ennen B:tä?
                     var_name = f'a{task_a["batch"]}_s{task_a["stage"]}_before_b{task_b["batch"]}_s{task_b["stage"]}_stat{station_id}'
                     a_before_b = model.NewBoolVar(var_name)
                     
-                    # Jos A ennen B:tä → A.end <= B.start
+                    # Jos A ennen B:tä → A:n Lift valmis ennen B:n Sink alkaa
+                    # A.end <= B.start
                     model.Add(task_a['end'] <= task_b['start']).OnlyEnforceIf(a_before_b)
                     
-                    # Jos B ennen A:ta → B.end <= A.start
+                    # Jos B ennen A:ta → B:n Lift valmis ennen A:n Sink alkaa
+                    # B.end <= A.start
                     model.Add(task_b['end'] <= task_a['start']).OnlyEnforceIf(a_before_b.Not())
                     
                     constraints_added += 1
