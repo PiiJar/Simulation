@@ -59,13 +59,37 @@ def select_available_station(min_stat, max_stat, station_reservations, entry_tim
 
 def load_production_batches_stretched(output_dir):
     """Lataa Production.csv ja palauttaa tuotantoerien tiedot päivitetyillä lähtöajoilla"""
-    file_path = os.path.join(output_dir, "initialization", "production.csv")
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Production.csv ei löydy: {file_path}")
-    df = pd.read_csv(file_path)
+    # Lue AINA initialization/production.csv (sisältää kaikki sarakkeet: Start_original, Start_stretch, Start_optimized)
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
     
-    # Muunna Start_stretch (HH:MM:SS) sekunteiksi laskentaa varten
-    df["Start_time_seconds"] = pd.to_timedelta(df["Start_stretch"]).dt.total_seconds()
+    if not os.path.exists(production_file):
+        raise FileNotFoundError(f"Production.csv ei löydy: {production_file}")
+    
+    df = pd.read_csv(production_file)
+    
+    # Valitse oikea Start-sarake prioriteetin mukaan:
+    # 1. Start_optimized (CP-SAT optimoinnin tulos) - KORKEIN PRIORITEETTI
+    # 2. Start_stretch (perinteisen venytyksen tulos)
+    # 3. Start_station_check (konfliktien ratkaisun tulos)
+    # 4. Start_original (alkuperäinen)
+    
+    if "Start_optimized" in df.columns and df["Start_optimized"].notna().any():
+        start_field = "Start_optimized"
+        print(f"  📊 Käytetään CP-SAT optimoituja alkuaikoja (Start_optimized)")
+    elif "Start_stretch" in df.columns:
+        start_field = "Start_stretch"
+        print(f"  ℹ️  Käytetään venytettyjä alkuaikoja (Start_stretch)")
+    elif "Start_station_check" in df.columns:
+        start_field = "Start_station_check"
+        print(f"  ℹ️  Käytetään konfliktien ratkaisun alkuaikoja (Start_station_check)")
+    elif "Start_original" in df.columns:
+        start_field = "Start_original"
+        print(f"  ℹ️  Käytetään alkuperäisiä alkuaikoja (Start_original)")
+    else:
+        raise ValueError(f"Start-kenttää ei löydy production.csv:stä: {list(df.columns)}")
+    
+    # Muunna Start-kenttä (HH:MM:SS) sekunteiksi laskentaa varten
+    df["Start_time_seconds"] = pd.to_timedelta(df[start_field]).dt.total_seconds()
     
     return df
 

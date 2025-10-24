@@ -65,14 +65,19 @@ def test_main():
             print(f"{'='*60}\n")
             from test_step_5_cpsat import test_step_5_cpsat
             test_step_5_cpsat(output_dir)
+            # CP-SAT päivitti:
+            # - optimized_programs/Batch_XXX_Treatment_program_YYY.csv (CalcTime)
+            # - initialization/production.csv (Start_optimized)
         else:
             # Perinteinen greedy-algoritmi
             print(f"\n{'='*60}")
             print(f"KÄYTETÄÄN PERINTEISTÄ GREEDY-ALGORITMIA (config.py: USE_CPSAT_OPTIMIZATION=False)")
             print(f"{'='*60}\n")
             test_step_5(output_dir)
-
-        # VAIHE 6: Muokatun matriisin luonti (käyttää aina fysiikkaa)
+        
+        # VAIHE 6: Muokatun matriisin luonti
+        # Lukee AINA päivitetyt tiedostot (production.csv + optimized_programs/)
+        # ja laskee matriisin uudelleen fysiikan mukaan
         generate_matrix_stretched(output_dir)
 
         # VAIHE 6.1: Erotetaan nostintehtävät LOPULLISESTA matriisista

@@ -96,6 +96,7 @@ def optimize_transporter_tasks_cpsat(output_dir, time_limit=60):
             matrix_df=matrix_df,
             stations_df=stations_df,
             transporters_df=transporters_df,
+            output_dir=output_dir,
             time_limit=time_limit
         )
         
