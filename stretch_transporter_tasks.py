@@ -30,13 +30,13 @@ def get_program_step_info(batch, program, stage, lift_stat, program_cache, logge
                     if pd.isna(info['calc_time']):
                         if int(batch) == 2:
                             if int(batch) == 2:
-                                print(f"DEBUG: Production.csv batch={batch} row={row.to_dict()}")
+                                pass
                 elif "Start_station_check" in production_cache.columns:
                     info['calc_time'] = int(round(pd.to_timedelta(row["Start_station_check"]).total_seconds()))
                     if pd.isna(info['calc_time']):
                         if int(batch) == 2:
                             if int(batch) == 2:
-                                print(f"DEBUG: Production.csv batch={batch} row={row.to_dict()}")
+                                pass
                 if int(batch) == 2:
                     pass  # Ei tulosteta mitään
         return info
@@ -218,12 +218,6 @@ def stretch_tasks(output_dir="output", input_file=None):
             if int(batch_dbg) == 1 and lift_stat_dbg == 336:
                 prev_sink = df_stretched.at[i, 'Sink_time']
                 curr_lift = df_stretched.at[i+1, 'Lift_time']
-                print(f"[DEBUG] VENYTYS ERITTELY: Batch={batch_dbg} Stage={stage_dbg} Lift_stat={lift_stat_dbg}")
-                print(f"  Edellisen tehtävän Sink_time: {prev_sink}")
-                print(f"  Nykyisen tehtävän Lift_time: {curr_lift}")
-                print(f"  Laskettu siirtoasema (phase_1): {phase_1}")
-                print(f"  Venytyksen tarve (shift): (prev_sink + phase_1) - curr_lift = ({prev_sink} + {phase_1}) - {curr_lift} = {(prev_sink + phase_1) - curr_lift}")
-                print(f"  shift (ennen ceil): {shift}")
             if shift > 0:
                 shift_ceil = math.ceil(shift)
                 # Päivitä käsittelyohjelman CalcTime ja/tai Production.csv kuten aiemmin

@@ -34,17 +34,18 @@ def print_phase_discontinuity_fullrows(output_root="output"):
                     or 'alkupaikkaan' in str(prev_description).lower()
                 ):
                     pass
-                # Ajallinen epäloogisuus: start < prev_end
-                elif start < prev_end:
-                    error_rows.add(tuple(df.loc[prev_idx].values))
-                    error_rows.add(tuple(df.loc[idx].values))
-                # Vaiheiden epäloogisuus: sallitaan vain 4->0 ja nouseva järjestys
-                elif not (phase == prev_phase + 1 or (prev_phase == 4 and phase == 0)):
-                    error_rows.add(tuple(df.loc[prev_idx].values))
-                    error_rows.add(tuple(df.loc[idx].values))
-                # Yksittäisen rivin sisäinen aikavirhe
-                elif start > end:
-                    error_rows.add(tuple(df.loc[idx].values))
+                else:
+                    # Ajallinen epäloogisuus: start < prev_end
+                    if start < prev_end:
+                        error_rows.add(tuple(df.loc[prev_idx].values))
+                        error_rows.add(tuple(df.loc[idx].values))
+                    # Vaiheiden epäloogisuus: sallitaan vain 4->0 ja nouseva järjestys
+                    elif not (phase == prev_phase + 1 or (prev_phase == 4 and phase == 0)):
+                        error_rows.add(tuple(df.loc[prev_idx].values))
+                        error_rows.add(tuple(df.loc[idx].values))
+            # Yksittäisen rivin sisäinen aikavirhe
+            if start > end:
+                error_rows.add(tuple(df.loc[idx].values))
             prev_phase = phase
             prev_idx = idx
             prev_end = end
