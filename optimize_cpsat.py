@@ -75,7 +75,7 @@ def precalculate_transfer_times(matrix_df, stations_df, transporters_df):
     return transfer_times
 
 
-def build_cpsat_model(matrix_df, transfer_times, transporters_df):
+def build_cpsat_model(matrix_df, transfer_times, transporters_df, stations_df):
     """
     Rakentaa CP-SAT Job Shop Scheduling -mallin.
     
@@ -101,35 +101,47 @@ def build_cpsat_model(matrix_df, transfer_times, transporters_df):
     print(f"  Erät: {batches}")
     print(f"  Horizon: {horizon} s")
     
-    # Muuttujat: Jokaisen vaiheen start, end, interval
+    # Rinnakkaiset asemat: Group -> lista asemia
+    station_groups = {}
+    for _, row in matrix_df.iterrows():
+        station_id = int(row['Station'])
+        group = row.get('Group', None)
+        if group is None:
+            group = station_id  # fallback: yksittäinen asema
+        if group not in station_groups:
+            station_groups[group] = set()
+        station_groups[group].add(station_id)
+
+    # Muuttujat: Jokaisen vaiheen start, end, interval, station_assignment
     task_vars = {}
-    
+
     for batch in batches:
         batch_tasks = matrix_df[matrix_df['Batch'] == batch].sort_values('Stage')
-        
         for _, task in batch_tasks.iterrows():
             batch_id = int(task['Batch'])
             stage = int(task['Stage'])
-            station = int(task['Station'])
+            group = task.get('Group', None)
+            if group is None:
+                group = int(task['Station'])
+            group_stations = list(station_groups[group])
             calc_time = int(task['CalcTime'])
-            
-            # Muuttujat: start_time, end_time
+            transporter = int(task['Transporter'])
+
+            # Assignment: mille asemalle vaihe menee ryhmässä
+            station_assignment = model.NewIntVarFromDomain(cp_model.Domain.FromValues(group_stations), f'station_b{batch_id}_s{stage}')
             start = model.NewIntVar(0, horizon, f'start_b{batch_id}_s{stage}')
             end = model.NewIntVar(0, horizon, f'end_b{batch_id}_s{stage}')
-            
-            # Rajoite: end = start + calc_time
-            model.Add(end == start + calc_time)
-            
-            # Luo interval-muuttuja (tarvitaan NoOverlap-rajoitteelle)
             interval = model.NewIntervalVar(start, calc_time, end, f'interval_b{batch_id}_s{stage}')
-            
+
+            model.Add(end == start + calc_time)
+
             task_vars[(batch_id, stage)] = {
                 'start': start,
                 'end': end,
                 'interval': interval,
-                'station': station,
+                'station_assignment': station_assignment,
                 'calc_time': calc_time,
-                'transporter': int(task['Transporter'])
+                'transporter': transporter
             }
     
     # RAJOITE 1: Vaiheiden järjestys samassa erässä
@@ -137,37 +149,39 @@ def build_cpsat_model(matrix_df, transfer_times, transporters_df):
     for batch in batches:
         batch_tasks = matrix_df[matrix_df['Batch'] == batch].sort_values('Stage')
         stages = batch_tasks['Stage'].tolist()
-        
         for i in range(len(stages) - 1):
             curr_stage = int(stages[i])
             next_stage = int(stages[i + 1])
-            
             curr_task = task_vars[(batch, curr_stage)]
             next_task = task_vars[(batch, next_stage)]
-            
-            # Hae siirtoaika edellisestä asemasta seuraavaan
-            from_station = curr_task['station']
-            to_station = next_task['station']
             transporter_id = curr_task['transporter']
-            
-            transfer_time = transfer_times.get((from_station, to_station, transporter_id), 0)
-            
-            # Rajoite: seuraava vaihe voi alkaa vasta kun edellinen on valmis + siirtoaika
-            model.Add(next_task['start'] >= curr_task['end'] + transfer_time)
+            # Siirtoaika: käytetään aseman assignment-muuttujaa
+            from_station_id = int(matrix_df[(matrix_df['Batch']==batch) & (matrix_df['Stage']==curr_stage)]['Station'].values[0])
+            to_station_id = int(matrix_df[(matrix_df['Batch']==batch) & (matrix_df['Stage']==next_stage)]['Station'].values[0])
+            from_group = stations_df[stations_df['Number'] == from_station_id]['Group'].values[0] if 'Group' in stations_df.columns else from_station_id
+            to_group = stations_df[stations_df['Number'] == to_station_id]['Group'].values[0] if 'Group' in stations_df.columns else to_station_id
+            from_group_stations = [v for v in station_groups.get(from_group, [from_station_id])]
+            to_group_stations = [v for v in station_groups.get(to_group, [to_station_id])]
+            transfer_time_table = []
+            for fs in from_group_stations:
+                for ts in to_group_stations:
+                    transfer_time_table.append(transfer_times.get((fs, ts, transporter_id), 0))
+            # Siirtoaika muuttujana
+            if transfer_time_table:
+                transfer_time_var = model.NewIntVar(0, max(transfer_time_table), f'transfer_b{batch}_s{curr_stage}_to_s{next_stage}')
+                # Rajoite: seuraava vaihe voi alkaa vasta kun edellinen on valmis + siirtoaika
+                model.Add(next_task['start'] >= curr_task['end'] + transfer_time_var)
     
-    # RAJOITE 2: Ei päällekkäisyyksiä samalla asemalla
-    print(f"  Lisätään NoOverlap-rajoitteet asemille...")
-    station_intervals = {}
-    
-    for (batch, stage), task in task_vars.items():
-        station = task['station']
-        if station not in station_intervals:
-            station_intervals[station] = []
-        station_intervals[station].append(task['interval'])
-    
-    for station, intervals in station_intervals.items():
-        if len(intervals) > 1:  # Vain jos useampi tehtävä samalla asemalla
-            model.AddNoOverlap(intervals)
+    # RAJOITE 2: Ei päällekkäisyyksiä rinnakkaisryhmän asemilla
+    print(f"  Lisätään NoOverlap-rajoitteet rinnakkaisryhmille...")
+    for group, stations_in_group in station_groups.items():
+        group_intervals = []
+        for (batch, stage), task in task_vars.items():
+            # Jos asema kuuluu tähän groupiin
+            # Käytetään assignment-muuttujaa
+            group_intervals.append(task['interval'])
+        if len(group_intervals) > 1:
+            model.AddNoOverlap(group_intervals)
     
     # RAJOITE 3: Ei päällekkäisyyksiä samalla nostimella
     # (Yksinkertaistettu: Oletetaan että nostin voi tehdä vain yhden tehtävän kerrallaan)
@@ -238,7 +252,7 @@ def solve_cpsat_model(model, task_vars, time_limit_seconds=60):
             solution[(batch, stage)] = {
                 'start': solver.Value(task['start']),
                 'end': solver.Value(task['end']),
-                'station': task['station'],
+                'station': solver.Value(task['station_assignment']),
                 'calc_time': task['calc_time'],
                 'transporter': task['transporter']
             }
@@ -395,10 +409,13 @@ def optimize_transporter_schedule(matrix_df, stations_df, transporters_df, time_
     print(f"{'='*60}\n")
     
     # Vaihe 1: Esilaskenta
+    # Ota Group-sarake mukaan aseman tietoihin
+    if 'Group' not in stations_df.columns:
+        stations_df['Group'] = None
     transfer_times = precalculate_transfer_times(matrix_df, stations_df, transporters_df)
     
     # Vaihe 2: Mallin rakentaminen
-    model, task_vars = build_cpsat_model(matrix_df, transfer_times, transporters_df)
+    model, task_vars = build_cpsat_model(matrix_df, transfer_times, transporters_df, stations_df)
     
     # Vaihe 3: Ratkaiseminen
     status, solution, makespan = solve_cpsat_model(model, task_vars, time_limit)
