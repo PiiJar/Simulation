@@ -211,17 +211,27 @@ def stretch_tasks(output_dir="output", input_file=None):
         if df_stretched.at[i, "Transporter_id"] == df_stretched.at[i+1, "Transporter_id"]:
             required_gap = phase_1 if (df_stretched.at[i, "Batch"] != df_stretched.at[i+1, "Batch"]) else 0
             shift = (df_stretched.at[i, "Sink_time"] + required_gap) - df_stretched.at[i+1, "Lift_time"]
+            # Debug-tulostus vain erä 1, nostoasemalle 336, vaihe 1
+            batch_dbg = df_stretched.at[i+1, "Batch"]
+            lift_stat_dbg = int(df_stretched.at[i+1, "Lift_stat"])
+            stage_dbg = int(df_stretched.at[i+1, "Stage"])
+            if int(batch_dbg) == 1 and lift_stat_dbg == 336:
+                prev_sink = df_stretched.at[i, 'Sink_time']
+                curr_lift = df_stretched.at[i+1, 'Lift_time']
+                print(f"[DEBUG] VENYTYS ERITTELY: Batch={batch_dbg} Stage={stage_dbg} Lift_stat={lift_stat_dbg}")
+                print(f"  Edellisen tehtävän Sink_time: {prev_sink}")
+                print(f"  Nykyisen tehtävän Lift_time: {curr_lift}")
+                print(f"  Laskettu siirtoasema (phase_1): {phase_1}")
+                print(f"  Venytyksen tarve (shift): (prev_sink + phase_1) - curr_lift = ({prev_sink} + {phase_1}) - {curr_lift} = {(prev_sink + phase_1) - curr_lift}")
+                print(f"  shift (ennen ceil): {shift}")
             if shift > 0:
                 shift_ceil = math.ceil(shift)
                 # Päivitä käsittelyohjelman CalcTime ja/tai Production.csv kuten aiemmin
-                batch_dbg = df_stretched.at[i+1, "Batch"]
-                lift_stat = int(df_stretched.at[i+1, "Lift_stat"])
-                stage_dbg = int(df_stretched.at[i+1, "Stage"])
                 if production_cache is not None:
                     prod_mask = production_cache["Batch"] == batch_dbg
                     if prod_mask.any():
                         start_station = int(production_cache.loc[prod_mask, "Start_station"].iloc[0])
-                        if lift_stat == start_station:
+                        if lift_stat_dbg == start_station:
                             if "Start_time_seconds" in production_cache.columns:
                                 old_start = production_cache.loc[prod_mask, "Start_time_seconds"].iloc[0]
                                 production_cache.loc[prod_mask, "Start_time_seconds"] = old_start + shift_ceil
@@ -234,10 +244,10 @@ def stretch_tasks(output_dir="output", input_file=None):
                             for idx_prog in prog_df.index:
                                 minstat = int(prog_df.at[idx_prog, "MinStat"])
                                 maxstat = int(prog_df.at[idx_prog, "MaxStat"])
-                                if minstat <= lift_stat <= maxstat:
+                                if minstat <= lift_stat_dbg <= maxstat:
                                     old_val = prog_df.at[idx_prog, "CalcTime_seconds"]
                                     prog_df.at[idx_prog, "CalcTime_seconds"] = float(old_val) + float(shift_ceil)
-                                    print(f"[DEBUG] CalcTime-päivitys: Batch={batch_dbg} Stage={prog_df.at[idx_prog, 'Stage']} Stat={lift_stat} {old_val}s -> {prog_df.at[idx_prog, 'CalcTime_seconds']}s (+{shift_ceil}s)")
+                                    pass
                                     break
                 # Siirrä seuraavaa tehtävää ja sen batchin kaikkia myöhempiä tehtäviä
                 batch_next = df_stretched.at[i+1, "Batch"]

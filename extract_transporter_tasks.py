@@ -192,7 +192,7 @@ def extract_transporter_tasks(output_dir):
 
                 # Debug-tulostus nostin 3, erä 1
                 if int(transporter_id) == 3 and int(batch) == 1:
-                    print(f"[DEBUG] Käsitellään nostin 3, erä 1: idx={idx}, lift_station={lift_station}, sink_station={sink_station}, arrival_time={arrival_time}")
+                    pass
 
                 # Hae asematiedot fysiikkalaskentoja varten
                 lift_station_info = stations_df[stations_df['Number'] == lift_station].iloc[0]
@@ -217,14 +217,14 @@ def extract_transporter_tasks(output_dir):
                             last_sink_info = stations_df[stations_df['Number'] == last_sink].iloc[0]
                             phase_1_duration = int(round(calculate_physics_transfer_time(last_sink_info, lift_station_info, transporter_info)))
                             if debug_print:
-                                print(f"[DEBUG] idx={idx} Transporter_id={transporter_id} prev_tasks löytyi: last_sink={last_sink}, lift_station={lift_station}, phase_1_duration={phase_1_duration}")
+                                pass
                         else:
                             # Ensimmäinen tehtävä: alkupaikasta nostoasemalle
                             start_position = transporter_start_positions[transporter_id]
                             start_station_info = stations_df[stations_df['Number'] == start_position].iloc[0]
                             phase_1_duration = int(round(calculate_physics_transfer_time(start_station_info, lift_station_info, transporter_info)))
                             if debug_print:
-                                print(f"[DEBUG] idx={idx} Transporter_id={transporter_id} prev_tasks TYHJÄ: start_position={start_position}, lift_station={lift_station}, phase_1_duration={phase_1_duration}")
+                                pass
                     else:
                         # Ensimmäinen tehtävä: alkupaikasta nostoasemalle
                         start_position = transporter_start_positions[transporter_id]
@@ -248,7 +248,7 @@ def extract_transporter_tasks(output_dir):
 
                 # Debug-tulostus vaiheajoista nostin 3, erä 1
                 if int(transporter_id) == 3 and int(batch) == 1:
-                    print(f"[DEBUG] phase_1_duration={phase_1_duration}, phase_2_duration={phase_2_duration}, phase_3_duration={phase_3_duration}, phase_4_duration={phase_4_duration}")
+                    pass
                 
                 # Laske fysiikka-ajat - LUOTA MATRIISIN LASKENTAAN:
                 # Phase_2_start = Start_Time (erän ExitTime) - EHDOTTOMASTI LUKITTU
@@ -524,8 +524,8 @@ def create_detailed_movements(output_dir):
     # Tallenna DataFrame
     movements_df = pd.DataFrame(movements)
     
-    # Järjestä oikein: Transporter -> Start_Time -> Phase
-    movements_df = movements_df.sort_values(['Transporter', 'Start_Time', 'Phase']).reset_index(drop=True)
+    # Järjestä: Transporter -> Batch -> Phase (säilytä vaihejärjestys)
+    movements_df = movements_df.sort_values(['Transporter', 'Batch', 'Phase']).reset_index(drop=True)
     
     # Päivitä Movement_ID peräkkäiseksi
     movements_df['Movement_ID'] = range(1, len(movements_df) + 1)
