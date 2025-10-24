@@ -161,8 +161,16 @@ def generate_matrix_stretched_pure(output_dir):
     
     all_rows = []
     
-    # Käy läpi jokainen erä
-    for _, batch_row in production_df.iterrows():
+    # 📌 Ohjelmoidaan matrix, jossa otetaan huomioin sekä asemien että nostinten rajoitukset
+    station_reservations = {}  # Jokaiselle asemalle: [(start, end), ...]
+    transporter_free_at = 0  # KRIITTINEN: Milloin nostin on vapaa aloittamaan seuraavan tehtävän
+
+    all_rows = []
+    
+    # KRIITTINEN: Käy läpi erät AIKAJÄRJESTYKSESSÄ (Start_time_seconds)
+    # Muuten erät menevät päällekkäin kun ne prosessoidaan väärässä järjestyksessä!
+    production_df_sorted = production_df.sort_values('Start_time_seconds').reset_index(drop=True)    # Käy läpi jokainen erä AIKAJÄRJESTYKSESSÄ
+    for _, batch_row in production_df_sorted.iterrows():
         batch_id = int(batch_row["Batch"])
         start_station = int(batch_row["Start_station"])
         treatment_program = int(batch_row["Treatment_program"])
@@ -264,16 +272,57 @@ def generate_matrix_stretched_pure(output_dir):
             phase_4 = calculate_sink_time(sink_station_row, transporter)
 
             transport_time = phase_2 + phase_3 + phase_4
-            entry_time = int(previous_exit + transport_time)
-            exit_time = entry_time + int(calc_time)
+            
+            # EntryTime = edellinen exit + siirtoaika (P2+P3+P4)
+            # Sink valmis = EntryTime (nostin on juuri laskenut erän)
+            # Käsittely: Sink valmis ... Lift alkaa
+            # ExitTime = Sink valmis + CalcTime + Phase_2 (Lift)
+            
+            tentative_entry_time = int(previous_exit + transport_time)
+            tentative_exit_time = tentative_entry_time + int(calc_time) + int(phase_2)  # FIX: Lisää Phase_2 (Lift)
+            
+            # KRIITTINEN: Asema on varattu koko ajan kun nostin on siellä:
+            # - Varaustila alkaa: EntryTime - Phase_4 (nostin saapuu)
+            # - Varaustila päättyy: ExitTime (nostin lähtee)
+            reservation_start = tentative_entry_time - int(phase_4)  # Nostin saapuu
+            reservation_end = tentative_exit_time  # Nostin lähtee
+            
+            # KRIITTINEN: Nostin ei voi aloittaa uutta tehtävää ennen kuin edellinen valmis!
+            # Nostin vapautuu = edellisen tehtävän ExitTime
+            # Jos nostin ei ole vielä vapaa, ODOTA
+            if reservation_start < transporter_free_at:
+                shift = transporter_free_at - reservation_start
+                tentative_entry_time += shift
+                tentative_exit_time += shift
+                reservation_start = tentative_entry_time - int(phase_4)
+                reservation_end = tentative_exit_time
+            
+            # Tarkista onko sink_stat varattu - JOS ON, ODOTA kunnes vapautuu!
+            if sink_stat in station_reservations:
+                for res_start, res_end in station_reservations[sink_stat]:
+                    # Jos tentatiivinen varaus menee päällekkäin toisen varauksen kanssa
+                    if reservation_start < res_end and reservation_end > res_start:
+                        # SIIRRÄ varaus kokonaan edellisen varauksen jälkeen
+                        shift = res_end - reservation_start
+                        tentative_entry_time += shift
+                        tentative_exit_time += shift
+                        reservation_start = tentative_entry_time - int(phase_4)
+                        reservation_end = tentative_exit_time
+            
+            entry_time = tentative_entry_time
+            exit_time = tentative_exit_time
+            
+            # Päivitä nostimen vapautumisaika
+            transporter_free_at = exit_time
 
             # Täsmädebug: Tulosta väliarvot erän 1, vaiheen 1 kohdalla
             # if batch_id == 1 and stage == 1:
             #     print(f"[DEBUG MATRIX] batch=1, stage=1, previous_exit={previous_exit}, phase_2={phase_2}, phase_3={phase_3}, phase_4={phase_4}, transport_time={transport_time}, entry_time={entry_time}")
 
+            # Tallenna aseman TODELLINEN varaus (nostin saapuu → nostin lähtee)
             if sink_stat not in station_reservations:
                 station_reservations[sink_stat] = []
-            station_reservations[sink_stat].append((entry_time, exit_time))
+            station_reservations[sink_stat].append((reservation_start, reservation_end))
 
             all_rows.append({
                 "Batch": batch_id,

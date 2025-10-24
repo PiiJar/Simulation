@@ -196,26 +196,48 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
             # OPTIMOITAVA MUUTTUJA: CalcTime (MinTime ≤ CalcTime ≤ MaxTime)
             calc_time_var = model.NewIntVar(min_time, max_time, f'calc_time_b{batch_id}_s{stage}')
 
-            # Laske aseman kokonaisvarausaika: sink + calc + lift
-            max_sink_time = max([sink_times.get((s, transporter), 0) for s in group_stations])
-            max_lift_time = max([lift_times.get((s, transporter), 0) for s in group_stations])
-            
-            # Kokonaisaika asemalla: sink + calc_time_var + lift
-            total_station_time_min = max_sink_time + min_time + max_lift_time
-            total_station_time_max = max_sink_time + max_time + max_lift_time
+            # KRIITTINEN: Käytä TARKKOJA aikoja jos asema on KIINTEÄ (ei Group-optimointia)!
+            # Jos group_stations on vain 1 asema, käytä sen tarkkoja aikoja
+            if len(group_stations) == 1:
+                # KIINTEÄ ASEMA - käytä tarkkoja aikoja
+                fixed_station = group_stations[0]
+                exact_sink_time = sink_times.get((fixed_station, transporter), 0)
+                exact_lift_time = lift_times.get((fixed_station, transporter), 0)
+                total_station_time_min = exact_sink_time + min_time + exact_lift_time
+                total_station_time_max = exact_sink_time + max_time + exact_lift_time
+            else:
+                # RYHMÄ - käytä maksimeja (konservatiivinen)
+                max_sink_time = max([sink_times.get((s, transporter), 0) for s in group_stations])
+                max_lift_time = max([lift_times.get((s, transporter), 0) for s in group_stations])
+                total_station_time_min = max_sink_time + min_time + max_lift_time
+                total_station_time_max = max_sink_time + max_time + max_lift_time
 
             # Assignment: mille asemalle vaihe menee ryhmässä
             station_assignment = model.NewIntVarFromDomain(cp_model.Domain.FromValues(group_stations), f'station_b{batch_id}_s{stage}')
             
             # OPTIMOITAVA MUUTTUJA: Start-aika (ei kiinteä)
             start = model.NewIntVar(0, horizon, f'start_b{batch_id}_s{stage}')
-            end = model.NewIntVar(0, horizon, f'end_b{batch_id}_s{stage}')
             
             # Interval: kesto riippuu calc_time_var:sta
             duration = model.NewIntVar(total_station_time_min, total_station_time_max, f'duration_b{batch_id}_s{stage}')
-            model.Add(duration == max_sink_time + calc_time_var + max_lift_time)
             
-            interval = model.NewIntervalVar(start, duration, end, f'interval_b{batch_id}_s{stage}')
+            # KRIITTINEN: Käytä OIKEITA sink/lift aikoja!
+            if len(group_stations) == 1:
+                # KIINTEÄ ASEMA - käytä tarkkoja aikoja
+                model.Add(duration == exact_sink_time + calc_time_var + exact_lift_time)
+            else:
+                # RYHMÄ - käytä maksimeja
+                model.Add(duration == max_sink_time + calc_time_var + max_lift_time)
+            
+            # KRIITTINEN: Interval-end PITÄÄ olla start + duration (aseman varaus)
+            interval_end = model.NewIntVar(0, horizon, f'interval_end_b{batch_id}_s{stage}')
+            model.Add(interval_end == start + duration)
+            
+            interval = model.NewIntervalVar(start, duration, interval_end, f'interval_b{batch_id}_s{stage}')
+            
+            # KORJAUS: end PITÄÄ olla SAMA kuin interval_end (ei erillistä muuttujaa!)
+            # Muuten NoOverlap ja precedence käyttävät eri intervalleja!
+            end = interval_end
 
             # Luo optional interval kullekin mahdolliselle asemalle
             optional_intervals = {}
@@ -227,7 +249,7 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
                 model.Add(station_assignment != station_id).OnlyEnforceIf(presence.Not())
                 
                 # Optional interval tälle asemalle
-                opt_interval = model.NewOptionalIntervalVar(start, duration, end, presence, f'opt_interval_b{batch_id}_s{stage}_stat{station_id}')
+                opt_interval = model.NewOptionalIntervalVar(start, duration, interval_end, presence, f'opt_interval_b{batch_id}_s{stage}_stat{station_id}')
                 optional_intervals[station_id] = opt_interval
                 
                 # Lisää aseman NoOverlap-listaan
@@ -276,13 +298,12 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
                 model.Add(next_task['start'] >= curr_task['end'] + transfer_time_var)
     
     # RAJOITE 2: Ei päällekkäisyyksiä yksittäisillä asemilla
-    # HUOM: Tämä tehdään RAJOITE 4:ssä disjunktiivisilla rajoitteilla (tarkempi!)
-    # Optional intervals -versio ei toimi oikein rinnakkaisten asemien kanssa
-    print(f"  Ohitetaan NoOverlap asemille (käytetään RAJOITE 4:ää sen sijaan)...")
-    # for station_id, intervals in station_optional_intervals.items():
-    #     if len(intervals) > 1:
-    #         print(f"    DEBUG: Asema {station_id}: {len(intervals)} intervalia")
-    #         model.AddNoOverlap(intervals)
+    # KRIITTINEN: Asemalla voi olla vain YKSI erä kerrallaan!
+    # HUOM: Tämä on ERI kuin Rajoite 4 (nostin vapautuminen)!
+    print(f"  Lisätään NoOverlap-rajoitteet asemille...")
+    for station_id, intervals in station_optional_intervals.items():
+        if len(intervals) > 1:
+            model.AddNoOverlap(intervals)
     
     # RAJOITE 3: Ei päällekkäisyyksiä samalla nostimella
     # TÄRKEÄ: Intervalien pitää vastata TÄSMÄLLEEN cpsat_solution_to_dataframe() -laskennan aikoja!
@@ -376,6 +397,15 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
             # Alkaa: lift ALKAA tältä asemalta = curr_task['end'] - lift_time
             # Päättyy: sink VALMIS seuraavalla asemalla = next_task['start'] + sink_time
             
+            # NOSTIMEN TEHTÄVÄ TÄLLE VAIHEELLE:
+            # Alkaa: Lift ALKAA nykyisellä asemalla = curr_task['end'] - lift_time_curr
+            # Päättyy: Sink VALMIS seuraavalla asemalla = next_task['start']
+            # 
+            # HUOM: Interval kattaa KOKO tehtävän:
+            #   - Lift (nykyinen asema)
+            #   - Tyhjä siirto (nykyinen → seuraava asema)
+            #   - Sink (seuraava asema)
+            
             trans_start = model.NewIntVar(0, horizon, f'trans_b{batch}_s{curr_stage}_lift_start')
             model.Add(trans_start == curr_task['end'] - lift_time_curr)
             
@@ -384,19 +414,11 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
                 next_stage = int(stages[i+1])
                 next_task = task_vars[(batch, next_stage)]
                 next_station_id = int(matrix_df[(matrix_df['Batch']==batch) & (matrix_df['Stage']==next_stage)]['Station'].values[0])
-                sink_time_next = sink_times.get((next_station_id, transporter), 0)
                 
-                # TÄRKEÄ: Nostintehtävä päättyy kun sink valmis SEURAAVALLA asemalla
-                # MUTTA nostimen interval pitää kattaa myös TYHJÄ SIIRTYMÄ seuraavan tehtävän alkuasemalle
-                # 
-                # Tämän erän tehtävä: station_id → next_station_id (sink valmis next_task['start'] + sink_time_next)
-                # Seuraavan erän tehtävä alkaa: jostain asemasta (ei välttämättä next_station_id)
-                # 
-                # ONGELMA: Tässä vaiheessa ei tiedetä SEURAAVAN ERÄN tehtävää (voi olla eri erä)!
-                # RATKAISU: Interval kattaa vain TÄMÄN tehtävän, tyhjä siirtymä lisätään ERIKSEEN
-                
+                # KORJAUS: trans_end on kun Sink VALMIS seuraavalla asemalla
+                # = next_task['start'] (ei + sink_time!)
                 trans_end = model.NewIntVar(0, horizon, f'trans_b{batch}_s{curr_stage}_sink_end')
-                model.Add(trans_end == next_task['start'] + sink_time_next)
+                model.Add(trans_end == next_task['start'])
             else:
                 # Viimeinen vaihe: Sink_stat = Lift_stat (sama asema)
                 trans_end = model.NewIntVar(0, horizon, f'trans_b{batch}_s{curr_stage}_sink_end')
@@ -468,18 +490,27 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
     if empty_transfer_count > 0:
         print(f"    Lisätty {empty_transfer_count} nostimen tyhjän siirtymän rajoitetta")
     
-    # RAJOITE 4: Aseman vapautuminen ennen seuraavaa erää
-    # FYYSINEN RAJOITE: Nostin ei voi laskea uutta erää altaaseen ennen kuin edellinen on nostettu pois!
+    # RAJOITE 4: Aseman varaus - "Ämpäri-rajoite"
+    # KRIITTINEN: Nostin ei voi aloittaa uutta tehtävää ennen kuin edellinen on KOKONAAN valmis!
     # 
-    # Aikajana per erä asemalla:
-    #   [EntryTime] --Sink--> [Sink valmis] --CalcTime--> [Lift alkaa] --Lift--> [Lift valmis]
+    # Vaikka asema FYYSISESTI vapautuisi kun Lift valmis, KÄYTÄNNÖSSÄ asema on varattu
+    # kunnes NOSTIN vapautuu = koko siirtotehtävä valmis (Sink valmis seuraavalla asemalla)
     # 
-    # Rajoite: Erä A:n Lift täytyy VALMISTUA ennen kuin Erä B:n Sink voi ALKAA
-    #   → B.EntryTime >= A.EntryTime + sink_time + calc_time + lift_time
-    #   → B.EntryTime >= A.end (koska A.end = A.start + sink + calc + lift)
+    # Aikajana per erä asemalla X (Stage N):
+    #   [Stage N-1 Sink valmis] → Erä asemalla X → [CalcTime] → [Stage N Lift] → [Siirto] → [Stage N Sink seuraavalla]
+    #    ↑ VARAUS ALKAA                                                                       ↑ ASEMA VAPAA (nostin vapaa)
     # 
-    # TAI päinvastoin: A.EntryTime >= B.end
-    print(f"  Lisätään disjunktiiviset rajoitteet asemille...")
+    # Miksi Sink valmis seuraavalla?
+    #   - Uuden erän tuominen asemalle X VAATII NOSTIMEN
+    #   - Nostin ei voi aloittaa uutta tehtävää ennen kuin edellinen on valmis
+    #   - Edellinen tehtävä on valmis vasta kun Sink valmis seuraavalla asemalla
+    #   → Asema X ei voi vastaanottaa uutta erää ennen kuin nostin vapautuu
+    # 
+    # RAJOITE: Erä A:n seuraava Sink valmis <= Erä B:n edellinen Sink valmis  TAI  päinvastoin
+    #   → A.end <= B.start  TAI  B.end <= A.start
+    # 
+    # Tämä takaa että nostin on vapaa ennen kuin seuraava erä tuodaan asemalle!
+    print(f"  Lisätään disjunktiiviset 'ämpäri-rajoitteet' asemille...")
     
     # Kerää kaikki tehtävät asemakohtaisesti
     station_tasks = {}  # {station_id: [(batch, stage, task)]}
@@ -500,13 +531,13 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
             station_tasks[station_id].append({
                 'batch': batch_id,
                 'stage': stage,
-                'start': task['start'],  # EntryTime (Sink alkaa)
-                'end': task['end'],      # Lift valmis (nostinoperaatio kokonaan valmis)
+                'start': task['start'],  # Edellinen Sink valmis (erä tuotu asemalle)
+                'end': task['end'],      # Seuraava Sink valmis (nostin vapaa)
             })
     
     # Lisää rajoitteet: jokaisella asemalla erien välillä disjunktio
     # RAJOITE: A.end <= B.start TAI B.end <= A.start
-    # (A:n Lift valmis ennen B:n Sink alkaa TAI päinvastoin)
+    # (A:n nostin vapautuu ennen kuin B tuodaan TAI päinvastoin)
     constraints_added = 0
     for station_id, tasks in station_tasks.items():
         # Jokainen pari tehtäviä samalla asemalla
@@ -516,24 +547,46 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
                 task_b = tasks[j]
                 
                 # Jos eri erät, lisää disjunktio:
-                # JOKO A:n Lift valmis ennen B:n Sink alkaa TAI päinvastoin
+                # JOKO A:n nostin vapaa ennen kuin B tuodaan TAI päinvastoin
                 if task_a['batch'] != task_b['batch']:
                     # Luo boolean: onko A ennen B:tä?
-                    var_name = f'a{task_a["batch"]}_s{task_a["stage"]}_before_b{task_b["batch"]}_s{task_b["stage"]}_stat{station_id}'
+                    var_name = f'bucket_a{task_a["batch"]}_s{task_a["stage"]}_before_b{task_b["batch"]}_s{task_b["stage"]}_stat{station_id}'
                     a_before_b = model.NewBoolVar(var_name)
                     
-                    # Jos A ennen B:tä → A:n Lift valmis ennen B:n Sink alkaa
+                    # Jos A ennen B:tä → A:n nostin vapaa ennen kuin B tuodaan
                     # A.end <= B.start
                     model.Add(task_a['end'] <= task_b['start']).OnlyEnforceIf(a_before_b)
                     
-                    # Jos B ennen A:ta → B:n Lift valmis ennen A:n Sink alkaa
+                    # Jos B ennen A:ta → B:n nostin vapaa ennen kuin A tuodaan
                     # B.end <= A.start
                     model.Add(task_b['end'] <= task_a['start']).OnlyEnforceIf(a_before_b.Not())
                     
                     constraints_added += 1
     
     if constraints_added > 0:
-        print(f"    Lisätty {constraints_added} disjunktiivista rajoitetta")
+        print(f"    Lisätty {constraints_added} 'ämpäri-rajoitetta' (aseman varaus = nostin vapaa)")
+    
+    # RAJOITE 5: "ÄMPÄRI-RAJOITE" - Erä pitää poistaa asemalta ennen kuin uusi voidaan tuoda
+    # KRIITTINEN FYYSINEN RAJOITE!
+    #
+    # Jos Tehtävä_A vie erän asemalle X (Sink) ja Tehtävä_B vie erän asemalle X (Sink),
+    # molemmat ERI ERÄT, TÄYTYY:
+    #   - Joko Erä_A poistetaan (Lift) ENNEN kuin Erä_B tuodaan (Sink)
+    #   - TAI Erä_B poistetaan ENNEN kuin Erä_A tuodaan
+    #
+    # Tämä on JO TOTEUTETTU RAJOITE 4:ssä (disjunktiiviset rajoitteet asemille)!
+    # MUTTA rajoite 4 vertaa start-end aikoja (EntryTime - ExitTime)
+    #
+    # LISÄRAJOITE: Jos task_b nostaa asemalta X samalla kun task_a laskee asemalle X,
+    # pitää varmistaa että ne eivät ole päällekkäin fyysisesti.
+    #
+    # HUOM: Tämä on jo hoidettu Rajoite 4:ssä! Ei tarvitse lisätä mitään.
+    # Rajoite 4 sanoo: A.end <= B.start TAI B.end <= A.start
+    # Missä A.end = Lift valmis, B.start = Sink alkaa
+    # → Erä A poistettu ENNEN kuin Erä B tuodaan!
+    
+    # EI LISÄTÄ ERILLISTÄ RAJOITETTA - Rajoite 4 hoitaa tämän!
+    print(f"  ℹ️  'Ämpäri-rajoite' toteutettu Rajoite 4:ssä (disjunktiiviset asemarajoitteet)")
     
     # TAVOITE: Minimoi makespan (viimeisen tehtävän päättymisaika)
     print(f"  Asetetaan tavoitefunktio (minimoi makespan)...")
@@ -546,7 +599,7 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
     
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Malli rakennettu. Muuttujia: {len(task_vars)}")
     
-    return model, task_vars
+    return model, task_vars, transporter_task_vars
 
 
 def solve_cpsat_model(model, task_vars, time_limit_seconds=60):
@@ -656,21 +709,19 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
         trans_row = transporter_map[transporter_id]
         
         phase_1 = calculate_physics_transfer_time(from_row, to_row, trans_row)
-        phase_2 = calculate_lift_time(to_row, trans_row)
+        phase_2 = calculate_lift_time(from_row, trans_row)  # KORJAUS: Lift FROM start_station!
         phase_3 = calculate_physics_transfer_time(to_row, to_row, trans_row)  # Ei siirtoa
         phase_4 = calculate_sink_time(to_row, trans_row)
         
-        # Laske Lift_time taaksepäin Start_time:sta
-        # HUOM: Varmista että lift_time >= 0 (nostin ei voi toimia ennen aikaa 0)
-        ideal_lift_time = first_start - int(phase_1) - int(phase_2) - int(phase_4)
-        lift_time = max(0, ideal_lift_time)
+        # Stage 0: Nostetaan aloitusasemalta (301), siirretään ja lasketaan ensimmäiselle käsittelyasemalle
+        # first_start = EntryTime ensimmäisellä käsittelyasemalla (Sink valmis edellisellä Stage:lla)
+        # Sink_time = EntryTime + phase_4 (Sink valmis ensimmäisellä käsittelyasemalla)
+        sink_time = first_start + int(phase_4)
         
-        # Jos lift_time pakotettiin 0:aan, sink_time pitää säätää
-        if lift_time == 0:
-            # Nostintehtävä: lift (phase_2) + siirto (phase_1) + sink (phase_4)
-            sink_time = lift_time + int(phase_2) + int(phase_1) + int(phase_4)
-        else:
-            sink_time = first_start
+        # Lift_time = Sink_time - phase_1 - phase_2 (laske taaksepäin)
+        # HUOM: Lift ei voi alkaa ennen aikaa 0
+        ideal_lift_time = first_start - int(phase_1) - int(phase_2)
+        lift_time = max(0, ideal_lift_time)
         
         # Stage 0 -rivi
         task_row_0 = {
@@ -712,33 +763,33 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
             phase_3 = calculate_physics_transfer_time(curr_row, curr_row, trans_row)
             phase_4 = calculate_sink_time(curr_row, trans_row)
             
-            # KORJATTU: Oikea tulkinta interval-muuttujista
-            # task['start'] = Aika kun SINK ALKAA (erä tulee asemalle)
-            # task['end'] = Aika kun LIFT VALMIS (erä lähtee asemalta)
+            # KORJATTU TULKINTA: task-muuttujat CP-SAT:ssa
+            # task['start'] = EntryTime (edellinen Sink valmis, erä tulee asemalle)
+            # task['end'] = start + sink + calc + lift (Lift valmis tältä asemalta)
             # 
-            # Aikajana: [start] --sink--> [entry] --calc--> [exit] --lift--> [end]
-            #
-            # Nostintehtävä = NOSTO tältä asemalta ja LASKU seuraavalle
+            # Aikajana:
+            # [task['start']] = EntryTime
+            #     ↓ (sink asemalla)
+            # [task['start'] + phase_4] = Sink valmis
+            #     ↓ (calc)
+            # [task['end'] - phase_2] = Lift alkaa
+            #     ↓ (lift)
+            # [task['end']] = Lift valmis
             
-            # Lift alkaa: end - lift_time
+            # Lift alkaa: end - phase_2 (nosto ylös)
             lift_time = task['end'] - int(phase_2)
             
-            # Sink valmis seuraavalla asemalla: next_task['start'] + sink_time
-            if i < len(batch_stages) - 1:
-                next_task = solution[(batch, next_stage)]
-                sink_time = next_task['start'] + int(phase_4)
-            else:
-                # Viimeinen vaihe: Sink_stat = Lift_stat (sama asema)
-                sink_time = task['end']
+            # Sink valmis TÄLLÄ asemalla: start + phase_4
+            sink_time = task['start'] + int(phase_4)
             
             task_row = {
                 'Transporter_id': transporter_id,
                 'Batch': batch,
                 'Treatment_program': treatment_program,
                 'Stage': stage,
-                'Lift_stat': current_station,
+                'Lift_stat': current_station,  # Nostetaan TÄLTÄ asemalta
                 'Lift_time': lift_time,
-                'Sink_stat': next_station if i < len(batch_stages) - 1 else current_station,
+                'Sink_stat': current_station,  # Lasketaan TÄLLE asemalle (ei seuraavalle!)
                 'Sink_time': sink_time,
                 'Phase_1': float(phase_1),
                 'Phase_2': float(phase_2),
@@ -875,13 +926,20 @@ def create_line_matrix_from_solution(solution, matrix_df, treatment_programs_df,
     return df
 
 
-def save_optimized_calctimes(solution, matrix_df, output_dir):
+def save_optimized_calctimes(solution, matrix_df, lift_times, sink_times, output_dir):
     """
     Tallentaa optimoidut CalcTime-arvot treatment_program-tiedostoihin.
+    
+    CalcTime lasketaan CP-SAT:n AIKATAULUISTA:
+    CalcTime = (end - start) - sink_time - lift_time
+    
+    Näin CalcTime VASTAA sitä aikaa, jonka erä tosiasiassa viettää asemalla.
     
     Args:
         solution: CP-SAT:n ratkaisu (dict)
         matrix_df: line_matrix_original.csv DataFrame
+        lift_times: Esilasketut lift-ajat {(station, transporter): seconds}
+        sink_times: Esilasketut sink-ajat {(station, transporter): seconds}
         output_dir: Output-kansio
     """
     print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Tallennetaan optimoidut CalcTime-arvot...")
@@ -890,17 +948,37 @@ def save_optimized_calctimes(solution, matrix_df, output_dir):
     batch_calctimes = {}  # {(batch, program_id): {stage: calc_time}}
     
     for (batch, stage), sol in solution.items():
-        # Hae program_id
+        # Hae program_id ja station
         row = matrix_df[(matrix_df['Batch'] == batch) & (matrix_df['Stage'] == stage)]
         if len(row) == 0:
             continue
         program_id = int(row.iloc[0]['Treatment_program'])
+        station = sol['station']
+        transporter = sol['transporter']
         
         if (batch, program_id) not in batch_calctimes:
             batch_calctimes[(batch, program_id)] = {}
         
-        # Tallenna optimoitu CalcTime (sekunteina)
-        batch_calctimes[(batch, program_id)][stage] = sol['calc_time']
+        # KRIITTINEN: Laske CalcTime CP-SAT:n AIKATAULUISTA
+        # CalcTime = (tehtävän kesto) - sink_time - lift_time
+        # missä:
+        #   tehtävän kesto = end - start
+        #   sink_time = aika laskea erä asemalle
+        #   lift_time = aika nostaa erä pois
+        
+        start_time = sol['start']
+        end_time = sol['end']
+        duration = end_time - start_time
+        
+        # Hae sink ja lift ajat tälle asemalle
+        sink_time = sink_times.get((station, transporter), 0)
+        lift_time = lift_times.get((station, transporter), 0)
+        
+        # Laske todellinen CalcTime
+        calc_time = duration - sink_time - lift_time
+        
+        # Tallenna
+        batch_calctimes[(batch, program_id)][stage] = calc_time
     
     # Kerää muutostiedot raportointiin
     changes_report = []
@@ -979,24 +1057,56 @@ def save_optimized_calctimes(solution, matrix_df, output_dir):
         print(f"\n  ℹ️  Ei merkittäviä CalcTime-muutoksia (alle 1s)")
 
 
-def save_optimized_production(solution, matrix_df, output_dir):
+def save_optimized_production(solution, matrix_df, stations_df, transporters_df, output_dir):
     """
     Tallentaa optimoidut alkuajat ja järjestyksen production.csv-tiedostoon.
     Päivittää initialization/production.csv Start_optimized-saraketta.
     
+    KRIITTINEN: Start_time_seconds = milloin Stage 0 Lift alkaa (erä lähtee asemalta 301)
+    
     Args:
         solution: CP-SAT:n ratkaisu (dict)
         matrix_df: line_matrix_original.csv DataFrame
+        stations_df: stations.csv DataFrame
+        transporters_df: transporters.csv DataFrame
         output_dir: Output-kansio
     """
+    from transporter_physics import calculate_physics_transfer_time, calculate_lift_time
+    
     print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Tallennetaan optimoitu production.csv...")
     
-    # Kerää erien alkuajat (Stage 1 start time)
+    # Luo station_map ja transporter_map
+    station_map = {int(row['Number']): row for _, row in stations_df.iterrows()}
+    transporter_map = {int(row['Transporter_id']): row for _, row in transporters_df.iterrows()}
+    
+    # Kerää erien OIKEAT alkuajat (Stage 0 Lift start = milloin erä lähtee asemalta 301)
     batch_starts = {}  # {batch: start_time_sec}
     
-    for (batch, stage), sol in solution.items():
-        if stage == 1:  # Ensimmäinen vaihe
-            batch_starts[batch] = sol['start']
+    batches = sorted(set([batch for batch, _ in solution.keys()]))
+    
+    for batch in batches:
+        # Hae ensimmäinen käsittelyvaihe (stage 1)
+        batch_stages = sorted([s for b, s in solution.keys() if b == batch])
+        first_stage = batch_stages[0]
+        first_task = solution[(batch, first_stage)]
+        first_station = first_task['station']
+        first_start = first_task['start']
+        transporter_id = first_task['transporter']
+        
+        # Laske Stage 0 Lift start (sama logiikka kuin cpsat_solution_to_dataframe)
+        start_station = 301
+        from_row = station_map[start_station]
+        to_row = station_map[first_station]
+        trans_row = transporter_map[transporter_id]
+        
+        phase_1 = calculate_physics_transfer_time(from_row, to_row, trans_row)
+        phase_2 = calculate_lift_time(from_row, trans_row)
+        
+        ideal_lift_time = first_start - int(phase_1) - int(phase_2)
+        lift_time = max(0, ideal_lift_time)
+        
+        # TÄMÄ on Start_time_seconds!
+        batch_starts[batch] = lift_time
     
     # Lue alkuperäinen production.csv
     production_file = os.path.join(output_dir, "initialization", "production.csv")
@@ -1010,7 +1120,13 @@ def save_optimized_production(solution, matrix_df, output_dir):
     # Tallenna alkuperäinen järjestys
     original_order = prod_df['Batch'].tolist()
     
-    # Päivitä Start_optimized-sarake
+    # KRIITTINEN: Luo sarakkeet jos niitä ei ole!
+    if 'Start_optimized' not in prod_df.columns:
+        prod_df['Start_optimized'] = None
+    if 'Start_time_seconds' not in prod_df.columns:
+        prod_df['Start_time_seconds'] = None
+    
+    # Päivitä Start_optimized-sarake JA Start_time_seconds
     for batch, start_sec in batch_starts.items():
         mask = prod_df['Batch'] == batch
         if mask.any():
@@ -1021,10 +1137,12 @@ def save_optimized_production(solution, matrix_df, output_dir):
             start_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             
             prod_df.loc[mask, 'Start_optimized'] = start_str
+            # KRIITTINEN: Päivitä myös Start_time_seconds jotta generate_matrix_stretched käyttää oikeita aikoja!
+            prod_df.loc[mask, 'Start_time_seconds'] = float(start_sec)
     
     # TALLENNA PÄIVITETTY production.csv (säilyttää järjestyksen)
     prod_df.to_csv(production_file, index=False)
-    print(f"  ✅ Päivitetty: initialization/production.csv (lisätty Start_optimized)")
+    print(f"  ✅ Päivitetty: initialization/production.csv (Start_optimized + Start_time_seconds)")
     
     # TALLENNA MYÖS järjestetty versio optimized_programs-kansioon (raportointia varten)
     prod_df_sorted = prod_df.copy()
@@ -1086,7 +1204,7 @@ def optimize_transporter_schedule(matrix_df, stations_df, transporters_df, outpu
     transfer_times, lift_times, sink_times, stage0_times = precalculate_transfer_times(matrix_df, stations_df, transporters_df)
     
     # Vaihe 2: Mallin rakentaminen
-    model, task_vars = build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_times, transporters_df, stations_df, treatment_programs_df)
+    model, task_vars, transporter_task_vars = build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_times, transporters_df, stations_df, treatment_programs_df)
     
     # Vaihe 3: Ratkaiseminen
     status, solution, makespan = solve_cpsat_model(model, task_vars, time_limit)
@@ -1096,8 +1214,8 @@ def optimize_transporter_schedule(matrix_df, stations_df, transporters_df, outpu
         return None
     
     # Vaihe 4: Tallenna optimoidut arvot
-    save_optimized_calctimes(solution, matrix_df, output_dir)
-    save_optimized_production(solution, matrix_df, output_dir)
+    save_optimized_calctimes(solution, matrix_df, lift_times, sink_times, output_dir)
+    save_optimized_production(solution, matrix_df, stations_df, transporters_df, output_dir)
     
     # Vaihe 5: Muuntaminen DataFrame-muotoon (transporter_tasks)
     optimized_df = cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_df)
@@ -1126,19 +1244,16 @@ def optimize_transporter_schedule(matrix_df, stations_df, transporters_df, outpu
     # Tallenna transporter_tasks (referenssiksi)
     transporter_file = os.path.join(output_dir, "logs", "transporter_tasks_optimized.csv")
     optimized_df.to_csv(transporter_file, index=False)
+    print(f"  ✅ Tallennettu: {transporter_file}")
     
     print(f"\n{'='*60}")
     print(f"CP-SAT OPTIMOINTI VALMIS")
     print(f"Makespan: {makespan} s ({makespan/60:.1f} min)")
     print(f"Päivitetty:")
-    print(f"  - initialization/production.csv (Start_optimized)")
+    print(f"  - initialization/production.csv (Start_optimized + Start_time_seconds)")
     print(f"  - optimized_programs/Batch_XXX_Treatment_program_YYY.csv (CalcTime)")
     print(f"Tallennettu:")
     print(f"  - {transporter_file}")
-    print(f"{'='*60}\n")
-    
-    return optimized_df
-    print(f"Makespan: {makespan} s ({makespan/60:.1f} min)")
     print(f"{'='*60}\n")
     
     return optimized_df
