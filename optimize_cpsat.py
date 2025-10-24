@@ -290,6 +290,7 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
     # Stage 1+: lift_time = curr_task['end'] - phase_2, sink_time = next_task['start'] + phase_4
     print(f"  Lisätään NoOverlap-rajoitteet nostimille...")
     transporter_intervals = {}
+    transporter_task_vars = {}  # Tallennetaan lift_start ja sink_end muuttujat
     
     # Luo nostimen intervallit per erä (mukaan lukien STAGE 0!)
     for batch in batches:
@@ -351,6 +352,14 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
         stage0_interval = model.NewIntervalVar(stage0_lift_start, stage0_duration, stage0_sink_end, f'trans_interval_b{batch}_s0')
         transporter_intervals[transporter].append(stage0_interval)
         
+        # Tallenna muuttujat
+        transporter_task_vars[(batch, 0, transporter)] = {
+            'lift_station': 301,
+            'sink_station': first_station,
+            'lift_start': stage0_lift_start,
+            'sink_end': stage0_sink_end
+        }
+        
         # STAGE 1-N: Käsittelyvaiheet
         for i in range(len(stages)):
             curr_stage = int(stages[i])
@@ -377,6 +386,15 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
                 next_station_id = int(matrix_df[(matrix_df['Batch']==batch) & (matrix_df['Stage']==next_stage)]['Station'].values[0])
                 sink_time_next = sink_times.get((next_station_id, transporter), 0)
                 
+                # TÄRKEÄ: Nostintehtävä päättyy kun sink valmis SEURAAVALLA asemalla
+                # MUTTA nostimen interval pitää kattaa myös TYHJÄ SIIRTYMÄ seuraavan tehtävän alkuasemalle
+                # 
+                # Tämän erän tehtävä: station_id → next_station_id (sink valmis next_task['start'] + sink_time_next)
+                # Seuraavan erän tehtävä alkaa: jostain asemasta (ei välttämättä next_station_id)
+                # 
+                # ONGELMA: Tässä vaiheessa ei tiedetä SEURAAVAN ERÄN tehtävää (voi olla eri erä)!
+                # RATKAISU: Interval kattaa vain TÄMÄN tehtävän, tyhjä siirtymä lisätään ERIKSEEN
+                
                 trans_end = model.NewIntVar(0, horizon, f'trans_b{batch}_s{curr_stage}_sink_end')
                 model.Add(trans_end == next_task['start'] + sink_time_next)
             else:
@@ -389,10 +407,66 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
             
             trans_interval = model.NewIntervalVar(trans_start, trans_duration, trans_end, f'trans_interval_b{batch}_s{curr_stage}')
             transporter_intervals[transporter].append(trans_interval)
+            
+            # Tallenna muuttujat
+            if i < len(stages) - 1:
+                next_station = int(matrix_df[(matrix_df['Batch']==batch) & (matrix_df['Stage']==int(stages[i+1]))]['Station'].values[0])
+                sink_station = next_station
+            else:
+                sink_station = station_id
+            
+            transporter_task_vars[(batch, curr_stage, transporter)] = {
+                'lift_station': station_id,
+                'sink_station': sink_station,
+                'lift_start': trans_start,
+                'sink_end': trans_end
+            }
     
     for transporter, intervals in transporter_intervals.items():
         if len(intervals) > 1:
             model.AddNoOverlap(intervals)
+    
+    # RAJOITE 3b: Nostimen tyhjä siirtymä tehtävien välillä
+    # Kun nostintehtävä A päättyy asemalla X ja tehtävä B alkaa asemalta Y,
+    # nostimen täytyy siirtyä tyhjänä X → Y
+    print(f"  Lisätään nostimen tyhjän siirtymän rajoitteet...")
+    
+    # Luo lista kaikista nostintehtävistä per transporter
+    tasks_by_transporter = {}
+    for key, task_info in transporter_task_vars.items():
+        batch, stage, transporter = key
+        if transporter not in tasks_by_transporter:
+            tasks_by_transporter[transporter] = []
+        tasks_by_transporter[transporter].append((key, task_info))
+    
+    # Lisää disjunktiiviset rajoitteet pareittain
+    empty_transfer_count = 0
+    for transporter, tasks in tasks_by_transporter.items():
+        for i, (key_a, task_a) in enumerate(tasks):
+            for j, (key_b, task_b) in enumerate(tasks):
+                if i >= j:
+                    continue
+                
+                # Hae siirtymäajat
+                transfer_a_to_b = transfer_times.get((task_a['sink_station'], task_b['lift_station'], transporter), 0)
+                transfer_b_to_a = transfer_times.get((task_b['sink_station'], task_a['lift_station'], transporter), 0)
+                
+                # Jos A ennen B: A_sink_end + transfer_a_to_b <= B_lift_start
+                # Jos B ennen A: B_sink_end + transfer_b_to_a <= A_lift_start
+                
+                # Luo boolean: a_before_b
+                a_before_b = model.NewBoolVar(f'empty_trans_{key_a[0]}_{key_a[1]}_before_{key_b[0]}_{key_b[1]}')
+                
+                # Jos a_before_b = True: A ennen B
+                model.Add(task_a['sink_end'] + transfer_a_to_b <= task_b['lift_start']).OnlyEnforceIf(a_before_b)
+                
+                # Jos a_before_b = False: B ennen A
+                model.Add(task_b['sink_end'] + transfer_b_to_a <= task_a['lift_start']).OnlyEnforceIf(a_before_b.Not())
+                
+                empty_transfer_count += 1
+    
+    if empty_transfer_count > 0:
+        print(f"    Lisätty {empty_transfer_count} nostimen tyhjän siirtymän rajoitetta")
     
     # RAJOITE 4: Aseman vapautuminen ennen seuraavaa erää
     # Sama erä ei voi olla asemalla kahdesti, JA
@@ -665,6 +739,63 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Luotu {len(df)} tehtävää")
     
     return df
+
+
+def validate_empty_transporter_movements(df, transfer_times):
+    """
+    Validoi että nostimen tehtävien välissä on riittävästi aikaa tyhjälle siirtymälle.
+    
+    Args:
+        df: transporter_tasks DataFrame (sisältää Lift_stat, Sink_stat, Lift_time, Sink_time)
+        transfer_times: esilasketut siirtoajat {(from_station, to_station, transporter): time}
+    
+    Returns:
+        list: Lista varoituksista jos tyhjä siirtymä ei ole riittävä
+    """
+    warnings = []
+    
+    # Järjestä tehtävät aikajärjestykseen
+    df_sorted = df.sort_values('Lift_time').reset_index(drop=True)
+    
+    for i in range(len(df_sorted) - 1):
+        curr = df_sorted.iloc[i]
+        next_task = df_sorted.iloc[i + 1]
+        
+        # Tarkista onko sama nostin
+        if curr['Transporter_id'] != next_task['Transporter_id']:
+            continue
+        
+        # Edellinen tehtävä päättyy: Sink valmis asemalla curr['Sink_stat']
+        prev_end_station = int(curr['Sink_stat'])
+        prev_end_time = int(curr['Sink_time'])
+        
+        # Seuraava tehtävä alkaa: Lift alkaa asemalta next_task['Lift_stat']
+        next_start_station = int(next_task['Lift_stat'])
+        next_start_time = int(next_task['Lift_time'])
+        
+        # Aikavä tehtävien välillä
+        time_gap = next_start_time - prev_end_time
+        
+        # Tarvittava tyhjä siirtymäaika
+        transporter_id = int(curr['Transporter_id'])
+        transfer_key = (prev_end_station, next_start_station, transporter_id)
+        required_transfer = transfer_times.get(transfer_key, 0)
+        
+        # Tarkista riittääkö aika
+        if time_gap < required_transfer:
+            warnings.append({
+                'prev_task': f"Erä {int(curr['Batch'])} Stage {int(curr['Stage'])}",
+                'next_task': f"Erä {int(next_task['Batch'])} Stage {int(next_task['Stage'])}",
+                'prev_end_station': prev_end_station,
+                'next_start_station': next_start_station,
+                'prev_end_time': prev_end_time,
+                'next_start_time': next_start_time,
+                'time_gap': time_gap,
+                'required_transfer': required_transfer,
+                'deficit': required_transfer - time_gap
+            })
+    
+    return warnings
 
 
 def create_line_matrix_from_solution(solution, matrix_df, treatment_programs_df, output_dir):
@@ -958,6 +1089,27 @@ def optimize_transporter_schedule(matrix_df, stations_df, transporters_df, outpu
     
     # Vaihe 5: Muuntaminen DataFrame-muotoon (transporter_tasks)
     optimized_df = cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_df)
+    
+    # Vaihe 6: Validoi nostimen tyhjät siirtymät
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Validoidaan nostimen tyhjät siirtymät...")
+    empty_transfer_warnings = validate_empty_transporter_movements(optimized_df, transfer_times)
+    
+    if empty_transfer_warnings:
+        print(f"\n⚠️  VAROITUS: Nostimen tyhjät siirtymät ovat liian lyhyitä {len(empty_transfer_warnings)} kohdassa:")
+        print(f"{'='*80}")
+        for w in empty_transfer_warnings[:5]:  # Näytä max 5 ensimmäistä
+            print(f"  {w['prev_task']} (päättyy asemalla {w['prev_end_station']}, {w['prev_end_time']}s)")
+            print(f"  → {w['next_task']} (alkaa asemalta {w['next_start_station']}, {w['next_start_time']}s)")
+            print(f"  Aikaväli: {w['time_gap']}s, Tarvitaan: {w['required_transfer']}s")
+            print(f"  PUUTE: {w['deficit']}s")
+            print()
+        if len(empty_transfer_warnings) > 5:
+            print(f"  ... ja {len(empty_transfer_warnings) - 5} muuta varoitusta")
+        print(f"{'='*80}\n")
+        print(f"HUOM: Nämä varoitukset tarkoittavat että optimoitu aikataulu saattaa olla")
+        print(f"epärealistinen - nostin ei ehdi siirtyä seuraavalle asemalle ajoissa.")
+    else:
+        print(f"✅ Kaikki nostimen tyhjät siirtymät ovat riittäviä")
     
     # Tallenna transporter_tasks (referenssiksi)
     transporter_file = os.path.join(output_dir, "logs", "transporter_tasks_optimized.csv")
