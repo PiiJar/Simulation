@@ -249,46 +249,127 @@ def solve_cpsat_model(model, task_vars, time_limit_seconds=60):
         return status, None, None
 
 
-def cpsat_solution_to_dataframe(solution, matrix_df):
+def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_df):
     """
     Muuntaa CP-SAT:n ratkaisun DataFrame-muotoon (yhteensopiva transporter_tasks_stretched.csv:n kanssa).
     
     Args:
         solution: Ratkaistu aikataulu (dict)
         matrix_df: Alkuperäinen line_matrix_original.csv DataFrame
+        stations_df: stations.csv DataFrame
+        transporters_df: transporters.csv DataFrame
         
     Returns:
-        pd.DataFrame: Optimoitu aikataulu
+        pd.DataFrame: Optimoitu aikataulu (sisältää Lift_stat, Sink_stat, Phase_1-4)
     """
+    from transporter_physics import calculate_physics_transfer_time, calculate_lift_time, calculate_sink_time
+    
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Muunnetaan ratkaisu DataFrame-muotoon...")
+    
+    # Luo station_map ja transporter_map
+    station_map = {int(row['Number']): row for _, row in stations_df.iterrows()}
+    transporter_map = {int(row['Transporter_id']): row for _, row in transporters_df.iterrows()}
     
     tasks = []
     
     # Järjestä tehtävät (batch, stage) mukaan
     sorted_keys = sorted(solution.keys())
     
-    for (batch, stage) in sorted_keys:
-        task = solution[(batch, stage)]
+    # Käsittele jokainen erä erikseen
+    batches = sorted(set([batch for batch, _ in sorted_keys]))
+    
+    for batch in batches:
+        batch_tasks = [(b, s) for b, s in sorted_keys if b == batch]
+        batch_stages = sorted([s for _, s in batch_tasks])
+        
+        # STAGE 0: Aloitusasema (301)
+        # Hae erän ensimmäinen käsittelyasema
+        first_stage = batch_stages[0]
+        first_task = solution[(batch, first_stage)]
+        first_station = first_task['station']
+        first_start = first_task['start']
+        transporter_id = first_task['transporter']
         
         # Hae alkuperäisestä matriisista treatment_program
-        orig_row = matrix_df[(matrix_df['Batch'] == batch) & (matrix_df['Stage'] == stage)].iloc[0]
+        orig_row = matrix_df[(matrix_df['Batch'] == batch) & (matrix_df['Stage'] == first_stage)].iloc[0]
         treatment_program = int(orig_row['Treatment_program'])
         
-        # Luo tehtävärivi
-        # Huom: Tässä yksinkertaistetussa versiossa ei lasketa Phase_1-4 erikseen
-        # Ne voidaan lisätä myöhemmin fysiikkamallilla
-        task_row = {
-            'Transporter_id': task['transporter'],
+        # Oletetaan että aloitusasema on 301 (voidaan lukea production.csv:stä)
+        start_station = 301
+        
+        # Laske siirtoaika aloitusasemalta ensimmäiselle käsittelyasemalle
+        from_row = station_map[start_station]
+        to_row = station_map[first_station]
+        trans_row = transporter_map[transporter_id]
+        
+        phase_1 = calculate_physics_transfer_time(from_row, to_row, trans_row)
+        phase_2 = calculate_lift_time(to_row, trans_row)
+        phase_3 = calculate_physics_transfer_time(to_row, to_row, trans_row)  # Ei siirtoa
+        phase_4 = calculate_sink_time(to_row, trans_row)
+        
+        # Laske Lift_time taaksepäin Start_time:sta
+        lift_time = first_start - int(phase_1)
+        
+        # Stage 0 -rivi
+        task_row_0 = {
+            'Transporter_id': transporter_id,
             'Batch': batch,
             'Treatment_program': treatment_program,
-            'Stage': stage,
-            'Station': task['station'],
-            'Start_time': task['start'],
-            'End_time': task['end'],
-            'CalcTime': task['calc_time']
+            'Stage': 0,
+            'Lift_stat': start_station,
+            'Lift_time': lift_time,
+            'Sink_stat': first_station,
+            'Sink_time': first_start,
+            'Phase_1': float(phase_1),
+            'Phase_2': float(phase_2),
+            'Phase_3': float(phase_3),
+            'Phase_4': float(phase_4)
         }
+        tasks.append(task_row_0)
         
-        tasks.append(task_row)
+        # STAGE 1-N: Käsittelyvaiheet
+        for i, stage in enumerate(batch_stages):
+            task = solution[(batch, stage)]
+            current_station = task['station']
+            
+            # Hae seuraava asema (tai sama jos viimeinen)
+            if i < len(batch_stages) - 1:
+                next_stage = batch_stages[i + 1]
+                next_task = solution[(batch, next_stage)]
+                next_station = next_task['station']
+            else:
+                next_station = current_station
+            
+            # Laske vaiheajat
+            curr_row = station_map[current_station]
+            next_row = station_map[next_station]
+            trans_row = transporter_map[transporter_id]
+            
+            phase_1 = calculate_physics_transfer_time(curr_row, next_row, trans_row)
+            phase_2 = calculate_lift_time(curr_row, trans_row)
+            phase_3 = calculate_physics_transfer_time(curr_row, curr_row, trans_row)
+            phase_4 = calculate_sink_time(curr_row, trans_row)
+            
+            # Lift_time = käsittelyn alkuaika
+            # Sink_time = käsittelyn loppuaika
+            lift_time = task['start']
+            sink_time = task['end']
+            
+            task_row = {
+                'Transporter_id': transporter_id,
+                'Batch': batch,
+                'Treatment_program': treatment_program,
+                'Stage': stage,
+                'Lift_stat': current_station,
+                'Lift_time': lift_time,
+                'Sink_stat': next_station if i < len(batch_stages) - 1 else current_station,
+                'Sink_time': sink_time,
+                'Phase_1': float(phase_1),
+                'Phase_2': float(phase_2),
+                'Phase_3': float(phase_3),
+                'Phase_4': float(phase_4)
+            }
+            tasks.append(task_row)
     
     df = pd.DataFrame(tasks)
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Luotu {len(df)} tehtävää")
@@ -327,7 +408,7 @@ def optimize_transporter_schedule(matrix_df, stations_df, transporters_df, time_
         return None
     
     # Vaihe 4: Muuntaminen DataFrame-muotoon
-    optimized_df = cpsat_solution_to_dataframe(solution, matrix_df)
+    optimized_df = cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_df)
     
     print(f"\n{'='*60}")
     print(f"CP-SAT OPTIMOINTI VALMIS")

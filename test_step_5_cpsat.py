@@ -113,7 +113,7 @@ def optimize_transporter_tasks_cpsat(output_dir, time_limit=60):
         logger.log("INFO", f"Optimized {len(optimized_df)} transporter tasks")
         
         # Calculate makespan
-        makespan = optimized_df['End_time'].max()
+        makespan = optimized_df['Sink_time'].max()
         logger.log("INFO", f"Final makespan: {makespan} seconds ({makespan/60:.1f} minutes)")
         
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}] ✅ Optimointi valmis!")
