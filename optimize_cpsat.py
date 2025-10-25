@@ -640,58 +640,51 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
         first_station = first_task['station']
         first_start = first_task['start']
         transporter_id = first_task['transporter']
-        
+
         # Hae alkuperäisestä matriisista treatment_program
         orig_row = matrix_df[(matrix_df['Batch'] == batch) & (matrix_df['Stage'] == first_stage)].iloc[0]
         treatment_program = int(orig_row['Treatment_program'])
-        
+
         # Oletetaan että aloitusasema on 301 (voidaan lukea production.csv:stä)
         start_station = 301
-        
+
         # Laske siirtoaika aloitusasemalta ensimmäiselle käsittelyasemalle
         from_row = station_map[start_station]
         to_row = station_map[first_station]
         trans_row = transporter_map[transporter_id]
-        
+
         phase_1 = transfer_times.get((int(start_station), int(first_station), int(transporter_id)), 0)
         phase_2 = lift_times.get((int(first_station), int(transporter_id)), 0)
         phase_3 = 0  # Ei siirtoa
         phase_4 = sink_times.get((int(first_station), int(transporter_id)), 0)
-        
-        # Laske Lift_time taaksepäin Start_time:sta
-        # HUOM: Varmista että lift_time >= 0 (nostin ei voi toimia ennen aikaa 0)
-        ideal_lift_time = first_start - int(phase_1) - int(phase_2) - int(phase_4)
-        lift_time = max(0, ideal_lift_time)
-        
-        # Jos lift_time pakotettiin 0:aan, sink_time pitää säätää
-        if lift_time == 0:
-            # Nostintehtävä: lift (phase_2) + siirto (phase_1) + sink (phase_4)
-            sink_time = lift_time + int(phase_2) + int(phase_1) + int(phase_4)
-        else:
-            sink_time = first_start
-        
-        # Stage 0 -rivi
+
+        # Stage 0 -rivi: Ei laskuaikaa eikä seuraavaa asemaa
+        sink_time_0 = first_start
+        lift_time_0 = first_start
         task_row_0 = {
             'Transporter_id': transporter_id,
             'Batch': batch,
             'Treatment_program': treatment_program,
             'Stage': 0,
             'Lift_stat': start_station,
-            'Lift_time': lift_time,
-            'Sink_stat': first_station,
-            'Sink_time': sink_time,
+            'Lift_time': lift_time_0,
+            'Sink_stat': '',
+            'Sink_time': sink_time_0,
             'Phase_1': float(phase_1),
             'Phase_2': float(phase_2),
             'Phase_3': float(phase_3),
             'Phase_4': float(phase_4)
         }
         tasks.append(task_row_0)
+
+        # Laske siirtoaika aloitusasemalta ensimmäiselle käsittelyasemalle
+        first_station_transfer = transfer_times.get((int(start_station), int(first_station), int(transporter_id)), 0)
         
         # STAGE 1-N: Käsittelyvaiheet
         for i, stage in enumerate(batch_stages):
             task = solution[(batch, stage)]
             current_station = task['station']
-            
+
             # Hae seuraava asema (tai sama jos viimeinen)
             if i < len(batch_stages) - 1:
                 next_stage = batch_stages[i + 1]
@@ -699,36 +692,25 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
                 next_station = next_task['station']
             else:
                 next_station = current_station
-            
+
             # Laske vaiheajat
             curr_row = station_map[current_station]
             next_row = station_map[next_station]
             trans_row = transporter_map[transporter_id]
-            
+
             phase_1 = transfer_times.get((int(current_station), int(next_station), int(transporter_id)), 0)
             phase_2 = lift_times.get((int(current_station), int(transporter_id)), 0)
             phase_3 = transfer_times.get((int(current_station), int(current_station), int(transporter_id)), 0)
             phase_4 = sink_times.get((int(current_station), int(transporter_id)), 0)
-            
-            # KORJATTU: Oikea tulkinta interval-muuttujista
-            # task['start'] = Aika kun SINK ALKAA (erä tulee asemalle)
-            # task['end'] = Aika kun LIFT VALMIS (erä lähtee asemalta)
-            # 
-            # Aikajana: [start] --sink--> [entry] --calc--> [exit] --lift--> [end]
-            #
-            # Nostintehtävä = NOSTO tältä asemalta ja LASKU seuraavalle
-            
-            # Lift alkaa: end - lift_time
-            lift_time = task['end'] - int(phase_2)
-            
-            # Sink valmis seuraavalla asemalla: next_task['start'] + sink_time
-            if i < len(batch_stages) - 1:
-                next_task = solution[(batch, next_stage)]
-                sink_time = next_task['start'] + int(phase_4)
+
+            # Ensimmäinen käsittelyasema: Sink_time = Start_optimized + siirtoaika (301 -> asema)
+            if i == 0:
+                # Käytä siirtoaikaa aloitusasemalta (301) tähän asemaan
+                sink_time = first_start + int(first_station_transfer)
             else:
-                # Viimeinen vaihe: Sink_stat = Lift_stat (sama asema)
-                sink_time = task['end']
-            
+                sink_time = task['start']
+            lift_time = task['end']
+
             task_row = {
                 'Transporter_id': transporter_id,
                 'Batch': batch,
@@ -909,22 +891,26 @@ def save_optimized_calctimes(optimized_df, matrix_df, output_dir):
         
         for idx, row in batch_rows.iterrows():
             stage = int(row['Stage'])
-            
-            # Stage 0: Skipata (ei ole käsittelyohjelmassa)
-            if stage == 0:
+            # Stage 0: Skipataan (ei ole käsittelyohjelmassa tai sink_time puuttuu)
+            # Ohita, jos sink_time tai lift_time puuttuu tai ei ole numeerinen
+            if (
+                stage == 0
+                or row['Sink_time'] == '' or pd.isna(row['Sink_time'])
+                or row['Lift_time'] == '' or pd.isna(row['Lift_time'])
+            ):
                 prev_sink_time = row['Sink_time']
                 continue
-            
             # CalcTime = Lift_time (tältä asemalta) - Sink_time (tälle asemalle)
             # Sink_time tälle asemalle = edellisen stage:n Sink_time
-            lift_time = row['Lift_time']
-            sink_time = prev_sink_time if prev_sink_time is not None else row['Sink_time']
-            
+            try:
+                lift_time = float(row['Lift_time'])
+                sink_time = float(prev_sink_time) if prev_sink_time is not None else float(row['Sink_time'])
+            except Exception:
+                prev_sink_time = row['Sink_time']
+                continue
             calc_time_sec = int(lift_time - sink_time)
-            
             # Tallenna
             batch_calctimes[(batch, program_id)][stage] = calc_time_sec
-            
             # Päivitä edellinen sink_time seuraavaa kierrosta varten
             prev_sink_time = row['Sink_time']
     

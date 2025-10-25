@@ -99,32 +99,25 @@ def optimize_transporter_tasks_cpsat(output_dir, time_limit=60):
             output_dir=output_dir,
             time_limit=time_limit
         )
-        
         if optimized_df is None:
             error_msg = "CP-SAT optimization failed to find a solution"
             logger.log("ERROR", error_msg)
             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}] VIRHE: {error_msg}")
             return None, None
-        
         # Save optimized tasks
         output_csv = os.path.join(output_dir, "logs", "transporter_tasks_optimized.csv")
         optimized_df.to_csv(output_csv, index=False)
-        
         logger.log("SAVE", f"Optimized tasks saved: {os.path.basename(output_csv)}")
         logger.log("INFO", f"Optimized {len(optimized_df)} transporter tasks")
-        
-        # Calculate makespan
-        makespan = optimized_df['Sink_time'].max()
+        # Calculate makespan (ignore non-numeric Sink_time)
+        sink_times = pd.to_numeric(optimized_df['Sink_time'], errors='coerce')
+        makespan = sink_times.max()
         logger.log("INFO", f"Final makespan: {makespan} seconds ({makespan/60:.1f} minutes)")
-        
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}] ✅ Optimointi valmis!")
         print(f"  Makespan: {makespan} s ({makespan/60:.1f} min)")
         print(f"  Tallennettu: {output_csv}")
-        
         logger.log("TASK", "Step 5 CP-SAT completed: Transporter tasks optimization successful")
-        
         return optimized_df, output_csv
-        
     except Exception as e:
         error_msg = f"CP-SAT optimization error: {str(e)}"
         logger.log("ERROR", error_msg)
