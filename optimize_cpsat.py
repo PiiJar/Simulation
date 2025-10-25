@@ -655,7 +655,7 @@ def solve_cpsat_model(model, task_vars, time_limit_seconds=60):
         return status, None, None
 
 
-def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_df):
+def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_df, transfer_times, lift_times, sink_times):
     """
     Muuntaa CP-SAT:n ratkaisun DataFrame-muotoon (yhteensopiva transporter_tasks_stretched.csv:n kanssa).
     
@@ -668,8 +668,6 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
     Returns:
         pd.DataFrame: Optimoitu aikataulu (sisältää Lift_stat, Sink_stat, Phase_1-4)
     """
-    from transporter_physics import calculate_physics_transfer_time, calculate_lift_time, calculate_sink_time
-    
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Muunnetaan ratkaisu DataFrame-muotoon...")
     
     # Luo station_map ja transporter_map
@@ -695,18 +693,19 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
         first_station = first_task['station']
         first_start = first_task['start']
         transporter_id = first_task['transporter']
-        
+
         # Hae alkuperäisestä matriisista treatment_program
         orig_row = matrix_df[(matrix_df['Batch'] == batch) & (matrix_df['Stage'] == first_stage)].iloc[0]
         treatment_program = int(orig_row['Treatment_program'])
-        
+
         # Oletetaan että aloitusasema on 301 (voidaan lukea production.csv:stä)
         start_station = 301
-        
+
         # Laske siirtoaika aloitusasemalta ensimmäiselle käsittelyasemalle
         from_row = station_map[start_station]
         to_row = station_map[first_station]
         trans_row = transporter_map[transporter_id]
+<<<<<<< HEAD
         
         phase_1 = calculate_physics_transfer_time(from_row, to_row, trans_row)
         phase_2 = calculate_lift_time(from_row, trans_row)  # KORJAUS: Lift FROM start_station!
@@ -724,45 +723,43 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
         lift_time = max(0, ideal_lift_time)
         
         # Stage 0 -rivi
+=======
+
+        phase_1 = transfer_times.get((int(start_station), int(first_station), int(transporter_id)), 0)
+        phase_2 = lift_times.get((int(first_station), int(transporter_id)), 0)
+        phase_3 = 0  # Ei siirtoa
+        phase_4 = sink_times.get((int(first_station), int(transporter_id)), 0)
+
+        # Stage 0 -rivi: Ei laskuaikaa eikä seuraavaa asemaa
+        sink_time_0 = first_start
+        lift_time_0 = first_start
+>>>>>>> dfdcdc5
         task_row_0 = {
             'Transporter_id': transporter_id,
             'Batch': batch,
             'Treatment_program': treatment_program,
             'Stage': 0,
             'Lift_stat': start_station,
-            'Lift_time': lift_time,
-            'Sink_stat': first_station,
-            'Sink_time': sink_time,
+            'Lift_time': lift_time_0,
+            'Sink_stat': '',
+            'Sink_time': sink_time_0,
             'Phase_1': float(phase_1),
             'Phase_2': float(phase_2),
             'Phase_3': float(phase_3),
             'Phase_4': float(phase_4)
         }
         tasks.append(task_row_0)
+
+        # Laske siirtoaika aloitusasemalta ensimmäiselle käsittelyasemalle
+        first_station_transfer = transfer_times.get((int(start_station), int(first_station), int(transporter_id)), 0)
         
         # STAGE 1-N: Käsittelyvaiheet
         for i, stage in enumerate(batch_stages):
             task = solution[(batch, stage)]
             current_station = task['station']
-            
+
             # Hae seuraava asema (tai sama jos viimeinen)
             if i < len(batch_stages) - 1:
-                next_stage = batch_stages[i + 1]
-                next_task = solution[(batch, next_stage)]
-                next_station = next_task['station']
-            else:
-                next_station = current_station
-            
-            # Laske vaiheajat
-            curr_row = station_map[current_station]
-            next_row = station_map[next_station]
-            trans_row = transporter_map[transporter_id]
-            
-            phase_1 = calculate_physics_transfer_time(curr_row, next_row, trans_row)
-            phase_2 = calculate_lift_time(curr_row, trans_row)
-            phase_3 = calculate_physics_transfer_time(curr_row, curr_row, trans_row)
-            phase_4 = calculate_sink_time(curr_row, trans_row)
-            
             # KORJATTU TULKINTA: task-muuttujat CP-SAT:ssa
             # task['start'] = EntryTime (edellinen Sink valmis, erä tulee asemalle)
             # task['end'] = start + sink + calc + lift (Lift valmis tältä asemalta)
@@ -782,6 +779,22 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
             # Sink valmis TÄLLÄ asemalla: start + phase_4
             sink_time = task['start'] + int(phase_4)
             
+=======
+
+            phase_1 = transfer_times.get((int(current_station), int(next_station), int(transporter_id)), 0)
+            phase_2 = lift_times.get((int(current_station), int(transporter_id)), 0)
+            phase_3 = transfer_times.get((int(current_station), int(current_station), int(transporter_id)), 0)
+            phase_4 = sink_times.get((int(current_station), int(transporter_id)), 0)
+
+            # Ensimmäinen käsittelyasema: Sink_time = Start_optimized + siirtoaika (301 -> asema)
+            if i == 0:
+                # Käytä siirtoaikaa aloitusasemalta (301) tähän asemaan
+                sink_time = first_start + int(first_station_transfer)
+            else:
+                sink_time = task['start']
+            lift_time = task['end']
+
+>>>>>>> dfdcdc5
             task_row = {
                 'Transporter_id': transporter_id,
                 'Batch': batch,
@@ -926,6 +939,7 @@ def create_line_matrix_from_solution(solution, matrix_df, treatment_programs_df,
     return df
 
 
+<<<<<<< HEAD
 def save_optimized_calctimes(solution, matrix_df, lift_times, sink_times, output_dir):
     """
     Tallentaa optimoidut CalcTime-arvot treatment_program-tiedostoihin.
@@ -934,9 +948,20 @@ def save_optimized_calctimes(solution, matrix_df, lift_times, sink_times, output
     CalcTime = (end - start) - sink_time - lift_time
     
     Näin CalcTime VASTAA sitä aikaa, jonka erä tosiasiassa viettää asemalla.
+=======
+def save_optimized_calctimes(optimized_df, matrix_df, output_dir):
+    """
+    Tallentaa optimoidut CalcTime-arvot treatment_program-tiedostoihin.
+    
+    Logiikka:
+    - Käy läpi optimoitu aikataulu eräkohtaisesti
+    - Jokaiselle asemakäynnille: CalcTime = Lift_time (tältä asemalta) - Sink_time (tälle asemalle)
+    - Sink_time = edellisen stage:n Sink_time (tai stage 0:n alkuaika)
+    - Tallenna CalcTime käsittelyohjelmaan
+>>>>>>> dfdcdc5
     
     Args:
-        solution: CP-SAT:n ratkaisu (dict)
+        optimized_df: Optimoitu transporter_tasks DataFrame
         matrix_df: line_matrix_original.csv DataFrame
         lift_times: Esilasketut lift-ajat {(station, transporter): seconds}
         sink_times: Esilasketut sink-ajat {(station, transporter): seconds}
@@ -947,6 +972,7 @@ def save_optimized_calctimes(solution, matrix_df, lift_times, sink_times, output
     # Kerää optimoidut CalcTime-arvot eräkohtaisesti
     batch_calctimes = {}  # {(batch, program_id): {stage: calc_time}}
     
+<<<<<<< HEAD
     for (batch, stage), sol in solution.items():
         # Hae program_id ja station
         row = matrix_df[(matrix_df['Batch'] == batch) & (matrix_df['Stage'] == stage)]
@@ -955,10 +981,21 @@ def save_optimized_calctimes(solution, matrix_df, lift_times, sink_times, output
         program_id = int(row.iloc[0]['Treatment_program'])
         station = sol['station']
         transporter = sol['transporter']
+=======
+    # Käy läpi erät
+    batches = sorted(optimized_df['Batch'].unique())
+    
+    for batch in batches:
+        batch_rows = optimized_df[optimized_df['Batch'] == batch].sort_values('Stage')
+        
+        # Hae treatment_program
+        program_id = int(batch_rows.iloc[0]['Treatment_program'])
+>>>>>>> dfdcdc5
         
         if (batch, program_id) not in batch_calctimes:
             batch_calctimes[(batch, program_id)] = {}
         
+<<<<<<< HEAD
         # KRIITTINEN: Laske CalcTime CP-SAT:n AIKATAULUISTA
         # CalcTime = (tehtävän kesto) - sink_time - lift_time
         # missä:
@@ -979,6 +1016,34 @@ def save_optimized_calctimes(solution, matrix_df, lift_times, sink_times, output
         
         # Tallenna
         batch_calctimes[(batch, program_id)][stage] = calc_time
+=======
+        prev_sink_time = None
+        
+        for idx, row in batch_rows.iterrows():
+            stage = int(row['Stage'])
+            # Stage 0: Skipataan (ei ole käsittelyohjelmassa tai sink_time puuttuu)
+            # Ohita, jos sink_time tai lift_time puuttuu tai ei ole numeerinen
+            if (
+                stage == 0
+                or row['Sink_time'] == '' or pd.isna(row['Sink_time'])
+                or row['Lift_time'] == '' or pd.isna(row['Lift_time'])
+            ):
+                prev_sink_time = row['Sink_time']
+                continue
+            # CalcTime = Lift_time (tältä asemalta) - Sink_time (tälle asemalle)
+            # Sink_time tälle asemalle = edellisen stage:n Sink_time
+            try:
+                lift_time = float(row['Lift_time'])
+                sink_time = float(prev_sink_time) if prev_sink_time is not None else float(row['Sink_time'])
+            except Exception:
+                prev_sink_time = row['Sink_time']
+                continue
+            calc_time_sec = int(lift_time - sink_time)
+            # Tallenna
+            batch_calctimes[(batch, program_id)][stage] = calc_time_sec
+            # Päivitä edellinen sink_time seuraavaa kierrosta varten
+            prev_sink_time = row['Sink_time']
+>>>>>>> dfdcdc5
     
     # Kerää muutostiedot raportointiin
     changes_report = []
@@ -1057,7 +1122,11 @@ def save_optimized_calctimes(solution, matrix_df, lift_times, sink_times, output
         print(f"\n  ℹ️  Ei merkittäviä CalcTime-muutoksia (alle 1s)")
 
 
+<<<<<<< HEAD
 def save_optimized_production(solution, matrix_df, stations_df, transporters_df, output_dir):
+=======
+def save_optimized_production(optimized_df, output_dir):
+>>>>>>> dfdcdc5
     """
     Tallentaa optimoidut alkuajat ja järjestyksen production.csv-tiedostoon.
     Päivittää initialization/production.csv Start_optimized-saraketta.
@@ -1065,16 +1134,21 @@ def save_optimized_production(solution, matrix_df, stations_df, transporters_df,
     KRIITTINEN: Start_time_seconds = milloin Stage 0 Lift alkaa (erä lähtee asemalta 301)
     
     Args:
+<<<<<<< HEAD
         solution: CP-SAT:n ratkaisu (dict)
         matrix_df: line_matrix_original.csv DataFrame
         stations_df: stations.csv DataFrame
         transporters_df: transporters.csv DataFrame
+=======
+        optimized_df: Optimoitu transporter_tasks DataFrame
+>>>>>>> dfdcdc5
         output_dir: Output-kansio
     """
     from transporter_physics import calculate_physics_transfer_time, calculate_lift_time
     
     print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Tallennetaan optimoitu production.csv...")
     
+<<<<<<< HEAD
     # Luo station_map ja transporter_map
     station_map = {int(row['Number']): row for _, row in stations_df.iterrows()}
     transporter_map = {int(row['Transporter_id']): row for _, row in transporters_df.iterrows()}
@@ -1107,6 +1181,15 @@ def save_optimized_production(solution, matrix_df, stations_df, transporters_df,
         
         # TÄMÄ on Start_time_seconds!
         batch_starts[batch] = lift_time
+=======
+    # Kerää erien alkuajat (Stage 0 Lift_time = hetki kun erä lähtee aloitusasemalta)
+    batch_starts = {}  # {batch: lift_time_sec}
+    
+    for _, row in optimized_df.iterrows():
+        if int(row['Stage']) == 0:
+            batch = int(row['Batch'])
+            batch_starts[batch] = int(row['Lift_time'])
+>>>>>>> dfdcdc5
     
     # Lue alkuperäinen production.csv
     production_file = os.path.join(output_dir, "initialization", "production.csv")
@@ -1186,33 +1269,33 @@ def optimize_transporter_schedule(matrix_df, stations_df, transporters_df, outpu
     print(f"CP-SAT OPTIMOINTI ALKAA")
     print(f"{'='*60}\n")
     
-    # Vaihe 0: Lue treatment_program-tiedostot (MinTime, MaxTime)
+    # Vaihe 0: Lue treatment_program-tiedosto
     treatment_programs_df = {}
-    program_ids = matrix_df['Treatment_program'].unique()
-    for program_id in program_ids:
-        program_file = os.path.join(output_dir, "initialization", f"treatment_program_{program_id:03d}.csv")
-        if os.path.exists(program_file):
-            treatment_programs_df[int(program_id)] = pd.read_csv(program_file)
-            print(f"  Luettu: treatment_program_{program_id:03d}.csv")
-        else:
-            print(f"  ⚠️ VAROITUS: {program_file} ei löydy!")
+    treatment_program_files = sorted(os.listdir(os.path.join(output_dir, "initialization")))
+    for file in treatment_program_files:
+        if file.endswith(".csv") and "treatment_program" in file:
+            program_id = int(file.split("_")[-1].split(".")[0])
+            df = pd.read_csv(os.path.join(output_dir, "initialization", file))
+            treatment_programs_df[program_id] = df
     
-    # Vaihe 1: Esilaskenta
-    # Ota Group-sarake mukaan aseman tietoihin
-    if 'Group' not in stations_df.columns:
-        stations_df['Group'] = None
+    # Vaihe 1: Esilaskenta siirto-, lift- ja sink-ajoista
     transfer_times, lift_times, sink_times, stage0_times = precalculate_transfer_times(matrix_df, stations_df, transporters_df)
     
+<<<<<<< HEAD
     # Vaihe 2: Mallin rakentaminen
     model, task_vars, transporter_task_vars = build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_times, transporters_df, stations_df, treatment_programs_df)
+=======
+    # Vaihe 2: CP-SAT-mallin rakentaminen
+    model, task_vars = build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_times, transporters_df, stations_df, treatment_programs_df)
+>>>>>>> dfdcdc5
     
-    # Vaihe 3: Ratkaiseminen
-    status, solution, makespan = solve_cpsat_model(model, task_vars, time_limit)
+    # Vaihe 3: Mallin ratkaisu
+    status, solution, makespan = solve_cpsat_model(model, task_vars, time_limit_seconds=time_limit)
     
-    if solution is None:
-        print(f"\n⚠️ VIRHE: Optimointi epäonnistui!")
-        return None
+    # Vaihe 4: Muuntaminen DataFrame-muotoon (transporter_tasks)
+    optimized_df = cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_df, transfer_times, lift_times, sink_times)
     
+<<<<<<< HEAD
     # Vaihe 4: Tallenna optimoidut arvot
     save_optimized_calctimes(solution, matrix_df, lift_times, sink_times, output_dir)
     save_optimized_production(solution, matrix_df, stations_df, transporters_df, output_dir)
@@ -1302,3 +1385,16 @@ if __name__ == "__main__":
         print(f"\n✅ Tallennettu: {output_file}")
         print(f"\nEnsimmäiset 10 riviä:")
         print(optimized_df.head(10))
+=======
+    # Vaihe 5: Tallennus treatment_program-tiedostoihin
+    save_optimized_calctimes(optimized_df, matrix_df, output_dir)
+    
+    # Vaihe 6: Tallennus production.csv
+    save_optimized_production(optimized_df, output_dir)
+    
+    print(f"\n{'='*60}")
+    print(f"OPTIMOINTI VALMIS")
+    print(f"{'='*60}\n")
+    
+    return optimized_df
+>>>>>>> dfdcdc5
