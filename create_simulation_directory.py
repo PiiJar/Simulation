@@ -18,12 +18,9 @@ def create_simulation_directory(base_dir="output"):
     logs_dir = os.path.join(full_path, "logs")
     os.makedirs(logs_dir, exist_ok=True)
 
-    # Kopioi initialization, documentation ja programs (nimellä original_programs)
-
-    # Kopioi initialization, documentation ja programs (nimellä original_programs)
+    # Preprocessing phase: copy initialization and programs (as original_programs)
     for src, dst_name in [
         ("initialization", "initialization"),
-        ("documentation", "documentation"),
         ("programs", "original_programs")
     ]:
         if os.path.exists(src):

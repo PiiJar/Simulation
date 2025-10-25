@@ -40,70 +40,25 @@ def test_main():
     """
     Suorittaa simulaattorilogiikan vaiheet 1–7:
     """
-    try:
-        # VAIHE 1: Simulaatiokansion luonti
-        output_dir = test_step_1()
+    # VAIHE 1: Simulaatiokansion luonti
+    output_dir = test_step_1()
 
-        # VAIHE 2: Käsittelyohjelmien luonti
-        test_step_2(output_dir)
+    # VAIHE 2: Käsittelyohjelmien luonti
+    test_step_2(output_dir)
 
-        # VAIHE 2.5: Kopioi original_programs optimized_programs-kansioon
-        from copy_originals_to_stretched import copy_originals_to_optimized
-        copy_originals_to_optimized(output_dir)
+    # VAIHE 2.5: Kopioi original_programs optimized_programs-kansioon
+    from copy_originals_to_stretched import copy_originals_to_optimized
+    copy_originals_to_optimized(output_dir)
 
-        # VAIHE 3: Alkuperäisen matriisin luonti
-        test_step_3(output_dir)
+    # Preprocessing: yhdistä ja esikäsittele data CP-SAT:lle
+    from preprocess_for_cpsat import preprocess_for_cpsat
+    preprocess_for_cpsat(output_dir)
 
-        # VAIHE 4: Alkuperäisen matriisin visualisointi
-        test_step_4(output_dir)
-
-        # VAIHE 5: Nostimien tehtävien käsittely
-        if USE_CPSAT_OPTIMIZATION:
-            # CP-SAT optimointi (Google OR-Tools)
-            print(f"\n{'='*60}")
-            print(f"KÄYTETÄÄN CP-SAT OPTIMOINTIA (config.py: USE_CPSAT_OPTIMIZATION=True)")
-            print(f"{'='*60}\n")
-            from test_step_5_cpsat import test_step_5_cpsat
-            test_step_5_cpsat(output_dir)
-            # CP-SAT päivitti:
-            # - optimized_programs/Batch_XXX_Treatment_program_YYY.csv (CalcTime)
-            # - initialization/production.csv (Start_optimized)
-        else:
-            # Perinteinen greedy-algoritmi
-            print(f"\n{'='*60}")
-            print(f"KÄYTETÄÄN PERINTEISTÄ GREEDY-ALGORITMIA (config.py: USE_CPSAT_OPTIMIZATION=False)")
-            print(f"{'='*60}\n")
-            test_step_5(output_dir)
-        
-        # VAIHE 6: Muokatun matriisin luonti
-        # Lukee AINA päivitetyt tiedostot (production.csv + optimized_programs/)
-        # ja laskee matriisin uudelleen fysiikan mukaan
-        generate_matrix_stretched(output_dir)
-
-        # VAIHE 6.1: Erotetaan nostintehtävät LOPULLISESTA matriisista
-        tasks_from_matrix = extract_transporter_tasks(output_dir)
-
-        # VAIHE 6.2: Luodaan yksityiskohtaiset nostimien liikkeet
-        from extract_transporter_tasks import create_detailed_movements
-        detailed_movements = create_detailed_movements(output_dir)
-
-        # VAIHE 6.5: Nostinliikkeiden luonti (optimoiduista tehtävistä)
-        generate_transporters_movement(output_dir)
-
-        # VAIHE 7: Muokatun matriisin visualisointi
-        test_step_6(output_dir)
-
-        # VAIHE 7: Raporttien muodostus (kuormitusanalyysi + kaikki raportit)
-        test_step_7(output_dir)
-
-        # VAIHE 7: Transporter-aikajakaumaraportti (uusi)
-        from report_transporter_time_distribution import report_transporter_time_distribution
-        report_transporter_time_distribution(output_dir)
-    except Exception as e:
-        import traceback
-        print(f"❌ VIRHE simulaatiossa: {e}")
-        traceback.print_exc()
-        return
+    # CP-SAT optimointi esikäsitellylle datalle
+    from run_cpsat_optimization import run_cpsat_optimization
+    run_cpsat_optimization(output_dir)
+    # Lopetetaan pipeline tähän, jotta tuloksia voidaan tutkia rauhassa.
+    return
 
 if __name__ == "__main__":
     test_main()
