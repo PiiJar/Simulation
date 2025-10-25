@@ -63,7 +63,21 @@ def preprocess_for_cpsat(output_dir):
         start_time = row["Start_time_seconds"] if "Start_time_seconds" in row else 0
         if prog_id not in programs:
             continue
-        prog_df = programs[prog_id]
+        prog_df = programs[prog_id].copy()
+        # Lisää vaihe 0 alkuun, jos sitä ei ole
+        if 0 not in prog_df["Stage"].values:
+            start_station = row["Start_station"] if "Start_station" in row else prog_df.iloc[0]["MinStat"]
+            # Oletus: MinTime=0, MaxTime=100:00:00
+            prog_df = pd.concat([
+                pd.DataFrame({
+                    "Stage": [0],
+                    "MinStat": [start_station],
+                    "MaxStat": [start_station],
+                    "MinTime": ["00:00:00"],
+                    "MaxTime": ["100:00:00"]
+                }),
+                prog_df
+            ], ignore_index=True)
         for _, stage_row in prog_df.iterrows():
             stage = stage_row["Stage"]
             min_stat = stage_row["MinStat"]

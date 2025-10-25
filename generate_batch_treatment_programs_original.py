@@ -24,11 +24,24 @@ def generate_batch_treatment_programs_original(output_dir):
             # Varmista että MinTime löytyy
             if "MinTime" not in program_df.columns:
                 raise ValueError(f"MinTime-sarake puuttuu tiedostosta: {source_file}")
-            # Lisää/ylikirjoita CalcTime-sarake aina
-            program_df["CalcTime"] = program_df["MinTime"]
-            # Pakota sarakkeiden järjestys: Stage,MinStat,MaxStat,MinTime,MaxTime,CalcTime
+            # Lisää askel 0 alkuun: asema = Start_station, MinTime=0, MaxTime=360000 (100h), CalcTime=0
+            start_station = int(row["Start_station"])
+            step0 = {
+                "Stage": 0,
+                "MinStat": start_station,
+                "MaxStat": start_station,
+                "MinTime": "00:00:00",
+                "MaxTime": "100:00:00",
+                "CalcTime": "00:00:00"
+            }
+            # Muodosta uusi DataFrame, jossa askel 0 ensin
             columns = ["Stage", "MinStat", "MaxStat", "MinTime", "MaxTime", "CalcTime"]
+            program_df["CalcTime"] = program_df["MinTime"]
             program_df = program_df[columns]
+            program_df = pd.concat([
+                pd.DataFrame([step0], columns=columns),
+                program_df
+            ], ignore_index=True)
             target_file = os.path.join(original_programs_dir, f"Batch_{batch_id}_Treatment_program_{treatment_program}.csv")
             program_df.to_csv(target_file, index=False)
             created_files.append(os.path.basename(target_file))

@@ -1,6 +1,6 @@
-Batch,Treatment_program,Start_station,Start_original,Start_station_check,Start_stretch
-1,1,301,00:00:00,00:00:00,00:00:00
-2,2,301,00:15:00,00:15:00,00:15:00
-3,1,301,00:00:00,00:00:00,00:30:00
+
+Batch,Treatment_program,Start_station,Start_time
+1,1,301,00:00:00
+
 
 
