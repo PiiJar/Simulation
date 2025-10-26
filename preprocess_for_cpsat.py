@@ -2,15 +2,55 @@ import os
 import pandas as pd
 
 def preprocess_for_cpsat(output_dir):
+    # Kaikki tiedot luetaan initialization-kansiosta
+    init_dir = os.path.join(output_dir, "initialization")
+    # Lue tuotantosuunnitelma batchien aloitusasemien hakua varten
+    production_df = pd.read_csv(os.path.join(init_dir, "production.csv"))
+
+    # Kaikki tiedot luetaan initialization-kansiosta
+    init_dir = os.path.join(output_dir, "initialization")
+    # Muunna treatment_program_XXX.csv -> cp-sat-treatment-program-<batch>.csv
+    for fname in os.listdir(init_dir):
+        if fname.startswith("treatment_program_") and fname.endswith(".csv"):
+            batch_str = fname.split("_")[2].split(".")[0]  # esim. 001
+            batch_num = str(int(batch_str))  # poista etunollat
+            src = os.path.join(init_dir, fname)
+            dst = os.path.join(init_dir, f"cp-sat-treatment-program-{batch_num}.csv")
+            df = pd.read_csv(src)
+            # Lisää askel 0 alkuun
+            # Etsi oikea aloitusasema productionista
+            prod_row = production_df[production_df["Batch"] == int(batch_num)]
+            if not prod_row.empty:
+                start_station = int(prod_row.iloc[0]["Start_station"])
+            else:
+                start_station = df.iloc[0]["MinStat"]  # fallback
+            step0 = {
+                "Stage": 0,
+                "MinStat": start_station,
+                "MaxStat": start_station,
+                "MinTime": "00:00:00",
+                "MaxTime": "100:00:00"
+            }
+            df = pd.concat([pd.DataFrame([step0]), df], ignore_index=True)
+            # Korvaa Stage-sarake juoksevalla numeroinnilla (0,1,2,...)
+            df["Stage"] = range(len(df))
+            df.to_csv(dst, index=False, encoding="utf-8")
+            print(f"[Esikäsittely] Tallennettu: {dst}")
+
+    # Luo cp-sat-batches.csv (kopioi production.csv, mutta oikealla nimellä)
+    production = pd.read_csv(os.path.join(init_dir, "production.csv"))
+    batches_path = os.path.join(init_dir, "cp-sat-batches.csv")
+    production.to_csv(batches_path, index=False, encoding="utf-8")
+    print(f"[Esikäsittely] Tallennettu: {batches_path}")
     # Esikäsittelee olemassa olevat tiedot CP-SAT:lle sopivaan muotoon, mutta ei keksi mitään uutta tietoa.
     # Kaikki tiedot luetaan output_dir:stä, ja tallennetaan _cpsat.csv -päätteellä.
     import shutil
-    stations = pd.read_csv(os.path.join(output_dir, "stations.csv"))
-    transporters = pd.read_csv(os.path.join(output_dir, "transporters.csv"))
-    production = pd.read_csv(os.path.join(output_dir, "production.csv"))
+
+    stations = pd.read_csv(os.path.join(init_dir, "stations.csv"))
+    transporters = pd.read_csv(os.path.join(init_dir, "transporters.csv"))
     # Luo transfer_tasks.csv aina fysiikkafunktioilla
     from transporter_physics import calculate_physics_transfer_time, calculate_lift_time, calculate_sink_time
-    transfer_tasks_path = os.path.join(output_dir, "transfer_tasks.csv")
+    transfer_tasks_path = os.path.join(init_dir, "transfer_tasks.csv")
     transporter_row = transporters.iloc[0]  # Oletetaan yksi nostin, laajenna tarvittaessa
     rows = []
     for i, from_row in stations.iterrows():
@@ -31,19 +71,11 @@ def preprocess_for_cpsat(output_dir):
     transfer_tasks = pd.DataFrame(rows)
     transfer_tasks.to_csv(transfer_tasks_path, index=False)
     print(f"[Esikäsittely] Luotiin transfer_tasks.csv fysiikkafunktioilla ({len(transfer_tasks)} riviä)")
-    # treatment_programs-kansio sisältää ohjelmat per erä
-    treatment_programs_dir = os.path.join(output_dir, "treatment_programs")
 
-    # Muotoile ja tallenna tiedot CP-SAT:lle sopivaan muotoon (esim. pilkkuerotin, utf-8, ei indeksiä)
-    stations.to_csv(os.path.join(output_dir, "stations_cpsat.csv"), index=False, encoding="utf-8")
-    transporters.to_csv(os.path.join(output_dir, "transporters_cpsat.csv"), index=False, encoding="utf-8")
-    transfer_tasks.to_csv(os.path.join(output_dir, "transfer_tasks_cpsat.csv"), index=False, encoding="utf-8")
-    production.to_csv(os.path.join(output_dir, "production_cpsat.csv"), index=False, encoding="utf-8")
-
-    # Treatment_programs: kopioi kaikki sellaisenaan uuteen kansioon
-    dst_tprog = os.path.join(output_dir, "treatment_programs_cpsat")
-    if os.path.exists(dst_tprog):
-        shutil.rmtree(dst_tprog)
-    shutil.copytree(treatment_programs_dir, dst_tprog)
+    # Tallennetaan myös CP-SAT-optimoinnin vaatimat tiedostot oikeilla nimillä
+    stations.to_csv(os.path.join(init_dir, "cp-sat-stations.csv"), index=False, encoding="utf-8")
+    transporters.to_csv(os.path.join(init_dir, "cp-sat-transporters.csv"), index=False, encoding="utf-8")
+    transfer_tasks.to_csv(os.path.join(init_dir, "cp-sat-transfer-tasks.csv"), index=False, encoding="utf-8")
+    # Huom: cp-sat-batches.csv tallennettiin jo aiemmin
 
     print("Esikäsittely valmis. Kaikki tiedot oikeassa muodossa CP-SAT:lle.")

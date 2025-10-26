@@ -21,6 +21,35 @@ from generate_batch_treatment_programs_original import generate_batch_treatment_
 from preprocess_for_cpsat import preprocess_for_cpsat
 
 def initialize_simulation(output_dir):
+    # Luo simulaatiokansio heti alussa
+    output_dir = create_simulation_directory()
+
+    # Kopioi initialization-kansio ja kaikki sen sisältö simulaatiokansioon
+    import shutil
+    init_dir = os.path.join(os.getcwd(), "initialization")
+    dst_init = os.path.join(output_dir, "initialization")
+    if os.path.exists(dst_init):
+        shutil.rmtree(dst_init)
+    shutil.copytree(init_dir, dst_init)
+
+    # Luo treatment_programs_original-kansio ja originaalit käsittelyohjelmat vasta kopioinnin jälkeen
+    tprog_src_dir = os.path.join(output_dir, "initialization")
+    tprog_orig_dir = os.path.join(output_dir, "treatment_programs_original")
+    os.makedirs(tprog_orig_dir, exist_ok=True)
+    import pandas as pd
+    production_path = os.path.join(output_dir, "initialization", "production.csv")
+    production = pd.read_csv(production_path)
+    for _, row in production.iterrows():
+        batch = int(row["Batch"])
+        program = int(row["Treatment_program"])
+        batch_str = f"{batch:03d}"
+        program_str = f"{program:03d}"
+        src = os.path.join(tprog_src_dir, f"treatment_program_{program_str}.csv")
+        dst = os.path.join(tprog_orig_dir, f"Batch_{batch_str}_Treatment_program_{program_str}.csv")
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+        else:
+            raise FileNotFoundError(f"Käsittelyohjelmatiedosto puuttuu: {src}")
     """
     Alustaa simulaation luomalla tarvittavat kansiot, käsittelyohjelmat ja esikäsittelemällä datan CP-SAT:ia varten.
     """
@@ -48,46 +77,9 @@ def main():
         # Alustus ja esikäsittely (tuottaa output_dir)
         output_dir = initialize_simulation("output")
 
-        # Kopioi kaikki tarvittavat syötetiedostot initialize-kansiosta simulaatiokansioon
-        import shutil
-        init_dir = os.path.join(os.getcwd(), "initialization")
-        files_to_copy = [
-            "stations.csv",
-            "transporters.csv",
-            "transfer_tasks.csv",
-            "transporters_start_positions.csv",
-            "productions.csv",
-        ]
-        for fname in files_to_copy:
-            src = os.path.join(init_dir, fname)
-            dst = os.path.join(output_dir, fname)
-            if os.path.exists(src):
-                shutil.copy2(src, dst)
-            else:
-                raise FileNotFoundError(f"Syötetiedosto puuttuu: {src}. Täytä tämä tiedosto initialize-kansioon.")
-        # Kopioi treatment_programs-kansio
-        src_tprog = os.path.join(init_dir, "treatment_programs")
-        dst_tprog = os.path.join(output_dir, "treatment_programs")
-        if os.path.exists(src_tprog):
-            if os.path.exists(dst_tprog):
-                shutil.rmtree(dst_tprog)
-            shutil.copytree(src_tprog, dst_tprog)
-        else:
-            raise FileNotFoundError(f"Kansio puuttuu: {src_tprog}. Luo ja täytä treatment_programs initialize-kansioon.")
 
-        # CP-SAT esikäsittely: tuottaa oikeamuotoiset tiedostot
-        from cp_sat_preprocessing import (
-            cp_sat_generate_batches,
-            cp_sat_generate_treatment_programs,
-            cp_sat_generate_stations,
-            cp_sat_generate_transfer_tasks,
-            cp_sat_generate_transporters
-        )
-        cp_sat_generate_batches(os.path.join(output_dir, "batches.csv"), os.path.join(output_dir, "initialization"))
-        cp_sat_generate_treatment_programs(os.path.join(output_dir, "treatment_programs"), os.path.join(output_dir, "initialization"))
-        cp_sat_generate_stations(os.path.join(output_dir, "stations.csv"), os.path.join(output_dir, "initialization"))
-        cp_sat_generate_transfer_tasks(os.path.join(output_dir, "transfer_tasks.csv"), os.path.join(output_dir, "initialization"))
-        cp_sat_generate_transporters(os.path.join(output_dir, "initialization", "transporters_start_positions.csv"), os.path.join(output_dir, "initialization"))
+        # Kaikki jatkovaiheet käyttävät vain simulaatiokansion initialization-alihakemistoa
+        # (ei enää projektin juuren initializationia)
 
         # Suorita CP-SAT optimointi
         from cp_sat_optimization import cp_sat_optimize
