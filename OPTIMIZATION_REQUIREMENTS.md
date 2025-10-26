@@ -22,6 +22,10 @@ Käsittelyohjelmien ohjelma-askeleiden käsittelyaikoja pitää kunnioittaa. Jok
 ### Sääntö 3
 Asemalla voi olla vain yksi erä kerrallaan. Tämä tarkoittaa, että aseman resurssit ovat varattuja yhden erän käsittelyn aikana, eikä päällekkäisyyksiä sallita.
 
+### Sääntö 3.1 – Aseman vapautuminen ja nostimen käyttö
+
+Seuraava erä ei voi saapua asemalle ennen kuin edellinen erä on kokonaan käsitelty ja siirretty pois asemalta, ja nostin on vapaa. Käytännössä nostin siirtää ensin edellisen erän pois asemalta (tähän kuluu siirtoajaksi laskettu aika), minkä jälkeen nostimen täytyy siirtyä edellisen tehtävän päättymisasemalta seuraavan tehtävän aloitusasemalle ennen kuin uuden erän siirtotehtävä voi alkaa.
+
 ### Sääntö 4
 Nostimen liikkeet pitää perustua esilaskettuihin (fysiikkaan perustuviin) tietoihin. Liikkeisiin tarvittava aika tulee esikäsittelytiedostosta, ja optimoinnin on käytettävä näitä arvoja sellaisenaan.
 

@@ -7,35 +7,27 @@ def preprocess_for_cpsat(output_dir):
     # Lue tuotantosuunnitelma batchien aloitusasemien hakua varten
     production_df = pd.read_csv(os.path.join(init_dir, "production.csv"))
 
-    # Kaikki tiedot luetaan initialization-kansiosta
-    init_dir = os.path.join(output_dir, "initialization")
-    # Muunna treatment_program_XXX.csv -> cp-sat-treatment-program-<batch>.csv
-    for fname in os.listdir(init_dir):
-        if fname.startswith("treatment_program_") and fname.endswith(".csv"):
-            batch_str = fname.split("_")[2].split(".")[0]  # esim. 001
-            batch_num = str(int(batch_str))  # poista etunollat
-            src = os.path.join(init_dir, fname)
-            dst = os.path.join(init_dir, f"cp-sat-treatment-program-{batch_num}.csv")
-            df = pd.read_csv(src)
-            # Lisää askel 0 alkuun
-            # Etsi oikea aloitusasema productionista
-            prod_row = production_df[production_df["Batch"] == int(batch_num)]
-            if not prod_row.empty:
-                start_station = int(prod_row.iloc[0]["Start_station"])
-            else:
-                start_station = df.iloc[0]["MinStat"]  # fallback
-            step0 = {
-                "Stage": 0,
-                "MinStat": start_station,
-                "MaxStat": start_station,
-                "MinTime": "00:00:00",
-                "MaxTime": "100:00:00"
-            }
-            df = pd.concat([pd.DataFrame([step0]), df], ignore_index=True)
-            # Korvaa Stage-sarake juoksevalla numeroinnilla (0,1,2,...)
-            df["Stage"] = range(len(df))
-            df.to_csv(dst, index=False, encoding="utf-8")
-            print(f"[Esikäsittely] Tallennettu: {dst}")
+    # Luo jokaiselle batchille oikea ohjelmatiedosto production.csv:n perusteella
+    for _, row in production_df.iterrows():
+        batch_num = int(row["Batch"])
+        program_num = int(row["Treatment_program"])
+        src = os.path.join(init_dir, f"treatment_program_{program_num:03d}.csv")
+        dst = os.path.join(init_dir, f"cp-sat-treatment-program-{batch_num}.csv")
+        df = pd.read_csv(src)
+        # Lisää askel 0 alkuun
+        start_station = int(row["Start_station"])
+        step0 = {
+            "Stage": 0,
+            "MinStat": start_station,
+            "MaxStat": start_station,
+            "MinTime": "00:00:00",
+            "MaxTime": "100:00:00"
+        }
+        df = pd.concat([pd.DataFrame([step0]), df], ignore_index=True)
+        # Korvaa Stage-sarake juoksevalla numeroinnilla (0,1,2,...)
+        df["Stage"] = range(len(df))
+        df.to_csv(dst, index=False, encoding="utf-8")
+        print(f"[Esikäsittely] Tallennettu: {dst}")
 
     # Luo cp-sat-batches.csv (kopioi production.csv, mutta oikealla nimellä)
     production = pd.read_csv(os.path.join(init_dir, "production.csv"))
