@@ -56,41 +56,6 @@ def create_simulation_directory(base_dir="output"):
             f.write(f"{timestamp},INIT,Documentation file: {os.path.basename(file)}\n")
         f.write(f"{timestamp},STEP,STEP 1 COMPLETED: SIMULATION DIRECTORY READY\n")
 
-    # Luo käytettyjen käsittelyohjelmien lista (used_treatment_programs.csv)
-    production_file = os.path.join(full_path, "initialization", "Production.csv")
-    used_programs = []
-    if os.path.exists(production_file):
-        import pandas as pd
-        prod_df = pd.read_csv(production_file)
-        # Etsi kaikki uniikit ohjelmat
-        unique_programs = prod_df["Treatment_program"].unique()
-        for prog in unique_programs:
-            # Etsi ohjelmatiedoston nimi initialization-kansiosta
-            prog_num = int(str(prog).zfill(3))
-            prog_name = None
-            for fname in os.listdir(os.path.join(full_path, "initialization")):
-                if fname.lower().startswith("treatment_program_") and fname[-7:-4].isdigit():
-                    if int(fname[-7:-4]) == prog_num:
-                        prog_name = fname
-                        break
-            if prog_name is None:
-                prog_name = f"Treatment_program_{prog_num:03d}.csv"
-            used_programs.append({
-                "treatment_program_number": prog_num,
-                "treatment_program_name": prog_name
-            })
-        # Poista duplikaatit varmuuden vuoksi
-        used_programs = { (p['treatment_program_number'], p['treatment_program_name']) : p for p in used_programs }.values()
-        used_programs = sorted(used_programs, key=lambda x: x['treatment_program_number'])
-        # Tallenna tiedostoon
-        import csv
-        used_file = os.path.join(logs_dir, "used_treatment_programs.csv")
-        with open(used_file, "w", newline='', encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["treatment_program_number", "treatment_program_name"])
-            writer.writeheader()
-            for row in used_programs:
-                writer.writerow(row)
-
     # Luo reports-kansio
     reports_dir = os.path.join(full_path, "reports")
     os.makedirs(reports_dir, exist_ok=True)

@@ -328,3 +328,57 @@ def generate_tasks(output_dir):
     # STEP-tyyppinen lopetusviesti terminaaliin ja lokiin
     logger.log("STEP", "STEP 5 COMPLETED: GENERATE TASKS")
     return tasks_df, ordered_df
+
+def generate_transfer_tasks(output_dir):
+    """Luo kuljetintehtävät line_matrix_original.csv:n perusteella ja lisää Shift-sarake (aluksi 0)."""
+    logger = get_logger()
+    if logger is None:
+        raise RuntimeError("Logger is not initialized. Call init_logger(output_dir) before using generate_transfer_tasks.")
+    print("Vaihe alkaa: Kuljetintehtävien generointi")
+    logger.log_phase("Kuljetintehtävien generointi alkaa")
+
+    matrix_file = os.path.join(output_dir, "line_matrix_original.csv")
+    if not os.path.exists(matrix_file):
+        logger.log_error(f"line_matrix_original.csv ei löydy: {matrix_file}")
+        print("Virhe: line_matrix_original.csv ei löydy")
+        raise FileNotFoundError(f"line_matrix_original.csv ei löydy: {matrix_file}")
+
+    logger.log_io(f"Luetaan line_matrix_original.csv: {matrix_file}")
+    try:
+        df = pd.read_csv(matrix_file)
+        logger.log_data(f"Ladattu {len(df)} vaihetta, {df['Batch'].nunique()} erää")
+        df = df.sort_values(["Batch", "Stage"]).reset_index(drop=True)
+        tasks = []
+        for idx, row in df.iterrows():
+            tasks.append({
+                "Batch": int(row["Batch"]),
+                "Treatment_program": int(row["Treatment_program"]),
+                "Stage": int(row["Stage"]),
+                "Lift_stat": int(row["Station"]),
+                "Lift_time": float(row["ExitTime"]),
+                "Sink_stat": int(df.iloc[idx + 1]["Station"]) if idx + 1 < len(df) and row["Batch"] == df.iloc[idx + 1]["Batch"] else None,
+                "Sink_time": float(df.iloc[idx + 1]["EntryTime"]) if idx + 1 < len(df) and row["Batch"] == df.iloc[idx + 1]["Batch"] else None,
+                "Shift": 0.0
+            })
+        # Poista viimeinen tehtävä jokaisesta batchista (koska sillä ei ole seuraavaa vaihetta)
+        tasks = [t for t in tasks if t["Sink_stat"] is not None]
+        tasks_df = pd.DataFrame(tasks)
+        # Varmistetaan sarakejärjestys ja Shift-nimi
+        cols = ["Batch", "Treatment_program", "Stage", "Lift_stat", "Lift_time", "Sink_stat", "Sink_time", "Shift"]
+        tasks_df = tasks_df[cols]
+    except Exception as e:
+        logger.log_error(f"Kuljetintehtävien generointi epäonnistui: {e}")
+        print(f"Virhe: kuljetintehtävien generointi epäonnistui: {e}")
+        raise
+
+    os.makedirs(output_dir, exist_ok=True)
+    logs_dir = os.path.join(output_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+
+    # Tallenna kaikkiin vaiheisiin Shift-sarake (aluksi 0)
+    raw_file = os.path.join(logs_dir, "transfer_tasks.csv")
+    tasks_df.to_csv(raw_file, index=False)
+    logger.log_io(f"Kuljetintehtävät tallennettu: {raw_file}")
+
+    print("Vaihe valmis: Kuljetintehtävien generointi")
+    return tasks_df

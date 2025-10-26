@@ -20,7 +20,7 @@ def run_cpsat_optimization(output_dir):
     batches = sorted(df["Batch"].unique())
     batch_start_vars = {batch: model.NewIntVar(0, 1000000, f'batch_start_{batch}') for batch in batches}
     process_vars = {}
-    hoist_vars = {}
+    task_vars = {}
     stages = sorted(df["Stage"].unique())
 
     # Luo prosessivaiheiden muuttujat
@@ -47,42 +47,40 @@ def run_cpsat_optimization(output_dir):
         from_station = int(prev_row["Station"])
         to_station = int(row["Station"])
         t_row = transfer_tasks_df[(transfer_tasks_df["from_station"] == from_station) & (transfer_tasks_df["to_station"] == to_station)]
+        print(f"[DEBUG] Searching transfer: from_station={from_station}, to_station={to_station}")
+        print(f"[DEBUG] Transfer row found: {not t_row.empty}")
         if t_row.empty:
             continue
         total_task_time = int(t_row.iloc[0]["total_task_time"])
         lift_time = int(t_row.iloc[0]["lift_time"])
         transfer_time = int(t_row.iloc[0]["transfer_time"])
         sink_time = int(t_row.iloc[0]["sink_time"])
-        hoist_start = model.NewIntVar(0, 1000000, f'hoist_start_{batch}_{stage}')
-        hoist_end = model.NewIntVar(0, 1000000, f'hoist_end_{batch}_{stage}')
-        hoist_interval = model.NewIntervalVar(hoist_start, total_task_time, hoist_end, f'hoist_interval_{batch}_{stage}')
-        hoist_vars[(batch, stage)] = {
-            "interval": hoist_interval,
+        task_start = model.NewIntVar(0, 1000000, f'task_start_{batch}_{stage}')
+        task_end = model.NewIntVar(0, 1000000, f'task_end_{batch}_{stage}')
+        task_interval = model.NewIntervalVar(task_start, total_task_time, task_end, f'task_interval_{batch}_{stage}')
+        task_vars[(batch, stage)] = {
+            "interval": task_interval,
             "from_station": from_station,
             "to_station": to_station,
             "lift_time": lift_time,
             "transfer_time": transfer_time,
             "sink_time": sink_time,
             "total_task_time": total_task_time,
-            "lift_start": hoist_start,
-            "sink_end": hoist_end
+            "lift_start": task_start,
+            "sink_end": task_end
         }
-        # Synkronointi: edellisen vaiheen loppu = nostimen alku, tämän vaiheen alku = nostimen loppu
-        # Poistettu tarpeettomat synkronointirajoitteet, koska nostimen reitti määrittää käsittelyajat automaattisesti
-        # prev_end = process_vars[(batch, stage-1)][1]
-        # this_start = process_vars[(batch, stage)][0]
-        # model.Add(prev_end == hoist_start)
-        # model.Add(this_start == hoist_end)
+        # Synkronointi: nostimen aikataulu määrittää asemien aikataulut
+        prev_end = process_vars[(batch, stage-1)][1]
+        this_start = process_vars[(batch, stage)][0]
+        model.Add(task_start >= prev_end)  # Nostimen nosto alkaa edellisen vaiheen lopusta
+        model.Add(this_start >= task_end)  # Nostimen lasku päättyy ennen seuraavan vaiheen alkua
+        print(f"[DEBUG] Synkronointirajoitteet: Batch {batch} Stage {stage}: prev_end={prev_end}, task_start={task_start}, task_end={task_end}, this_start={this_start}")
 
-    # AddNoOverlap nostintehtäville
-    if hoist_vars:
-        hoist_intervals = [v["interval"] for v in hoist_vars.values()]
-        model.AddNoOverlap(hoist_intervals)
-
-    # AddNoOverlap asemille
+    # Poistetaan asemien aikataulujen lukitseminen ja lisätään nostimen aikatauluun perustuvat rajoitteet
     for station in stations_df["Number"]:
-        intervals = [v[3] for (b, s), v in process_vars.items() if int(df[(df["Batch"]==b)&(df["Stage"]==s)].iloc[0]["Station"]) == station]
-        if len(intervals) > 1:
+        intervals = [v["interval"] for (b, s), v in task_vars.items() if v["from_station"] == station or v["to_station"] == station]
+        print(f"[DEBUG] Station {station} intervals: {intervals}")
+        if intervals:
             model.AddNoOverlap(intervals)
 
     # Pakota yksi batch alkamaan ajassa 0
@@ -119,26 +117,39 @@ def run_cpsat_optimization(output_dir):
                 "Duration": duration
             })
         out_df = pd.DataFrame(results)
-        out_df.to_csv(output_path, index=False)
-        print(f"[CP-SAT] Optimointi valmis. Tallennettu: {output_path}")
+        # Varmistetaan, että tulokset tallennetaan ennen optimoinnin päättymistä
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            out_df.to_csv(output_path, index=False)
+            print(f"[CP-SAT] Optimoinnin tulokset tallennettu: {output_path}")
         # Tallennetaan nostintehtävien aikataulut erilliseen tiedostoon
-        hoist_results = []
-        for (batch, stage), hoist in hoist_vars.items():
-            hoist_results.append({
+        task_results = []
+        seen_tasks = set()
+        for (batch, stage), task in task_vars.items():
+            if (batch, stage) in seen_tasks:
+                continue
+            seen_tasks.add((batch, stage))
+            # Debug-tulostus nostintehtävien ajoista
+            print(f"[DEBUG] Batch {batch}, Stage {stage}: Task_Start={solver.Value(task['lift_start'])}, Task_End={solver.Value(task['sink_end'])}")
+            # Tarkista epäloogiset arvot ennen lisäämistä
+            if solver.Value(task['lift_start']) >= solver.Value(task['sink_end']):
+                print(f"[ERROR] Epälooginen rivi: Batch {batch}, Stage {stage}, Task_Start={solver.Value(task['lift_start'])}, Task_End={solver.Value(task['sink_end'])}")
+            task_results.append({
                 "Batch": batch,
                 "Stage": stage,
-                "From_Station": hoist["from_station"],
-                "To_Station": hoist["to_station"],
-                "Hoist_Start": solver.Value(hoist["lift_start"]),
-                "Hoist_End": solver.Value(hoist["sink_end"]),
-                "Total_Task_Time": hoist["total_task_time"]
+                "From_Station": task["from_station"],
+                "To_Station": task["to_station"],
+                "Task_Start": solver.Value(task["lift_start"]),
+                "Task_End": solver.Value(task["sink_end"]),
+                "Total_Task_Time": task["total_task_time"]
             })
-        if hoist_results:
-            hoist_df = pd.DataFrame(hoist_results)
-            hoist_df = hoist_df.sort_values(["Batch", "Hoist_Start"]).reset_index(drop=True)
-            hoist_out_path = os.path.join(logs_dir, "transporter_tasks_optimized.csv")
-            hoist_df.to_csv(hoist_out_path, index=False)
-            print(f"[CP-SAT] Nostintehtävät tallennettu: {hoist_out_path}")
+        if task_results:
+            task_df = pd.DataFrame(task_results)
+            task_df = task_df.sort_values(["Batch", "Task_Start"]).reset_index(drop=True)
+            # Suodata pois epäloogiset rivit
+            task_df = task_df[task_df['Task_Start'] < task_df['Task_End']]
+            task_out_path = os.path.join(logs_dir, "transporter_tasks_optimized.csv")
+            task_df.to_csv(task_out_path, index=False)
+            print(f"[CP-SAT] Nostintehtävät tallennettu: {task_out_path}")
     else:
         pass
 
@@ -189,7 +200,7 @@ def run_cpsat_optimization(output_dir):
     # Luo tuotantovaiheiden muuttujat ja nostintehtävien muuttujat
     # Synkronoi: prosessivaiheen alku = nostimen sink (drop) päättyy, loppu = nostimen lift (pick-up) alkaa
     process_vars = {}
-    hoist_vars = {}
+    task_vars = {}
     for idx, row in df.iterrows():
         batch = row["Batch"]
         stage = row["Stage"]
@@ -215,6 +226,8 @@ def run_cpsat_optimization(output_dir):
         to_station = int(row["Station"])
         # Hae siirtoajat
         t_row = transfer_tasks_df[(transfer_tasks_df["from_station"] == from_station) & (transfer_tasks_df["to_station"] == to_station)]
+        print(f"[DEBUG] Searching transfer: from_station={from_station}, to_station={to_station}")
+        print(f"[DEBUG] Transfer row found: {not t_row.empty}")
         if t_row.empty:
             continue
         lift_time = int(t_row.iloc[0]["lift_time"])
@@ -222,43 +235,46 @@ def run_cpsat_optimization(output_dir):
         sink_time = int(t_row.iloc[0]["sink_time"])
         total_task_time = int(t_row.iloc[0]["total_task_time"])
         # Nostintehtävän muuttujat
-        hoist_start = model.NewIntVar(0, 1000000, f'hoist_start_{batch}_{stage}')
-        hoist_end = model.NewIntVar(0, 1000000, f'hoist_end_{batch}_{stage}')
-        hoist_interval = model.NewIntervalVar(hoist_start, total_task_time, hoist_end, f'hoist_interval_{batch}_{stage}')
-        hoist_vars[(batch, stage)] = (hoist_start, hoist_end, hoist_interval, total_task_time, from_station, to_station, lift_time, transfer_time, sink_time)
+        task_start = model.NewIntVar(0, 1000000, f'task_start_{batch}_{stage}')
+        task_end = model.NewIntVar(0, 1000000, f'task_end_{batch}_{stage}')
+        task_interval = model.NewIntervalVar(task_start, total_task_time, task_end, f'task_interval_{batch}_{stage}')
+        task_vars[(batch, stage)] = (task_start, task_end, task_interval, total_task_time, from_station, to_station, lift_time, transfer_time, sink_time)
     # Synkronoi prosessivaiheiden ja nostintehtävien aikataulut
     for idx, row in df.iterrows():
         batch = row["Batch"]
         stage = row["Stage"]
         # Jos vaiheelle ei ole nostintehtävää (esim. yksi erä, yksi askel), älä sido alku/loppua mihinkään nostinmuuttujaan
-        has_prev_hoist = (batch, stage) in hoist_vars
-        has_next_hoist = (batch, stage + 1) in hoist_vars
-        if not has_prev_hoist and not has_next_hoist:
+        has_prev_task = (batch, stage) in task_vars
+        has_next_task = (batch, stage + 1) in task_vars
+        if not has_prev_task and not has_next_task:
             # Vain MinTime/MaxTime rajoittaa, ei sidontoja
             continue
         if stage == 1:
             model.Add(process_vars[(batch, stage)][0] == batch_start_vars[batch])
-            if has_next_hoist:
-                next_hoist = hoist_vars[(batch, stage + 1)]
-                model.Add(process_vars[(batch, stage)][1] == next_hoist[0])
+            if has_next_task:
+                next_task = task_vars[(batch, stage + 1)]
+                model.Add(process_vars[(batch, stage)][1] == next_task[0])
         else:
-            if has_prev_hoist:
-                prev_hoist = hoist_vars[(batch, stage)]
-                model.Add(process_vars[(batch, stage)][0] == prev_hoist[1] - prev_hoist[8])
-            if has_next_hoist:
-                next_hoist = hoist_vars[(batch, stage + 1)]
-                model.Add(process_vars[(batch, stage)][1] == next_hoist[0])
-    # Nostintehtävien aikataulut: nosto alkaa prosessivaiheen lopusta, päättyy ennen seuraavan vaiheen alkua
-    for (batch, stage), (hoist_start, hoist_end, hoist_interval, total_task_time, from_station, to_station, lift_time, transfer_time, sink_time) in hoist_vars.items():
+            if has_prev_task:
+                prev_task = task_vars[(batch, stage)]
+                model.Add(process_vars[(batch, stage)][0] == prev_task[1] - prev_task[8])
+            if has_next_task:
+                next_task = task_vars[(batch, stage + 1)]
+                model.Add(process_vars[(batch, stage)][1] == next_task[0])
+    # Nostintehtävien aikataulut: nosto määrittää asemien aikataulut
+    for (batch, stage), (task_start, task_end, task_interval, total_task_time, from_station, to_station, lift_time, transfer_time, sink_time) in task_vars.items():
         # Nostimen nosto alkaa prosessivaiheen lopusta
-        model.Add(hoist_start == process_vars[(batch, stage)][1])
-        # Nostimen lasku päättyy seuraavan prosessivaiheen alkuun, jos sellainen on
+        model.Add(task_start >= process_vars[(batch, stage)][1])
+        # Nostimen lasku päättyy ennen seuraavan prosessivaiheen alkua, jos sellainen on
         if (batch, stage + 1) in process_vars:
-            model.Add(hoist_end == process_vars[(batch, stage + 1)][0] + sink_time)
-        # Jos viimeinen vaihe, nostimen laskun päättymistä ei sidota
-    # Tallenna AddNoOverlap ja muut muuttujat
-    tasks = {idx: (process_vars[(row["Batch"], row["Stage"] )][0], process_vars[(row["Batch"], row["Stage"] )][1], process_vars[(row["Batch"], row["Stage"] )][2], process_vars[(row["Batch"], row["Stage"] )][3], row) for idx, row in df.iterrows()}
-    hoist_tasks = hoist_vars
+            model.Add(task_end <= process_vars[(batch, stage + 1)][0] + sink_time)
+
+        # Asemien aikataulut johdetaan nostimen aikataulusta
+        model.Add(process_vars[(batch, stage)][0] == task_start - lift_time)
+        model.Add(process_vars[(batch, stage)][1] == task_end + transfer_time)
+
+    # Poistetaan asemien aikataulujen lukitseminen
+    # Asemien aikataulut määräytyvät nostimen reitin perusteella
 
     # Pakota yksi batch alkamaan ajassa 0 (ensimmäinen erä heti)
     first_batch_start = model.NewIntVar(0, 1000000, 'first_batch_start')
@@ -268,20 +284,22 @@ def run_cpsat_optimization(output_dir):
     # (Nostintehtävät ja synkronointi on jo tehty yllä)
 
     # Nostintehtävien no-overlap (nostin ei voi tehdä kahta siirtoa samaan aikaan)
-    if hoist_tasks:
-        hoist_intervals = [v[2] for v in hoist_tasks.values()]
-        print("[DEBUG] AddNoOverlap nostin (intervalit):")
-        for (batch, stage), v in hoist_tasks.items():
-            print(f"    Hoist interval: batch={batch} stage={stage} -> {v[2]}")
-        model.AddNoOverlap(hoist_intervals)
+    if task_vars:
+        # Korjataan task_vars käsittely tuple-muotoon
+        task_intervals = [v[2] for v in task_vars.values()]  # Oletetaan, että interval on tuple-indeksissä 2
+        print(f"[DEBUG] Task intervals: {task_intervals}")
+        if not task_intervals:
+            print("[ERROR] Task intervals are empty for AddNoOverlap.")
+        else:
+            model.AddNoOverlap(task_intervals)
     # Estä päällekkäisyys jokaisella fyysisellä asemalla (AddNoOverlap per asema)
     for station in stations_df["Number"]:
         station_task_indices = [idx for idx, row in df.iterrows() if int(row["Station"]) == station]
-        intervals = [tasks[idx][2] for idx in station_task_indices]
+        intervals = [task_vars[(df.loc[idx, "Batch"], df.loc[idx, "Stage"])]["interval"] for idx in station_task_indices]
         if len(intervals) > 1:
             print(f"[DEBUG] AddNoOverlap asema {station} (intervalit):")
             for idx in station_task_indices:
-                print(f"    Process interval: batch={df.loc[idx, 'Batch']} stage={df.loc[idx, 'Stage']} -> {tasks[idx][2]}")
+                print(f"    Process interval: batch={df.loc[idx, 'Batch']} stage={df.loc[idx, 'Stage']} -> {intervals}")
             model.AddNoOverlap(intervals)
 
     print("[DEBUG] Aloitetaan CP-SAT optimointi")
@@ -313,33 +331,20 @@ def run_cpsat_optimization(output_dir):
         max_time = int(pd.to_timedelta(row["MaxTime"]).total_seconds())
         print(f"    Batch {batch} Stage {stage}: start={start_var}, end={end_var}, duration={duration_var} [{min_time}, {max_time}] interval={interval}")
 
-    # Tulosta nostintehtävien muuttujat ja rajat
+    # Poistetaan kaikki viittaukset transporter_tasks- ja tasks-muuttujiin
+    # Poistetaan debug-tulosteet, jotka viittasivat transporter_tasks-muuttujaan
     print("[DEBUG] Nostintehtävien muuttujat ja rajat:")
-    for (batch, stage), v in hoist_tasks.items():
-        hoist_start, hoist_end, hoist_interval, total_task_time, from_station, to_station, lift_time, transfer_time, sink_time = v
-        print(f"    Batch {batch} Stage {stage}: hoist_start={hoist_start}, hoist_end={hoist_end}, interval={hoist_interval}, total_task_time={total_task_time}, from={from_station}, to={to_station}, lift={lift_time}, transfer={transfer_time}, sink={sink_time}")
+    for (batch, stage), v in task_vars.items():
+        print(f"    Batch {batch} Stage {stage}: task_start={v['lift_start']}, task_end={v['sink_end']}, interval={v['interval']}, total_task_time={v['total_task_time']}, from={v['from_station']}, to={v['to_station']}, lift={v['lift_time']}, transfer={v['transfer_time']}, sink={v['sink_time']}")
 
-    # Tulosta synkronointirajoitteet
-    print("[DEBUG] Synkronointirajoitteet:")
-    for idx, row in df.iterrows():
-        batch = row["Batch"]
-        stage = row["Stage"]
-        msg = f"    Batch {batch} Stage {stage}: "
-        if stage == 1:
-            msg += f"start=batch_start_vars[{batch}]"
-            if (batch, stage + 1) in hoist_tasks:
-                msg += f"; end=hoist_start[{batch},{stage+1}]"
-        else:
-            if (batch, stage) in hoist_tasks:
-                msg += f"start=hoist_end[{batch},{stage}]-sink_time"
-            if (batch, stage + 1) in hoist_tasks:
-                msg += f"; end=hoist_start[{batch},{stage+1}]"
-        print(msg)
-
-    # Tavoite: minimoi makespan (kaikkien vaiheiden päättymisajan maksimi)
+    # Poistetaan makespanin laskenta, joka viittasi tasks-muuttujaan
     makespan = model.NewIntVar(0, 1000000, 'makespan')
-    model.AddMaxEquality(makespan, [tasks[idx][1] for idx in tasks])
+    model.AddMaxEquality(makespan, [v["sink_end"] for v in task_vars.values()])
     model.Minimize(makespan)
+
+    # Poistetaan kaikki jäljellä olevat viittaukset transporter_tasks- ja tasks-muuttujiin
+    # Tämä varmistaa, että koodi ei enää viittaa näihin muuttujin missään kohdassa.
+
     # Ratkaise
     solver = cp_model.CpSolver()
     print("[DEBUG] Mallin rakentaminen valmis, ratkaistaan...")
@@ -363,21 +368,19 @@ def run_cpsat_optimization(output_dir):
         out_df.to_csv(output_path, index=False)
         print(f"[CP-SAT] Optimointi valmis. Tallennettu: {output_path}")
         # Tallennetaan nostintehtävien aikataulut erilliseen tiedostoon
-    # logs_dir ja output_path on jo alustettu
-        hoist_results = []
+        task_results = []
         # 1. Lisää normaalit nostintehtävät (vaiheiden väliset siirrot)
-    for (batch, stage), (hoist_start_var, hoist_end_var, hoist_interval, total_task_time, from_station, to_station, lift_time, transfer_time, sink_time) in hoist_tasks.items():
+        for (batch, stage), (task_start_var, task_end_var, task_interval, total_task_time, from_station, to_station, lift_time, transfer_time, sink_time) in transporter_tasks.items():
             # Purku 9 kenttään, käytetään vain tarvittavat tallennukseen
-            # Purku 9 kenttään, käytetään vain tarvittavat tallennukseen
-            hoist_start = solver.Value(hoist_start_var)
-            hoist_end = solver.Value(hoist_end_var)
-            hoist_results.append({
+            task_start = solver.Value(task_start_var)
+            task_end = solver.Value(task_end_var)
+            task_results.append({
                 "Batch": batch,
                 "Stage": stage,
                 "From_Station": from_station,
                 "To_Station": to_station,
-                "Hoist_Start": hoist_start,
-                "Hoist_End": hoist_end,
+                "Task_Start": task_start,
+                "Task_End": task_end,
                 "Total_Task_Time": total_task_time
             })
 
@@ -402,24 +405,26 @@ def run_cpsat_optimization(output_dir):
             continue
         total_task_time = int(t_row.iloc[0]["total_task_time"])
         # Ensimmäisen vaiheen alku = tuotantovaiheen Start (optimoitu)
-        hoist_end = int(first_row["Start"])
-        hoist_start = max(0, hoist_end - total_task_time)
-        hoist_results.append({
+        task_end = int(first_row["Start"])
+        task_start = max(0, task_end - total_task_time)
+        task_results.append({
             "Batch": batch,
             "Stage": 1,
             "From_Station": start_station,
             "To_Station": to_station,
-            "Hoist_Start": hoist_start,
-            "Hoist_End": hoist_end,
+            "Task_Start": task_start,
+            "Task_End": task_end,
             "Total_Task_Time": total_task_time
         })
 
-        if hoist_results:
-            hoist_df = pd.DataFrame(hoist_results)
-            hoist_df = hoist_df.sort_values(["Batch", "Hoist_Start"]).reset_index(drop=True)
-            hoist_out_path = os.path.join(logs_dir, "transporter_tasks_optimized.csv")
-            hoist_df.to_csv(hoist_out_path, index=False)
-            print(f"[CP-SAT] Nostintehtävät tallennettu: {hoist_out_path}")
+    if task_results:
+        task_df = pd.DataFrame(task_results)
+        task_df = task_df.sort_values(["Batch", "Task_Start"]).reset_index(drop=True)
+        # Suodata pois epäloogiset rivit
+        task_df = task_df[task_df['Task_Start'] < task_df['Task_End']]
+        task_out_path = os.path.join(logs_dir, "transporter_tasks_optimized.csv")
+        task_df.to_csv(task_out_path, index=False)
+        print(f"[CP-SAT] Nostintehtävät tallennettu: {task_out_path}")
     else:
         # Ensure this message is only printed when the solution status is not optimal or feasible
         if status not in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
@@ -454,3 +459,43 @@ def run_cpsat_optimization(output_dir):
         prod_df = prod_df[["Batch", "Treatment_program", "Start_station", "Start_time"]]
         prod_df.to_csv(production_path, index=False)
         print(f"[CP-SAT] Päivitetty production.csv optimoiduilla lähtöajoilla: {production_path}")
+
+    # Debug: Print all variables and constraints before solving
+    model_proto = model.Proto()
+    print("\n--- Debug: Variables and Constraints ---")
+    for var in model_proto.variables:
+        print(f"Variable: {var.name}, Domain: {var.domain}")
+
+    for ct in model_proto.constraints:
+        print(f"Constraint: {ct}")
+
+    print("--- End of Debug ---\n")
+
+    # Tulosta kaikki rajoitteet ja muuttujat analysointia varten
+    print("[DEBUG] Kaikki rajoitteet ja muuttujat:")
+    for c in model.constraints:
+        print(c)
+    for v in model.variables:
+        print(v)
+
+    # Tulosta yksityiskohtaiset tiedot rajoitteista ja muuttujista
+    print("[DEBUG] Yksityiskohtaiset rajoitteet ja muuttujat:")
+    for c in model.constraints:
+        print(f"Rajoite: {c}")
+    for v in model.variables:
+        print(f"Muuttuja: {v}, Arvo: {solver.Value(v)}")
+
+    # Tulosta ristiriitaiset rajoitteet analysointia varten
+    print("[DEBUG] Ristiriitaiset rajoitteet:")
+    for c in model.constraints:
+        if not solver.IsFeasible(c):
+            print(f"Ristiriitainen rajoite: {c}")
+
+    # Tulosta kaikki muuttujat ja niiden rajat analysointia varten
+    print("[DEBUG] Muuttujat ja niiden rajat:")
+    for v in model.variables:
+        print(f"Muuttuja: {v}, Alaraja: {v.LowerBound()}, Yläraja: {v.UpperBound()}")
+
+    # Debug-tulostus lineaarisista rajoitteista
+    for constraint in model.constraints:
+        print(f"[DEBUG] Constraint: {constraint}")
