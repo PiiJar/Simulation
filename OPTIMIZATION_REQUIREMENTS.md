@@ -1,7 +1,11 @@
 # Optimointivaatimukset
 
 ## Tavoite
+Simulointi alkaa aina ajasta 00:00:00, joten aikavyöhykkeillä tai kellonajoilla ei ole merkitystä optimoinnissa.
 Etsiä nostimelle ajallisesti optimaalisin reitti, joka minimoi kokonaisajan (makespan) huomioiden kaikki rajoitteet, kuten asemien käyttö, tehtävien järjestys ja siirtymäajat.
+
+**Aikayksiköt:**
+Kaikki ajat esitetään dokumentaatiossa muodossa hh:mm:ss, mutta optimoinnissa kaikki ajat muunnetaan sekunneiksi.
 
 ## Säännöt
 
@@ -12,7 +16,7 @@ Erien käsittelyohjelman määrittelemää käsittelyjärjestystä on noudatetta
 Käsittelyohjelmien ohjelma-askeleiden käsittelyaikoja pitää kunnioittaa. Jokaisen askeleen kesto on vähintään määritelty minimi ja enintään määritelty maksimi.
 
 ### Sääntö 3
-Asemilla ei voi olla kuin yksi erä kerrallaan. Tämä tarkoittaa, että aseman resurssit ovat varattuja yhden erän käsittelyn aikana, eikä päällekkäisyyksiä sallita.
+Asemalla voi olla vain yksi erä kerrallaan. Tämä tarkoittaa, että aseman resurssit ovat varattuja yhden erän käsittelyn aikana, eikä päällekkäisyyksiä sallita.
 
 ### Sääntö 4
 Nostimen liikkeet pitää perustua esilaskettuihin (fysiikkaan perustuviin) tietoihin. Liikkeisiin tarvittava aika tulee esikäsittelytiedostosta, ja optimoinnin on käytettävä näitä arvoja sellaisenaan.
@@ -26,7 +30,11 @@ Nostin ei voi olla kahdessa paikassa yhtäaikaa. Kaikkien siirtotehtävien väli
 Käsittelyohjelmien käsittelyajat voivat olla mitä tahansa määritellyn minimi- ja maksimiarvon välillä. Tämä mahdollistaa nostimen tehtävien ajoittamisen ja päällekkäisyyksien eliminoinnin säätämällä käsittelyaikoja.
 
 ### Vapausaste 2
-Jos ohjelmassa on rinnakkaisia asemia (sama Group-numero), niitä voidaan käyttää yhtäaikaisesti. Tämä mahdollistaa resurssien tehokkaamman hyödyntämisen ja tehtävien rinnakkaisen suorittamisen.
+Jos käsittelyohjelmassa on vaihe, jossa MinStat < MaxStat, voidaan kyseiseen vaiheeseen valita mikä tahansa asema tältä väliltä, kunhan asema kuuluu samaan Group-numeroon. Näin mahdollistetaan rinnakkaisten asemien käyttö ja resurssien tehokkaampi hyödyntäminen. Jos Group-numero on sama, asemat ovat rinnakkaisia ja niitä voidaan käyttää yhtäaikaisesti.
+
+## Erien ja nostimien määrä
+- Optimointi tukee useita eriä. Yhdellä asemalla voi olla vain yksi erä kerrallaan.
+- Tässä vaiheessa keskitytään yhden nostimen optimointiin, mutta malli voidaan laajentaa useammalle nostimelle myöhemmin.
 
 ## Kysymykset ongelman ymmärtämiseksi
 
@@ -34,7 +42,7 @@ Jos ohjelmassa on rinnakkaisia asemia (sama Group-numero), niitä voidaan käytt
    - Onko kyse vain nostimen reitin optimoinnista, vai pitääkö myös resurssien käyttöä (esim. asemat) optimoida?
 
    ### Vastaus kysymykseen 1
-   Optimoinnin tavoite on minimoida kokonaistuotannon läpimenoaika. Tämä toteutuu, jos nostimelle (nostimille) löydetään ajallisesti nopein reitti. Reaalimaailman tavoite on siis tuotantoajan minimointi, mutta CP-SAT-optimoinnin tavoite on löytää nopein reitti nostimelle / nostimille.
+   Optimoinnin tavoite on minimoida kokonaistuotannon läpimenoaika. Tämä toteutuu, jos nostimelle (tai useammalle nostimelle) löydetään ajallisesti nopein reitti. Tässä vaiheessa keskitytään yhden nostimen optimointiin, mutta malli voidaan laajentaa useammalle nostimelle myöhemmin.
 
 2. Miten askel 0 liittyy ongelman ratkaisuun?
    - Ymmärrän, että askel 0 tarjoaa joustavuutta, mutta miten se käytännössä varmistaa ratkaisun löytymisen?
@@ -86,7 +94,17 @@ Jos ohjelmassa on rinnakkaisia asemia (sama Group-numero), niitä voidaan käytt
 
 Nämä tiedot on poimittu tiedostosta `Batch_001_Treatment_program_001.csv` ja ne kuvaavat erän 1 käsittelyohjelman vaiheet ja aikarajoitteet.
 
+### Nostimen aloitus- ja lopetuspaikka
+Nostimelle on määritelty aloituspaikka erillisessä tiedostossa `transporters_start_positions.csv`. Sama asema toimii myös nostimen lopetuspaikkana. Aloitus- ja lopetuspaikka ovat pakollisia tietoja jokaiselle nostimelle.
+
+### Käsittelyohjelman rakenne
+Käsittelyohjelma on vapaasti muokattavissa, joten optimoinnin tulee tukea tilannetta, jossa sama erä voi käydä prosessin aikana samalla asemalla useita kertoja.
+
 ### Tehtävä- ja siirtoajat asemille 301, 302 ja 303
+
+**Huom!** Kaikki erilaiset siirrot ja niiden ajat tulee määritellä etukäteen (kaikki mahdolliset asemien väliset siirrot), jotta erilaiset käsittelyohjelmat ja asemavalinnat ovat mahdollisia. Siirtymäajat on laskettava etukäteen. Jos optimointi kohtaa puuttuvan siirtymäajan, siitä annetaan virheilmoitus ja simulointi keskeytyy.
+## Useamman nostimen huomioita (tulevaa laajennusta varten)
+Jos optimointiin lisätään useampi nostin, tärkein rajoite on, että nostimet eivät saa toimia liian lähellä toisiaan eivätkä toistensa "väärällä puolella". Tiedostoon `transporters_start_positions.csv` (tai vastaavaan) lisätään kenttä `Avoid_limit`, joka kuvaa x-suunnassa minimietäisyyttä, jonka lähemmäs nostimet voivat toisiaan mennä. Useamman nostimen optimointi on huomattavasti haastavampaa, eikä sitä toteuteta tässä vaiheessa.
 
 - **301 → 301**: Lift Time: 17 s, Transfer Time: 0.0 s, Sink Time: 16 s, Total Task Time: 33.0 s
 - **301 → 302**: Lift Time: 17 s, Transfer Time: 5.0 s, Sink Time: 16 s, Total Task Time: 38.0 s
