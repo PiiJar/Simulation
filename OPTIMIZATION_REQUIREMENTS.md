@@ -1,3 +1,7 @@
+# Kuvaus optimoitavasta laitoksesta
+
+Tässä optimointitehtävässä mallinnetaan teollista tuotantolinjaa, jossa nostin siirtää tuotantoeriä asemalta toiselle käsittelyohjelman mukaisesti. Laitoksessa on useita asemia (esim. altaat, pesurit, kuivurit), joilla kullakin on omat rajoitteensa ja käsittelyajat. Nostimen liikkeet ja siirtoajat perustuvat fysiikkaan ja ne on laskettu etukäteen. Optimoinnin tavoitteena on löytää nostimelle aikataulu, joka minimoi koko tuotantoerän läpimenoajan huomioiden kaikki laitoksen rajoitteet, asemien käytön, tehtävien järjestyksen ja siirtymäajat.
+
 # Optimointivaatimukset
 
 ## Tavoite
