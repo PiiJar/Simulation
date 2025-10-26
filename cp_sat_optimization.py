@@ -3,24 +3,194 @@ import pandas as pd
 from ortools.sat.python import cp_model
 
 def cp_sat_optimize(output_dir):
+    # ...existing code...
+    # ...existing code...
+    # Lue lähtötiedot
+    batches = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-batches.csv"))
+    stations = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-stations.csv"))
+    transfers = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-transfer-tasks.csv"))
+    treatment_programs = {}
+    for batch in batches["Batch"]:
+        fname = os.path.join(output_dir, "initialization", f"cp-sat-treatment-program-{batch}.csv")
+        treatment_programs[batch] = pd.read_csv(fname)
+    model = cp_model.CpModel()
     task_vars = {}
-    virheet = []
-    # ...existing code...
-    # task_vars täyttö (olemassa jo alempana)
-    # ...existing code...
-    if virheet:
-        print("\n".join(virheet))
-        print("[CP-SAT] Optimointi keskeytetty virheiden vuoksi.")
-        return
-    if not task_vars:
-        print("[CP-SAT] VIRHE: Yhtään vaihetta ei voitu mallintaa. Tarkista käsittelyohjelmat ja asemat.")
-        return
-    # DEBUG: Tulosta kaikki task_vars-avaimet ja järjestysparit task_vars-täytön jälkeen
-    print("[DEBUG] task_vars.keys():", list(task_vars.keys()))
+    MAX_TIME = 10**6
+
+    for batch in batches["Batch"]:
+        program = treatment_programs[batch]
+        last_idx = len(program) - 1
+        for idx, row in program.iterrows():
+            stage = int(row["Stage"])
+            min_stat = int(row["MinStat"])
+            max_stat = int(row["MaxStat"])
+            min_time = int(pd.to_timedelta(row["MinTime"]).total_seconds())
+            max_time = int(pd.to_timedelta(row["MaxTime"]).total_seconds())
+            # Mahdolliset asemat groupin mukaan
+            group = None
+            if "Group" in stations.columns:
+                group = stations.loc[stations["Number"] == min_stat, "Group"].values[0]
+                possible_stations = stations[(stations["Number"] >= min_stat) & (stations["Number"] <= max_stat) & (stations["Group"] == group)]["Number"].tolist()
+            else:
+                possible_stations = stations[(stations["Number"] >= min_stat) & (stations["Number"] <= max_stat)]["Number"].tolist()
+            if not possible_stations:
+                # Ei lisätä task_vars:iin, mutta jatketaan silmukkaa
+                continue
+            duration_var = model.NewIntVar(min_time, max_time, f"duration_{batch}_{stage}")
+            start_var = model.NewIntVar(0, MAX_TIME, f"start_{batch}_{stage}")
+            end_var = model.NewIntVar(0, MAX_TIME, f"end_{batch}_{stage}")
+            station_domain = cp_model.Domain.FromValues(possible_stations)
+            station_var = model.NewIntVarFromDomain(station_domain, f"station_{batch}_{stage}")
+            model.Add(end_var == start_var + duration_var)
+            task_vars[(batch, stage)] = {
+                "start": start_var,
+                "end": end_var,
+                "station": station_var,
+                "duration": duration_var,
+                "possible_stations": possible_stations,
+                "is_last": idx == last_idx
+            }
+
+    # Tarkista, että task_vars sisältää kaikki (batch, stage) -parit
+    missing = []
     for batch in batches["Batch"]:
         program = treatment_programs[batch]
         stages = [int(row["Stage"]) for _, row in program.iterrows()]
-        print(f"[DEBUG] batch {batch} stages: {stages}")
+        for stage in stages:
+            if (batch, stage) not in task_vars:
+                missing.append((batch, stage))
+    if missing:
+        print(f"[CP-SAT] VIRHE: Seuraaville vaiheille ei löytynyt mahdollista asemaa: {missing}")
+        print("Tarkista treatment programien MinStat/MaxStat, Group ja asematiedot.")
+        return
+    # Lue lähtötiedot
+    batches = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-batches.csv"))
+    stations = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-stations.csv"))
+    transfers = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-transfer-tasks.csv"))
+    treatment_programs = {}
+    for batch in batches["Batch"]:
+        fname = os.path.join(output_dir, "initialization", f"cp-sat-treatment-program-{batch}.csv")
+        treatment_programs[batch] = pd.read_csv(fname)
+    model = cp_model.CpModel()
+    task_vars = {}
+    MAX_TIME = 10**6
+
+    for batch in batches["Batch"]:
+        program = treatment_programs[batch]
+        last_idx = len(program) - 1
+        for idx, row in program.iterrows():
+            stage = int(row["Stage"])
+            min_stat = int(row["MinStat"])
+            max_stat = int(row["MaxStat"])
+            min_time = int(pd.to_timedelta(row["MinTime"]).total_seconds())
+            max_time = int(pd.to_timedelta(row["MaxTime"]).total_seconds())
+            # Mahdolliset asemat groupin mukaan
+            group = None
+            if "Group" in stations.columns:
+                group = stations.loc[stations["Number"] == min_stat, "Group"].values[0]
+                possible_stations = stations[(stations["Number"] >= min_stat) & (stations["Number"] <= max_stat) & (stations["Group"] == group)]["Number"].tolist()
+            else:
+                possible_stations = stations[(stations["Number"] >= min_stat) & (stations["Number"] <= max_stat)]["Number"].tolist()
+            if not possible_stations:
+                # Ei lisätä task_vars:iin, mutta jatketaan silmukkaa
+                continue
+            duration_var = model.NewIntVar(min_time, max_time, f"duration_{batch}_{stage}")
+            start_var = model.NewIntVar(0, MAX_TIME, f"start_{batch}_{stage}")
+            end_var = model.NewIntVar(0, MAX_TIME, f"end_{batch}_{stage}")
+            station_domain = cp_model.Domain.FromValues(possible_stations)
+            station_var = model.NewIntVarFromDomain(station_domain, f"station_{batch}_{stage}")
+            model.Add(end_var == start_var + duration_var)
+            task_vars[(batch, stage)] = {
+                "start": start_var,
+                "end": end_var,
+                "station": station_var,
+                "duration": duration_var,
+                "possible_stations": possible_stations,
+                "is_last": idx == last_idx
+            }
+
+    # Tarkista, että task_vars sisältää kaikki (batch, stage) -parit
+    missing = []
+    for batch in batches["Batch"]:
+        program = treatment_programs[batch]
+        stages = [int(row["Stage"]) for _, row in program.iterrows()]
+        for stage in stages:
+            if (batch, stage) not in task_vars:
+                missing.append((batch, stage))
+    if missing:
+        print(f"[CP-SAT] VIRHE: Seuraaville vaiheille ei löytynyt mahdollista asemaa: {missing}")
+        print("Tarkista treatment programien MinStat/MaxStat, Group ja asematiedot.")
+        return
+
+    # Järjestysrajoitteet
+    for batch in batches["Batch"]:
+        program = treatment_programs[batch]
+        stages = [int(row["Stage"]) for _, row in program.iterrows()]
+        for i in range(1, len(stages)):
+            prev_stage = stages[i-1]
+            this_stage = stages[i]
+            model.Add(task_vars[(batch, this_stage)]["start"] >= task_vars[(batch, prev_stage)]["end"])
+
+    # AddNoOverlap: asemalla vain yksi erä kerrallaan
+    for station in stations["Number"]:
+        intervals = []
+        for (batch, stage), vars in task_vars.items():
+            if station in vars["possible_stations"]:
+                # Pakollinen interval, koska vaihe on aina ajoitettava
+                interval = model.NewIntervalVar(vars["start"], vars["duration"], vars["end"], f"interval_{batch}_{stage}_at_{station}")
+                # Vain jos asema valitaan
+                model.Add(vars["station"] == station).OnlyEnforceIf(model.NewBoolVar(f"is_{batch}_{stage}_at_{station}"))
+                intervals.append(interval)
+        if intervals:
+            model.AddNoOverlap(intervals)
+
+    # Siirtoajat: seuraava vaihe alkaa vasta kun edellinen päättyy + siirtoaika
+    for batch in batches["Batch"]:
+        program = treatment_programs[batch]
+        stages = [int(row["Stage"]) for _, row in program.iterrows()]
+        for i in range(1, len(stages)):
+            prev_stage = stages[i-1]
+            this_stage = stages[i]
+            prev_vars = task_vars[(batch, prev_stage)]
+            this_vars = task_vars[(batch, this_stage)]
+            for from_stat in prev_vars["possible_stations"]:
+                for to_stat in this_vars["possible_stations"]:
+                    mask = (transfers["from_station"] == from_stat) & (transfers["to_station"] == to_stat)
+                    if not mask.any():
+                        print(f"[CP-SAT] VIRHE: Siirtymäaika puuttuu: {from_stat} -> {to_stat}")
+                        return
+                    total_time = int(transfers[mask].iloc[0]["total_task_time"])
+                    # Jos edellinen asema == from_stat ja seuraava asema == to_stat, enforce
+                    cond = model.NewBoolVar(f"trans_{batch}_{prev_stage}_{from_stat}_to_{this_stage}_{to_stat}")
+                    model.Add(prev_vars["station"] == from_stat).OnlyEnforceIf(cond)
+                    model.Add(this_vars["station"] == to_stat).OnlyEnforceIf(cond)
+                    model.Add(this_vars["start"] >= prev_vars["end"] + total_time).OnlyEnforceIf(cond)
+
+    # Viimeisen vaiheen Duration=0 sallitaan vain, jos se on käsittelyohjelmassa
+    # (tämä on jo duration_varin domainissa)
+
+    # Ratkaise ja tallenna tulokset
+    solver = cp_model.CpSolver()
+    status = solver.Solve(model)
+    logs_dir = os.path.join(output_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    result_path = os.path.join(logs_dir, "cp-sat-result-schedule.csv")
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print(f"[CP-SAT] Ei toteuttamiskelpoista ratkaisua! Status: {status}")
+        return
+    results = []
+    for (batch, stage), vars in task_vars.items():
+        results.append({
+            "Batch": batch,
+            "Stage": stage,
+            "Station": solver.Value(vars["station"]),
+            "Start": solver.Value(vars["start"]),
+            "End": solver.Value(vars["end"]),
+            "Duration": solver.Value(vars["duration"])
+        })
+    df_result = pd.DataFrame(results)
+    df_result.to_csv(result_path, index=False)
+    print(f"[CP-SAT] Optimoinnin tulokset tallennettu: {result_path}")
     # Yläraja-arvo muuttujille
     MAX_TIME = 10**6
     # --- Mallinnus alkaa ---
@@ -135,6 +305,10 @@ def cp_sat_optimize(output_dir):
         for i in range(1, len(stages)):
             prev_stage = stages[i-1]
             this_stage = stages[i]
+            if (batch, this_stage) not in task_vars or (batch, prev_stage) not in task_vars:
+                print(f"[CP-SAT] VIRHE: Järjestysrajoitetta ei voi lisätä, koska (batch, stage) puuttuu: {(batch, prev_stage)}, {(batch, this_stage)}")
+                print("Tarkista treatment programien MinStat/MaxStat, Group ja asematiedot.")
+                return
             model.Add(task_vars[(batch, this_stage)]["start"] >= task_vars[(batch, prev_stage)]["end"])
 
     # Sääntö 2: Käsittelyaikojen min/max (sisältyy duration_varin rajoihin)
