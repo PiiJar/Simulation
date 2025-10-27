@@ -80,9 +80,9 @@ def main():
         # Kaikki jatkovaiheet käyttävät vain simulaatiokansion initialization-alihakemistoa
         # (ei enää projektin juuren initializationia)
 
-        # Suorita CP-SAT optimointi
-        from cp_sat_optimization_new import cp_sat_optimize_new
-        cp_sat_optimize_new(output_dir)
+        # Suorita uusi CP-SAT optimointi (nostimen eksplisiittinen malli)
+        from cp_sat_transporter_explicit import cp_sat_transporter_explicit
+        cp_sat_transporter_explicit(output_dir)
 
     except Exception as e:
         print(f"Virhe simulaation aikana: {e}")

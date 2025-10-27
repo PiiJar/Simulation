@@ -80,7 +80,7 @@ Jos käsittelyohjelmassa on vaihe, jossa MinStat < MaxStat, voidaan kyseiseen va
 
     ### Vastaus kysymykseen 5
 
-    Siirtoaika pitää ottaa huomioon kaikkien nostimen tehtävien välissä. Nostin tarvitsee ajan siirtyä tehtävältä toiselle. Nämä ajat on laskettu valmiiksi tiedostoon transfer_tasks.csv` sarakkeeseen transfer_time. Kun edellinen tehtävä loppuu, pitää nostimen siirtyä seuraavalle tehtävälle, ja tähän kuluu aikaa. Tiedostosta haetaan laskuasema (edellinen tehtävä) / nostoaasema (seuraavatehtävä) -pari ja sarakkeesta transfer_time saadaan siirtymään tarvittava aika.
+    Siirtoaika pitää ottaa huomioon kaikkien nostimen tehtävien välissä. Nostin tarvitsee ajan siirtyä tehtävältä toiselle. Nämä ajat on laskettu valmiiksi tiedostoon transfer_tasks.csv sarakkeeseen transfer_time. Kun edellinen tehtävä loppuu, pitää nostimen siirtyä seuraavalle tehtävälle, ja tähän kuluu aikaa. Tiedostosta haetaan laskuasema (edellinen tehtävä) / nostoaasema (seuraavatehtävä) -pari ja sarakkeesta transfer_time saadaan siirtymään tarvittava aika.
 
 6. Resurssirajoitteet:
 
@@ -147,6 +147,38 @@ Jos käsittelyohjelmassa on vaihe, jossa MinStat < MaxStat, voidaan kyseiseen va
    ### Vastaus kysymykseen 10
 
    Ei ole poikkeuksia. Jos ratkaisua ei oikeasti löydy, on lähtötiedoissa puutteita, ja ne pitää käyttäjän korjata. Jos ratkaisu ei muuten tyydytä käyttäjää (kokonaistuotantoaika liian pitkä) , pitää käyttäjän muuttaa ratkaisua; lisätä nostimia, lisätä rinnakkaisia asemia, lyhentää käsittelyaikoja jne. Tämä on käyttäjän tehtävä, ei optimoinnin.
+
+11. Voiko nostin siirtyä “tyhjänä” asemalta toiselle, vai tekeekö se vain lastattuja siirtoja?
+
+   - Jos nostin joutuu siirtymään tyhjänä, pitääkö nämä siirtymät mallintaa ja aikatauluttaa?
+
+   ### Vastaus kysymykseen 11
+
+   Kyllä nostimen pitää siirtyä tyhjänä tehtävältä toiselle, eli edellinen tehtävä päättyy laskuun asemalle x ja seuraava alkaa nostolla asemalla y, pitää nostimen siirtyä x --> y. Tähän tarvittava aika löytyy tiedostosta transfer_tasks.csv sarakkeesta transfer_time.
+
+12. Onko nostimella aloituspaikka ja/tai “lepopaikka”, jonne se palaa, jos ei ole tehtäviä?
+
+   ### Vastaus kysymykseen 12
+
+   Nostimelle on määritelty aloituspaikka tiedostossa trasnporters_start_poisiton.csv. Mutta tällä hetkellä sille ei ole optimoinnissa käyttöä, koska simulointi alkaa ajassa 00:00:00, ja nostimen 1. tehtävä alkaa siitä, ja simulointi päättyy, kun nostin on laskenut viimeisen erän viimeiseen ohjelmaskeleen mukaiseen asemaan. Simuloinnin sisällä nostin odottaa viimeisen tehtävän lopun kohdalla.
+
+13. Voiko useampi erä olla samassa asemassa yhtä aikaa, jos asema sallii rinnakkaisuuden (esim. useampi paikka yhdellä asemalla)?
+
+   ### Vastaus kysymykseen 13
+
+   Yhdellä asemalla voi olla vain yksi erä kerrallaan vrt kysymys 6. ja sääntö 3. Useampi asema voi kuitenkin muodostaa ryhmän (sama Group numero). Jos käsittelyohjelmassa asetetan min - max asemat, niin tuolta väliltä voidaan käyttää samaan ryhmään kuuluvia asemia samasa ohelma vaiheessa yhtäaaikaa - rinnakkain.
+
+14. Onko siirtojen välillä pakollisia odotusaikoja (esim. nostimen huolto, lataus tms.)?
+
+   ### Vastaus kysymykseen 14
+
+   Simulaatiossa ei tarvitse ottaa huomioon mitään erillisiä odotusaikoja, eikä simulointi saa itsekään 'keksiä' mitään ylimääräisiä viiveitä tai odotuksia.
+
+15. Onko nostimella muita rajoitteita (esim. maksimietäisyys, sallittu reitti, vain tietyt asemat sallittuja)?
+
+   ### Vastaus kysymykseen 15
+
+   Nostimen ominaisuudet on kaikki kuvattu transporters.csv tiedostossa. Tällä hetkellä ei ole mitään muita rajoitteita.
 
 ## Esimerkkitapaus
 
