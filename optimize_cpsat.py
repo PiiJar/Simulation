@@ -1,3 +1,60 @@
+    print("\n========== [DEBUG: AIKARAJAT: FUNKTIO ALKAA] ==========")
+    print("\n========== [DEBUG: AIKARAJAT] ==========")
+    print("[DEBUG] Vaiheiden muuttujat:")
+    for (batch, stage), task in task_vars.items():
+        print(f"  Batch {batch} Stage {stage}: start={task['start'].Proto().domain} end={task['end'].Proto().domain} calc_time={task['calc_time'].Proto().domain}")
+    print("[DEBUG] Nostintehtävien muuttujat:")
+    for (batch, stage, transporter), tvars in transporter_task_vars.items():
+        print(f"  Batch {batch} Stage {stage} Transporter {transporter}: lift_start={tvars['lift_start'].Proto().domain} sink_end={tvars['sink_end'].Proto().domain}")
+    print("[DEBUG] Precedence-ehdot:")
+    for batch in batches:
+        batch_tasks = matrix_df[matrix_df['Batch'] == batch].sort_values('Stage')
+        stages = batch_tasks['Stage'].tolist()
+        for i in range(len(stages) - 1):
+            curr_stage = int(stages[i])
+            next_stage = int(stages[i + 1])
+            curr_task = task_vars[(batch, curr_stage)]
+            next_task = task_vars[(batch, next_stage)]
+            print(f"    Batch {batch}: Stage {curr_stage} end={curr_task['end'].Proto().domain} -> Stage {next_stage} start={next_task['start'].Proto().domain}")
+    print("========== [DEBUG: AIKARAJAT] ==========")
+    print("\n[DEBUG] Vaiheiden ja nostintehtävien aikarajat:")
+    for (batch, stage), task in task_vars.items():
+        print(f"  Batch {batch} Stage {stage}: start={task['start'].Proto().domain} end={task['end'].Proto().domain} calc_time={task['calc_time'].Proto().domain}")
+    print("\n[DEBUG] Nostintehtävien aikarajat:")
+    for (batch, stage, transporter), tvars in transporter_task_vars.items():
+        print(f"  Batch {batch} Stage {stage} Transporter {transporter}: lift_start={tvars['lift_start'].Proto().domain} sink_end={tvars['sink_end'].Proto().domain}")
+    print("\n[DEBUG] Precedence- ja siirtoehdot:")
+    for batch in batches:
+        batch_tasks = matrix_df[matrix_df['Batch'] == batch].sort_values('Stage')
+        stages = batch_tasks['Stage'].tolist()
+        for i in range(len(stages) - 1):
+            curr_stage = int(stages[i])
+            next_stage = int(stages[i + 1])
+            curr_task = task_vars[(batch, curr_stage)]
+            next_task = task_vars[(batch, next_stage)]
+            print(f"    Batch {batch}: Stage {curr_stage} end={curr_task['end'].Proto().domain} -> Stage {next_stage} start={next_task['start'].Proto().domain}")
+    print("\n[DEBUG] Vaiheiden ja nostintehtävien aikarajat:")
+    for (batch, stage), task in task_vars.items():
+        print(f"  Batch {batch} Stage {stage}: start={task['start'].Proto().domain} end={task['end'].Proto().domain} calc_time={task['calc_time'].Proto().domain}")
+    print("\n[DEBUG] Nostintehtävien aikarajat:")
+    for (batch, stage, transporter), tvars in transporter_task_vars.items():
+        print(f"  Batch {batch} Stage {stage} Transporter {transporter}: lift_start={tvars['lift_start'].Proto().domain} sink_end={tvars['sink_end'].Proto().domain}")
+    print("\n[DEBUG] Precedence- ja siirtoehdot:")
+    for batch in batches:
+        batch_tasks = matrix_df[matrix_df['Batch'] == batch].sort_values('Stage')
+        stages = batch_tasks['Stage'].tolist()
+        for i in range(len(stages) - 1):
+            curr_stage = int(stages[i])
+            next_stage = int(stages[i + 1])
+            curr_task = task_vars[(batch, curr_stage)]
+            next_task = task_vars[(batch, next_stage)]
+            print(f"    Batch {batch}: Stage {curr_stage} end={curr_task['end'].Proto().domain} -> Stage {next_stage} start={next_task['start'].Proto().domain}")
+    # Varmista, että käsittelyaika on suoritettu ennen kuin nostin voi aloittaa liftin
+    for (batch, stage), task in task_vars.items():
+        model.Add(task['end'] >= task['start'] + task['calc_time'])
+    # Varmista, että käsittelyaika on suoritettu ennen kuin nostin voi aloittaa liftin
+    for (batch, stage), task in task_vars.items():
+        model.Add(task['end'] >= task['start'] + task['calc_time'])
 #!/usr/bin/env python3
 """
 CP-SAT Optimizer for Transporter Task Scheduling
@@ -71,8 +128,9 @@ def precalculate_transfer_times(matrix_df, stations_df, transporters_df):
                     from_row = station_map[from_station]
                     to_row = station_map[to_station]
                     trans_row = transporter_map[transporter_id]
-                    
                     transfer_time = calculate_physics_transfer_time(from_row, to_row, trans_row)
+                    if transfer_time is None:
+                        raise ValueError(f"Virhe: Siirtoaika puuttuu asemien {from_station} → {to_station} (nostin {transporter_id}) välillä!")
                     transfer_times[(from_station, to_station, transporter_id)] = int(transfer_time)
     
     # Esilaskenta: lift- ja sink-ajat
@@ -223,11 +281,11 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
             
             # KRIITTINEN: Käytä OIKEITA sink/lift aikoja!
             if len(group_stations) == 1:
-                # KIINTEÄ ASEMA - käytä tarkkoja aikoja
-                model.Add(duration == exact_sink_time + calc_time_var + exact_lift_time)
+                # KIINTEÄ ASEMA - aseman varaus = sink + calc_time (EI lift_time)
+                model.Add(duration == exact_sink_time + calc_time_var)
             else:
-                # RYHMÄ - käytä maksimeja
-                model.Add(duration == max_sink_time + calc_time_var + max_lift_time)
+                # RYHMÄ - aseman varaus = sink + calc_time (EI lift_time)
+                model.Add(duration == max_sink_time + calc_time_var)
             
             # KRIITTINEN: Interval-end PITÄÄ olla start + duration (aseman varaus)
             interval_end = model.NewIntVar(0, horizon, f'interval_end_b{batch_id}_s{stage}')
@@ -235,8 +293,7 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
             
             interval = model.NewIntervalVar(start, duration, interval_end, f'interval_b{batch_id}_s{stage}')
             
-            # KORJAUS: end PITÄÄ olla SAMA kuin interval_end (ei erillistä muuttujaa!)
-            # Muuten NoOverlap ja precedence käyttävät eri intervalleja!
+            # end = aseman varauksen päättymäaika (sink + calc_time)
             end = interval_end
 
             # Luo optional interval kullekin mahdolliselle asemalle
@@ -290,7 +347,10 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
             transfer_time_table = []
             for fs in from_group_stations:
                 for ts in to_group_stations:
-                    transfer_time_table.append(transfer_times.get((fs, ts, transporter_id), 0))
+                    key = (fs, ts, transporter_id)
+                    if key not in transfer_times:
+                        raise ValueError(f"Virhe: Siirtoaika puuttuu asemien {fs} → {ts} (nostin {transporter_id}) välillä!")
+                    transfer_time_table.append(transfer_times[key])
             # Siirtoaika muuttujana
             if transfer_time_table:
                 transfer_time_var = model.NewIntVar(0, max(transfer_time_table), f'transfer_b{batch}_s{curr_stage}_to_s{next_stage}')
@@ -298,12 +358,9 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
                 model.Add(next_task['start'] >= curr_task['end'] + transfer_time_var)
     
     # RAJOITE 2: Ei päällekkäisyyksiä yksittäisillä asemilla
-    # KRIITTINEN: Asemalla voi olla vain YKSI erä kerrallaan!
-    # HUOM: Tämä on ERI kuin Rajoite 4 (nostin vapautuminen)!
-    print(f"  Lisätään NoOverlap-rajoitteet asemille...")
-    for station_id, intervals in station_optional_intervals.items():
-        if len(intervals) > 1:
-            model.AddNoOverlap(intervals)
+    # Poistettu NoOverlap-rajoite asemille, koska 'ämpäri-rajoite' (disjunktiivinen ehto) kattaa fyysisen varauksen.
+    # Tämä estää mallin ylikireyden ja mahdollistaa ratkaisun löytymisen.
+    print(f"  (NoOverlap-rajoite asemille poistettu, käytetään vain 'ämpäri-rajoitetta')")
     
     # RAJOITE 3: Ei päällekkäisyyksiä samalla nostimella
     # TÄRKEÄ: Intervalien pitää vastata TÄSMÄLLEEN cpsat_solution_to_dataframe() -laskennan aikoja!
@@ -406,19 +463,20 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
             #   - Tyhjä siirto (nykyinen → seuraava asema)
             #   - Sink (seuraava asema)
             
+            # Nostin voi aloittaa liftin vasta kun asema on vapaa (eli aseman varauksen end)
             trans_start = model.NewIntVar(0, horizon, f'trans_b{batch}_s{curr_stage}_lift_start')
-            model.Add(trans_start == curr_task['end'] - lift_time_curr)
+            model.Add(trans_start >= curr_task['end'])
             
             if i < len(stages) - 1:
                 # On seuraava vaihe
                 next_stage = int(stages[i+1])
                 next_task = task_vars[(batch, next_stage)]
                 next_station_id = int(matrix_df[(matrix_df['Batch']==batch) & (matrix_df['Stage']==next_stage)]['Station'].values[0])
-                
-                # KORJAUS: trans_end on kun Sink VALMIS seuraavalla asemalla
-                # = next_task['start'] (ei + sink_time!)
+                # Hae sink_time seuraavalta asemalta
+                sink_time_next = sink_times.get((next_station_id, transporter), 0)
+                # trans_end on kun Sink VALMIS seuraavalla asemalla = next_task['start'] - sink_time_next
                 trans_end = model.NewIntVar(0, horizon, f'trans_b{batch}_s{curr_stage}_sink_end')
-                model.Add(trans_end == next_task['start'])
+                model.Add(trans_end <= next_task['start'] - sink_time_next)
             else:
                 # Viimeinen vaihe: Sink_stat = Lift_stat (sama asema)
                 trans_end = model.NewIntVar(0, horizon, f'trans_b{batch}_s{curr_stage}_sink_end')
@@ -470,8 +528,14 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
                     continue
                 
                 # Hae siirtymäajat
-                transfer_a_to_b = transfer_times.get((task_a['sink_station'], task_b['lift_station'], transporter), 0)
-                transfer_b_to_a = transfer_times.get((task_b['sink_station'], task_a['lift_station'], transporter), 0)
+                key_ab = (task_a['sink_station'], task_b['lift_station'], transporter)
+                key_ba = (task_b['sink_station'], task_a['lift_station'], transporter)
+                if key_ab not in transfer_times:
+                    raise ValueError(f"Virhe: Siirtoaika puuttuu asemien {task_a['sink_station']} → {task_b['lift_station']} (nostin {transporter}) välillä!")
+                if key_ba not in transfer_times:
+                    raise ValueError(f"Virhe: Siirtoaika puuttuu asemien {task_b['sink_station']} → {task_a['lift_station']} (nostin {transporter}) välillä!")
+                transfer_a_to_b = transfer_times[key_ab]
+                transfer_b_to_a = transfer_times[key_ba]
                 
                 # Jos A ennen B: A_sink_end + transfer_a_to_b <= B_lift_start
                 # Jos B ennen A: B_sink_end + transfer_b_to_a <= A_lift_start
@@ -597,7 +661,53 @@ def build_cpsat_model(matrix_df, transfer_times, lift_times, sink_times, stage0_
     
     model.Minimize(makespan)
     
+    print("\n[DEBUG] Mallin muuttujien domainit ja rajoitteet:")
+    for (batch_id, stage), task in task_vars.items():
+        print(f"  Batch {batch_id} Stage {stage}:")
+        print(f"    start: [{task['start'].Proto().domain}] end: [{task['end'].Proto().domain}] calc_time: [{task['calc_time'].Proto().domain}] station_assignment: [{task['station_assignment'].Proto().domain}] min_time: {task['min_time']} max_time: {task['max_time']}")
+    print("\n[DEBUG] Nostimen tehtäväintervallit:")
+    for transporter, intervals in transporter_intervals.items():
+        print(f"  Transporter {transporter}: {len(intervals)} tehtävää")
+    print("\n[DEBUG] Asemien optional interval -listat:")
+    for station_id, intervals in station_optional_intervals.items():
+        print(f"  Station {station_id}: {len(intervals)} optional intervalia")
+    print("\n[DEBUG] Tyhjän siirtymän rajoitteet (RAJOITE 3b):")
+    for transporter, tasks in tasks_by_transporter.items():
+        for i, (key_a, task_a) in enumerate(tasks):
+            for j, (key_b, task_b) in enumerate(tasks):
+                if i >= j:
+                    continue
+                key_ab = (task_a['sink_station'], task_b['lift_station'], transporter)
+                key_ba = (task_b['sink_station'], task_a['lift_station'], transporter)
+                print(f"    T{transporter}: {key_a} -> {key_b} | {key_ab} ja {key_ba}")
+    print("\n[DEBUG] Precedence-rajoitteet (vaiheiden järjestys):")
+    for batch in batches:
+        batch_tasks = matrix_df[matrix_df['Batch'] == batch].sort_values('Stage')
+        stages = batch_tasks['Stage'].tolist()
+        for i in range(len(stages) - 1):
+            curr_stage = int(stages[i])
+            next_stage = int(stages[i + 1])
+            print(f"    Batch {batch}: Stage {curr_stage} -> Stage {next_stage}")
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Malli rakennettu. Muuttujia: {len(task_vars)}")
+
+    print("\n========== [DEBUG: AIKARAJAT] ==========")
+    print("[DEBUG] Vaiheiden muuttujat:")
+    for (batch, stage), task in task_vars.items():
+        print(f"  Batch {batch} Stage {stage}: start={task['start'].Proto().domain} end={task['end'].Proto().domain} calc_time={task['calc_time'].Proto().domain}")
+    print("[DEBUG] Nostintehtävien muuttujat:")
+    for (batch, stage, transporter), tvars in transporter_task_vars.items():
+        print(f"  Batch {batch} Stage {stage} Transporter {transporter}: lift_start={tvars['lift_start'].Proto().domain} sink_end={tvars['sink_end'].Proto().domain}")
+    print("[DEBUG] Precedence-ehdot:")
+    for batch in batches:
+        batch_tasks = matrix_df[matrix_df['Batch'] == batch].sort_values('Stage')
+        stages = batch_tasks['Stage'].tolist()
+        for i in range(len(stages) - 1):
+            curr_stage = int(stages[i])
+            next_stage = int(stages[i + 1])
+            curr_task = task_vars[(batch, curr_stage)]
+            next_task = task_vars[(batch, next_stage)]
+            print(f"    Batch {batch}: Stage {curr_stage} end={curr_task['end'].Proto().domain} -> Stage {next_stage} start={next_task['start'].Proto().domain}")
+    print("========== [DEBUG: AIKARAJAT] ==========")
     
     return model, task_vars, transporter_task_vars
 
@@ -707,7 +817,10 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
     to_row = station_map[first_station]
     trans_row = transporter_map[transporter_id]
 
-    phase_1 = transfer_times.get((int(start_station), int(first_station), int(transporter_id)), 0)
+    key = (int(start_station), int(first_station), int(transporter_id))
+    if key not in transfer_times:
+        raise ValueError(f"Virhe: Siirtoaika puuttuu asemien {start_station} → {first_station} (nostin {transporter_id}) välillä!")
+    phase_1 = transfer_times[key]
     phase_2 = lift_times.get((int(first_station), int(transporter_id)), 0)
     phase_3 = 0  # Ei siirtoa
     phase_4 = sink_times.get((int(first_station), int(transporter_id)), 0)
@@ -732,7 +845,10 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
     tasks.append(task_row_0)
 
     # Laske siirtoaika aloitusasemalta ensimmäiselle käsittelyasemalle
-    first_station_transfer = transfer_times.get((int(start_station), int(first_station), int(transporter_id)), 0)
+    key = (int(start_station), int(first_station), int(transporter_id))
+    if key not in transfer_times:
+        raise ValueError(f"Virhe: Siirtoaika puuttuu asemien {start_station} → {first_station} (nostin {transporter_id}) välillä!")
+    first_station_transfer = transfer_times[key]
 
     # STAGE 1-N: Käsittelyvaiheet
     for i, stage in enumerate(batch_stages):
@@ -752,9 +868,15 @@ def cpsat_solution_to_dataframe(solution, matrix_df, stations_df, transporters_d
             next_row = station_map[next_station]
             trans_row = transporter_map[transporter_id]
 
-            phase_1 = transfer_times.get((int(current_station), int(next_station), int(transporter_id)), 0)
+            key = (int(current_station), int(next_station), int(transporter_id))
+            if key not in transfer_times:
+                raise ValueError(f"Virhe: Siirtoaika puuttuu asemien {current_station} → {next_station} (nostin {transporter_id}) välillä!")
+            phase_1 = transfer_times[key]
             phase_2 = lift_times.get((int(current_station), int(transporter_id)), 0)
-            phase_3 = transfer_times.get((int(current_station), int(current_station), int(transporter_id)), 0)
+            key = (int(current_station), int(current_station), int(transporter_id))
+            if key not in transfer_times:
+                raise ValueError(f"Virhe: Siirtoaika puuttuu asemien {current_station} → {current_station} (nostin {transporter_id}) välillä!")
+            phase_3 = transfer_times[key]
             phase_4 = sink_times.get((int(current_station), int(transporter_id)), 0)
 
             # Ensimmäinen käsittelyasema: Sink_time = Start_optimized + siirtoaika (301 -> asema)

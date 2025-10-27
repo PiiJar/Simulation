@@ -1,35 +1,34 @@
 import os
-    # --- Reaalimaailman siirtoaikarajoite: asema tyhjä siirron ajan ennen seuraavaa erää ---
-    # Jokaiselle asemalle ja vaiheelle: jos kaksi eri erää voivat olla samalla asemalla samalla vaiheella,
-    # uuden erän start ≥ edellisen erän end + siirtoaika (asemalta pois)
 import pandas as pd
 from ortools.sat.python import cp_model
 
+
 def cp_sat_optimize(output_dir):
-
-
-    # ... muut rajoitteet ...
-
+    # ...existing code...
+    # treatment_programs-täytön jälkeen:
+    treatment_programs = {}
     batches = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-batches.csv"))
+    all_batches = set(int(b) for b in batches["Batch"])
     stations = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-stations.csv"))
     transfers = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-transfer-tasks.csv"))
-    treatment_programs = {}
     for batch in batches["Batch"]:
-        fname = os.path.join(output_dir, "initialization", f"cp-sat-treatment-program-{batch}.csv")
+        batch_int = int(batch)
+        fname = os.path.join(output_dir, "initialization", f"cp-sat-treatment-program-{batch_int}.csv")
+        if not os.path.exists(fname):
+            raise FileNotFoundError(f"Käsittelyohjelmatiedostoa ei löydy: {fname}")
         df = pd.read_csv(fname)
-        # Jos Station-saraketta ei ole, luodaan se MinStat:sta (vain yksi asema per vaihe)
         if "Station" not in df.columns:
             df["Station"] = df["MinStat"]
-        treatment_programs[batch] = df
+        treatment_programs[batch_int] = df
+
     model = cp_model.CpModel()
-
     MAX_TIME = 10**6
-
-
-    # Muuttujat: (batch, stage) -> oikeat sidotut muuttujat
     task_vars = {}
+    batches_in_task_vars = set()
     for batch in batches["Batch"]:
-        program = treatment_programs[batch]
+        batch_int = int(batch)
+        print(f"\n========== [DEBUG: CP-SAT AIKARAJAT, batch={batch_int}] ==========")
+        program = treatment_programs[batch_int]
         last_idx = len(program) - 1
         prev_end_var = None
         for idx, row in program.iterrows():
@@ -42,35 +41,31 @@ def cp_sat_optimize(output_dir):
                 (stations["Number"] >= min_stat) &
                 (stations["Number"] <= max_stat)
             ]["Number"].tolist()
-            print(f"[DEBUG] batch={batch} stage={stage} min_stat={min_stat} max_stat={max_stat} possible_stations={possible_stations} min_time={min_time} max_time={max_time}")
+            print(f"[DEBUG] batch={batch_int} stage={stage} min_stat={min_stat} max_stat={max_stat} possible_stations={possible_stations} min_time={min_time} max_time={max_time}")
             if not possible_stations:
-                print(f"[CP-SAT] VIRHE: Ei mahdollisia asemia batchille {batch}, vaihe {stage}: MinStat={min_stat}, MaxStat={max_stat}")
-                print(f"  Tarkista cp-sat-treatment-program-{batch}.csv ja cp-sat-stations.csv")
+                print(f"[CP-SAT] OHITUS: batch={batch_int} stage={stage} -- Ei mahdollisia asemia (MinStat={min_stat}, MaxStat={max_stat})")
+                print(f"  Tarkista cp-sat-treatment-program-{batch_int}.csv ja cp-sat-stations.csv")
                 print(f"  Ohjelman rivi: {row}")
                 continue
-
-            duration_var = model.NewIntVar(min_time, max_time, f"duration_{batch}_{stage}")
-            start_var = model.NewIntVar(0, MAX_TIME, f"start_{batch}_{stage}")
-            end_var = model.NewIntVar(0, MAX_TIME, f"end_{batch}_{stage}")
+            batches_in_task_vars.add(batch_int)
+            duration_var = model.NewIntVar(min_time, max_time, f"duration_{batch_int}_{stage}")
+            start_var = model.NewIntVar(0, MAX_TIME, f"start_{batch_int}_{stage}")
+            end_var = model.NewIntVar(0, MAX_TIME, f"end_{batch_int}_{stage}")
             station_domain = cp_model.Domain.FromValues(possible_stations)
-            station_var = model.NewIntVarFromDomain(station_domain, f"station_{batch}_{stage}")
+            station_var = model.NewIntVarFromDomain(station_domain, f"station_{batch_int}_{stage}")
             station_bools = []
             intervals = []
             for s in possible_stations:
-                is_this_station = model.NewBoolVar(f"is_{batch}_{stage}_at_{s}")
+                is_this_station = model.NewBoolVar(f"is_{batch_int}_{stage}_at_{s}")
                 model.Add(station_var == s).OnlyEnforceIf(is_this_station)
                 model.Add(station_var != s).OnlyEnforceIf(is_this_station.Not())
-                interval = model.NewOptionalIntervalVar(start_var, duration_var, end_var, is_this_station, f"interval_{batch}_{stage}_at_{s}")
+                interval = model.NewOptionalIntervalVar(start_var, duration_var, end_var, is_this_station, f"interval_{batch_int}_{stage}_at_{s}")
                 station_bools.append(is_this_station)
                 intervals.append((s, interval, is_this_station))
             model.AddAllowedAssignments([station_var], [[s] for s in possible_stations])
             model.Add(sum(station_bools) == 1)
             model.Add(end_var == start_var + duration_var)
-
-            # Jos viimeinen vaihe, sidotaan start_var ja end_var edellisen vaiheen end_variin
-            # Ei sidota viimeistä vaihetta edelliseen vaiheeseen
-
-            task_vars[(batch, stage)] = {
+            task_vars[(batch_int, stage)] = {
                 "start": start_var,
                 "end": end_var,
                 "station": station_var,
@@ -81,6 +76,44 @@ def cp_sat_optimize(output_dir):
                 "is_last": idx == last_idx
             }
             prev_end_var = end_var
+
+    # --- DEBUG: Tulosta kaikkien muuttujien domainit ja rajoitteet ---
+    print("\n========== [DEBUG: MUUTTUJIEN DOMAINIT ENNEN RATKAISUA] ==========")
+    for (batch, stage), vars in task_vars.items():
+        print(f"  Batch {batch} Stage {stage}: possible_stations = {vars['possible_stations']}")
+        print(f"    start: 0..{MAX_TIME}, end: 0..{MAX_TIME}, duration: {vars['duration'].Proto().domain}")
+    print("\n========== [DEBUG: Rajoitteet: siirrot ja asemat] ==========")
+    for (batch, stage), vars in task_vars.items():
+        print(f"  (batch={batch}, stage={stage})")
+        print(f"    station domain: {vars['possible_stations']}")
+        # Siirtoedellytykset ja asemat
+        if stage > 0:
+            program = treatment_programs[batch]
+            prev_station = int(program.loc[stage - 1, "Station"])
+            this_station = int(program.loc[stage, "Station"])
+            mask = (transfers["from_station"] == prev_station) & (transfers["to_station"] == this_station)
+            if mask.any():
+                transfer_time = int(transfers[mask].iloc[0]["transfer_time"])
+            else:
+                transfer_time = 0
+            print(f"    [DEBUG] Siirto: {prev_station} -> {this_station}, aika={transfer_time}")
+        else:
+            print(f"    [DEBUG] Ensimmäinen vaihe, ei siirtoa")
+        if stage < len(treatment_programs[batch]) - 1:
+            this_station = int(treatment_programs[batch].loc[stage, "Station"])
+            next_station = int(treatment_programs[batch].loc[stage + 1, "Station"])
+            print(f"    [DEBUG] Seuraava vaihe: {this_station} -> {next_station}")
+        else:
+            print(f"    [DEBUG] Viimeinen vaihe")
+    print(f"Kaikki erät: {sorted(all_batches)}")
+    print(f"Erät task_vars:ssa: {sorted(batches_in_task_vars)}")
+    missing = all_batches - batches_in_task_vars
+    if missing:
+        print(f"PUUTTUVAT ERÄT: {sorted(missing)} (näille ei muodostunut tehtäviä)")
+        raise Exception(f"KOKO TUOTANNON SIMULOINTI EPÄONNISTUI: Seuraaville erille ei muodostunut tehtäviä: {sorted(missing)}. Tarkista syötedata ja rajoitteet.")
+    else:
+        print("Kaikki erät mukana task_vars:ssa.")
+    print("========== [DEBUG: ERÄT TASK_VARS:SSA] ==========")
 
     # --- NOSTIMEN RESURSSIRAJOIN ---
     # Mallinna kaikki nostimen siirtotehtävät interval-muuttujina (tämä tehdään vasta kun task_vars on täytetty ja kaikki muut rajoitteet on lisätty)
@@ -149,29 +182,7 @@ def cp_sat_optimize(output_dir):
 
     # Sääntö 3: Asemalla vain yksi erä kerrallaan (AddNoOverlap per asema, vain aktiiviset OptionalIntervalVar:t)
     # --- Eksplisiittinen siirtoaikarajoite: asema tyhjä ennen seuraavaa erää ---
-    for stage in set([k[1] for k in task_vars.keys()]):
-        for station in stations["Number"]:
-            # Kaikki erät, jotka voivat olla tällä asemalla tässä vaiheessa
-            batches_at_station = [batch for (batch, s), vars in task_vars.items() if s == stage and station in vars["possible_stations"]]
-            for i in range(len(batches_at_station)):
-                for j in range(len(batches_at_station)):
-                    if i == j:
-                        continue
-                    batch_a = batches_at_station[i]
-                    batch_b = batches_at_station[j]
-                    vars_a = task_vars[(batch_a, stage)]
-                    vars_b = task_vars[(batch_b, stage)]
-                    # Siirtoaika asemalta pois (jos on seuraava vaihe)
-                    program_a = treatment_programs[batch_a]
-                    if stage < len(program_a) - 1:
-                        next_station_a = int(program_a.loc[stage + 1, "Station"])
-                        mask = (transfers["from_station"] == station) & (transfers["to_station"] == next_station_a)
-                        if mask.any():
-                            transfer_time_a = int(transfers[mask].iloc[0]["transfer_time"])
-                        else:
-                            transfer_time_a = 0
-                        # batch_b:n start ≥ batch_a:n end + transfer_time_a
-                        model.Add(vars_b["start"] >= vars_a["end"] + transfer_time_a)
+    # Poistettu päällekkäiset järjestysrajoitteet batch-pareilta asemalla. AddNoOverlap riittää.
     for station in stations["Number"]:
         intervals = []
         for (batch, stage), vars in task_vars.items():
@@ -237,6 +248,9 @@ def cp_sat_optimize(output_dir):
 
 
     # --- Sääntö 3.1 ja nostimen siirtoaika eri erien välillä samalla asemalla ---
+    # Selvitetään siirron minimiaika kaikista siirroista (pois lukien nollat)
+    all_transfer_times = [int(x) for x in transfers["transfer_time"] if int(x) > 0]
+    min_transfer_time = min(all_transfer_times) if all_transfer_times else 1
     for station in stations["Number"]:
         tasks_at_station = [(batch, stage, vars) for (batch, stage), vars in task_vars.items() if station in vars["possible_stations"]]
         for i in range(len(tasks_at_station)):
@@ -247,11 +261,12 @@ def cp_sat_optimize(output_dir):
                 batch2, stage2, vars2 = tasks_at_station[j]
                 if batch1 == batch2:
                     continue
+                # Käytetään siirtoaikaa, jos löytyy, muuten min_transfer_time
                 mask = (transfers["from_station"] == station) & (transfers["to_station"] == station)
                 if mask.any():
                     transfer_time = int(transfers[mask].iloc[0]["transfer_time"])
                 else:
-                    transfer_time = 0
+                    transfer_time = min_transfer_time
                 # Jos molemmilla vain tämä asema mahdollinen, suora disjunktiivirajoite
                 if vars1["possible_stations"] == [station] and vars2["possible_stations"] == [station]:
                     b1_before_b2 = model.NewBoolVar(f"b{batch1}_{stage1}_before_b{batch2}_{stage2}_at_{station}")

@@ -77,13 +77,12 @@ def main():
         # Alustus ja esikäsittely (tuottaa output_dir)
         output_dir = initialize_simulation("output")
 
-
         # Kaikki jatkovaiheet käyttävät vain simulaatiokansion initialization-alihakemistoa
         # (ei enää projektin juuren initializationia)
 
         # Suorita CP-SAT optimointi
-        from cp_sat_optimization import cp_sat_optimize
-        cp_sat_optimize(output_dir)
+        from cp_sat_optimization_new import cp_sat_optimize_new
+        cp_sat_optimize_new(output_dir)
 
     except Exception as e:
         print(f"Virhe simulaation aikana: {e}")

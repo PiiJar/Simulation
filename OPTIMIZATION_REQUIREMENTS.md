@@ -26,6 +26,8 @@ Asemalla voi olla vain yksi erä kerrallaan. Tämä tarkoittaa, että aseman res
 
 Seuraava erä ei voi saapua asemalle ennen kuin edellinen erä on kokonaan käsitelty ja siirretty pois asemalta, ja nostin on vapaa. Käytännössä nostin siirtää ensin edellisen erän pois asemalta (tähän kuluu siirtoajaksi laskettu aika), minkä jälkeen nostimen täytyy siirtyä edellisen tehtävän päättymisasemalta seuraavan tehtävän aloitusasemalle ennen kuin uuden erän siirtotehtävä voi alkaa.
 
+Käytetään tämä hallintaan 'Vaihtoaikaa' (batch_change_time). Vaihtoajan laskennaassa on kaksi eri tapausta; jos alueella käytettävissä vain yksi nostin, tai jos alueella on käytössä kaksi nostinta. Vaihtoaika yhden nostimen tapauksessa lasketaan käsittelyohjelman mukaisten siirtojen perusteella; lähtevän erän riirtoaika (noston alku --> laskun oppu) + nostimen siirtyminen laskuasemasta, seuraavan tehtävän nostoasemaan + tulevan erän siirtoaika (noston alku --> laskun loppu). ** Kahden nostimen tapaus määritellään myöhemmin.**. Sääntö 3.1 voidaan muotoilla siis myös niin, että asema pitää olla tyhjänä tuon vaihtoajan. 
+
 ### Sääntö 4
 Nostimen liikkeet pitää perustua esilaskettuihin (fysiikkaan perustuviin) tietoihin. Liikkeisiin tarvittava aika tulee esikäsittelytiedostosta, ja optimoinnin on käytettävä näitä arvoja sellaisenaan.
 
@@ -69,6 +71,82 @@ Jos käsittelyohjelmassa on vaihe, jossa MinStat < MaxStat, voidaan kyseiseen va
 
    ### Vastaus kysymykseen 4
    Optimointi ei löydä ratkaisua ongelmaan, joka on luonteeltaan hyvin yksinkertainen. Testitapauksessa on yksi erä, jossa ohjelmassa on kaksi vaihetta. Yksi nostin pystyy suorittamaan nämä tehtävät nopeimmin noudattamalla minimiaikojen mukaisesti. Ratkaisun löytäminen ei siis voi olla mahdotonta. Tämä vahvistaa aiemman analyysin (kysymys 3), että ongelma liittyy todennäköisesti parametrointiin eikä itse algoritmiin.
+
+5. Kaikki aikarajoitteet ja siirtymäsäännöt:
+
+   - Milloin siirtoaika pitää ottaa huomioon (esim. batchien välillä, vaiheiden välillä, vain tietyissä tilanteissa)?
+   - Onko siirtoaika aina sama, vai riippuuko se asemasta, batchista, vaiheesta?
+   - Onko asemalla oltava tyhjä hetki ennen seuraavaa erää?
+
+    ### Vastaus kysymykseen 5
+
+    Siirtoaika pitää ottaa huomioon kaikkien nostimen tehtävien välissä. Nostin tarvitsee ajan siirtyä tehtävältä toiselle. Nämä ajat on laskettu valmiiksi tiedostoon transfer_tasks.csv` sarakkeeseen transfer_time. Kun edellinen tehtävä loppuu, pitää nostimen siirtyä seuraavalle tehtävälle, ja tähän kuluu aikaa. Tiedostosta haetaan laskuasema (edellinen tehtävä) / nostoaasema (seuraavatehtävä) -pari ja sarakkeesta transfer_time saadaan siirtymään tarvittava aika.
+
+6. Resurssirajoitteet:
+
+   - Voiko sama asema käsitellä useampaa erää samanaikaisesti?
+   - Voiko nostin siirtää useampaa erää yhtä aikaa?
+   - Onko asemien välillä muita riippuvuuksia?
+
+    ### Vastaus kysymykseen 6
+
+    Asemalla voi olla vain yksi erä kerrallaan vrt. sääntö 3. Nostin siirtää vain yhtä erää kerrallaan. Asemien välillä ei ole muita riippuvuuksia, kuin niiden fyysinen etäisyys.
+
+7. Ratkaisun hyväksyttävyys:
+
+   - Mitä tarkoittaa validi ratkaisu? (esim. ei päällekkäisyyksiä, kaikki erät valmistuvat, kaikki siirto- ja käsittelyajat täyttyvät)
+   - Onko sallittua, että erä odottaa asemalla, vai pitääkö siirtymien olla mahdollisimman tiiviitä?
+
+   ### Vastaus kysymykseen 7
+
+   Validi ratkaisu on sellainen, että kaikki erän ovat kulkeneet prosessin läpi käsittelyohjelman mukaisessa järjestyksessä, ja käsittelaika kaikissa vaiheissa on in/max aikojen rajoissa. JA. Nostin pystyy fyysikan mukaan suorittamaan kaikki tehtävät ajallisesti kronologisessa järjestyksessä. Kaikki edellä kuvatut ratkaisut ovat 'valideja'. Tavoite on kuitenkin löytää 'valideista' ratkaisuista se, mikä on nostimen kannalta nopein --> kokonaistuotantoaika on lyhin.
+
+8. Optimointikriteeri:
+
+   - Minimoidaanko kokonaisaikaa, siirtojen määrää, odotusaikaa vai jotain muuta?
+
+   ### Vastaus kysymykseen 8
+
+   optimointitavoite on kuvattu dokumentin alussa kohdassa Optimointivaatimukset/Tavoite. Lisäksi asiaa on kuvattu kysymyksen7 vastauksessa. Siirtojen määrä tulee erien määrästä ja ohjelma-askelien määrästä erien käsittelyohjelmissa --> sitä ei voi optimoida. Kun löydetään nostimelle (nostimille) nopein reitti, niin silloin on löydetty lyhin kokonaistuotantoaika --> odotusajat ovat minimissään.
+
+9. Esimerkkiaikataulu:
+
+   - Anna konkreettinen esimerkkiaikataulu, joka on validi, ja toinen, joka ei ole – sekä perustelut miksi.
+
+   Virheellinen optimointitulos: 
+   Batch,   Stage,   Station, Start,   End,     Duration
+   1,       0,       301,     0,       0,       0
+   2,       0,       301,     5,       5,       0
+   1,       1,       302,     38,      638,     600
+   2,       1,       302,     648,     1248,    600
+   1,       2,       303,     676,     976,     300
+   1,       3,       304,     1019,    1020,    1 
+   2,       2,       303,     1286,    1586,    300
+   2,       3,       304,     1624,    1624,    0
+
+   Esimerkkejä rikkeistä (ei kaikki): 
+   
+   - Erä 2 Stat 301 End 5 s, Start 302 Start 648 s --> siirto kestänyt 643 s, transfer_task tiedostosta siirto 301 --> 302 38 s
+   - Erä 1 Stat 302 End 638 s ja Erä 2 Stat 302 Start 648 s --> erä 2 tulee asemalle 10 s erän 1 lopun jälkeen. Nostin tarvitseen kuitenkin viedä   erä 1 302 --> 303 (38 s), siirtyä 303 - 301 (9 s) ja siirtää erä 2 301 --> 302 (38 s), eli nostin tarvitsee yhteensä 85 s --> aikaisin aika erän 2 startille on 85 sekuntia rän 1 Endin jälkeenm eli 723 s.
+
+   Validi tulos (ei vielä välttämättä nopein): 
+   Batch,   Stage,   Station, Start,   End,     Duration
+   1,       0,       301,     0,       0,       0
+   2,       0,       301,     0,       685,     685
+   1,       1,       302,     38,      638,     600
+   2,       1,       302,     723,     1323,    600
+   1,       2,       303,     676,     976,     300
+   1,       3,       304,     1014,    1014,    0 
+   2,       2,       303,     1361,    1661,    300
+   2,       3,       304,     1699,    1699,    0
+
+10. Poikkeustapaukset:
+
+   - Onko tilanteita, joissa sääntöjä saa rikkoa (esim. jos ratkaisua ei muuten löydy)?
+
+   ### Vastaus kysymykseen 10
+
+   Ei ole poikkeuksia. Jos ratkaisua ei oikeasti löydy, on lähtötiedoissa puutteita, ja ne pitää käyttäjän korjata. Jos ratkaisu ei muuten tyydytä käyttäjää (kokonaistuotantoaika liian pitkä) , pitää käyttäjän muuttaa ratkaisua; lisätä nostimia, lisätä rinnakkaisia asemia, lyhentää käsittelyaikoja jne. Tämä on käyttäjän tehtävä, ei optimoinnin.
 
 ## Esimerkkitapaus
 
