@@ -80,9 +80,17 @@ def main():
         # Kaikki jatkovaiheet käyttävät vain simulaatiokansion initialization-alihakemistoa
         # (ei enää projektin juuren initializationia)
 
-        # Suorita uusi CP-SAT optimointi (nostimen eksplisiittinen malli)
-        from cp_sat_transporter_explicit import cp_sat_transporter_explicit
-        cp_sat_transporter_explicit(output_dir)
+        # Suorita vaiheittainen CP-SAT-malli (testaus)
+        from cp_sat_stepwise import cp_sat_stepwise
+        model, task_vars, treatment_programs = cp_sat_stepwise(output_dir)
+        print(f"Muuttujia luotu: {len(task_vars)}")
+        for key, vars in task_vars.items():
+            print(key, {k: str(v) for k, v in vars.items()})
+        print("Vaihe 1: OK, kaikki muuttujat ja perusrakenne syntyivät.")
+
+        # Aja optimointi ja tallenna tulos
+        from cp_sat_stepwise import solve_and_save
+        solve_and_save(model, task_vars, treatment_programs, output_dir)
 
     except Exception as e:
         print(f"Virhe simulaation aikana: {e}")
