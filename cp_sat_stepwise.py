@@ -65,8 +65,7 @@ def cp_sat_stepwise(output_dir):
         if intervals:
             model.AddNoOverlap(intervals)
 
-    # Vaihe 4: Nostimen vaihtoajan ja siirtymien mallinnus (Sääntö 3.1)
-    # Rakennetaan nostimen siirtointervallit myöhempää AddNoOverlapia varten
+    # Vaihe 4: Nostimen siirrot eksplisiittisesti ja siirron kesto aina transfer-tiedoston mukainen
     transporter_intervals = []
     for batch in batches["Batch"]:
         batch_int = int(batch)
@@ -77,27 +76,28 @@ def cp_sat_stepwise(output_dir):
             this_stage = stages[i]
             prev_vars = task_vars[(batch_int, prev_stage)]
             this_vars = task_vars[(batch_int, this_stage)]
+            transfer_bools = []
             for from_stat in prev_vars["possible_stations"]:
                 for to_stat in this_vars["possible_stations"]:
                     mask = (transfers["from_station"] == from_stat) & (transfers["to_station"] == to_stat)
                     if not mask.any():
                         continue
                     transfer_time = int(transfers[mask].iloc[0]["total_task_time"])
-                    cond_prev = model.NewBoolVar(f"prev_{batch_int}_{prev_stage}_at_{from_stat}")
-                    cond_this = model.NewBoolVar(f"this_{batch_int}_{this_stage}_at_{to_stat}")
-                    model.Add(prev_vars["station"] == from_stat).OnlyEnforceIf(cond_prev)
-                    model.Add(prev_vars["station"] != from_stat).OnlyEnforceIf(cond_prev.Not())
-                    model.Add(this_vars["station"] == to_stat).OnlyEnforceIf(cond_this)
-                    model.Add(this_vars["station"] != to_stat).OnlyEnforceIf(cond_this.Not())
-                    both = model.NewBoolVar(f"both_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}")
-                    model.AddBoolAnd([cond_prev, cond_this]).OnlyEnforceIf(both)
-                    model.AddBoolOr([cond_prev.Not(), cond_this.Not()]).OnlyEnforceIf(both.Not())
+                    is_transfer = model.NewBoolVar(f"is_transfer_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}")
+                    model.Add(prev_vars["station"] == from_stat).OnlyEnforceIf(is_transfer)
+                    model.Add(prev_vars["station"] != from_stat).OnlyEnforceIf(is_transfer.Not())
+                    model.Add(this_vars["station"] == to_stat).OnlyEnforceIf(is_transfer)
+                    model.Add(this_vars["station"] != to_stat).OnlyEnforceIf(is_transfer.Not())
                     trans_start = prev_vars["end"]
                     trans_end = model.NewIntVar(0, MAX_TIME, f"trans_end_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}")
-                    model.Add(trans_end == trans_start + transfer_time).OnlyEnforceIf(both)
-                    model.Add(this_vars["start"] >= trans_end).OnlyEnforceIf(both)
-                    interval = model.NewOptionalIntervalVar(trans_start, transfer_time, trans_end, both, f"trans_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}")
+                    model.Add(trans_end == trans_start + transfer_time).OnlyEnforceIf(is_transfer)
+                    model.Add(this_vars["start"] == trans_end).OnlyEnforceIf(is_transfer)
+                    interval = model.NewOptionalIntervalVar(trans_start, transfer_time, trans_end, is_transfer, f"trans_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}")
                     transporter_intervals.append(interval)
+                    transfer_bools.append(is_transfer)
+            # Vain yksi siirto voi olla aktiivinen per batch, stage
+            if transfer_bools:
+                model.Add(sum(transfer_bools) == 1)
     # Vaihe 5: Nostimen yksikäyttöisyys (AddNoOverlap nostimelle, Sääntö 4.1)
     if transporter_intervals:
         model.AddNoOverlap(transporter_intervals)
@@ -144,4 +144,51 @@ def solve_and_save(model, task_vars, treatment_programs, output_dir):
     df_result = pd.DataFrame(results)
     df_result.to_csv(result_path, index=False)
     print(f"[CP-SAT] Optimoinnin tulokset tallennettu: {result_path}")
+
+    validate_and_save_transfers(df_result, task_vars, logs_dir)
+
+def validate_and_save_transfers(df_result, task_vars, logs_dir):
+    import pandas as pd
+    import os
+    # Tallennetaan nostimen siirtointervallit analysoitavaksi
+    siirrot = []
+    for (batch, stage), vars in task_vars.items():
+        if stage == 0:
+            continue
+        start = df_result[(df_result["Batch"] == batch) & (df_result["Stage"] == stage-1)]["End"].values
+        end = df_result[(df_result["Batch"] == batch) & (df_result["Stage"] == stage)]["Start"].values
+        from_station = df_result[(df_result["Batch"] == batch) & (df_result["Stage"] == stage-1)]["Station"].values
+        to_station = df_result[(df_result["Batch"] == batch) & (df_result["Stage"] == stage)]["Station"].values
+        if len(start) == 1 and len(end) == 1 and len(from_station) == 1 and len(to_station) == 1:
+            siirrot.append({
+                "Batch": batch,
+                "FromStage": stage-1,
+                "ToStage": stage,
+                "FromStation": from_station[0],
+                "ToStation": to_station[0],
+                "Start": start[0],
+                "End": end[0]
+            })
+    df_siirrot = pd.DataFrame(siirrot)
+    siirrot_path = os.path.join(logs_dir, "cp-sat-stepwise-transfers.csv")
+    df_siirrot.to_csv(siirrot_path, index=False)
+    print(f"[CP-SAT] Nostimen siirtointervallit tallennettu: {siirrot_path}")
+
+    # Validointi: tarkista, ettei AddNoOverlap rajoita askel 0:aa, mutta toimii muille vaiheille
+    print("[VALIDOINTI] Tarkistetaan päällekkäisyydet muissa vaiheissa kuin askel 0...")
+    for station in df_result['Station'].unique():
+        df_station = df_result[df_result['Station'] == station]
+        # Järjestetään aloitusajan mukaan
+        df_station = df_station.sort_values('Start')
+        prev_end = None
+        prev_batch = None
+        prev_stage = None
+        for idx, row in df_station.iterrows():
+            if row['Stage'] == 0:
+                continue  # askel 0 saa olla päällekkäin
+            if prev_end is not None and row['Start'] < prev_end:
+                print(f"[VAROITUS] Päällekkäisyys asemalla {station}: Batch {prev_batch} Stage {prev_stage} ja Batch {row['Batch']} Stage {row['Stage']}")
+            prev_end = row['End']
+            prev_batch = row['Batch']
+            prev_stage = row['Stage']
 
