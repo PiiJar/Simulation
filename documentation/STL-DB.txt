@@ -1,1 +1,0 @@
-docker run --name pg-database -e POSTGRES_PASSWORD=!V4ik33! -e POSTGRES_USER=JarPii -e POSTGRES_DB=STL-Simulator-DB -p 5432:5432 -v C:\postgres-data:/var/lib/postgresql/data -d postgres:16

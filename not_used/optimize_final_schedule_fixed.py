@@ -229,7 +229,7 @@ def optimize_final_schedule(output_dir="output", max_iterations=10):
     TÄRKEÄÄ: Muuttaa vain Production.csv lähtöaikoja, ei käsittelyohjelmia!
     Käsittelyajat (CalcTime) ovat kemiallis-fysikaalisia ja pysyvät ennallaan.
     
-    Sijoittuu pipeline:ssä stretch_tasks() ja generate_matrix_stretched() väliin.
+    Sijoittuu pipeline:ssä stretch_tasks() ja generate_matrix() väliin.
     """
     from simulation_logger import get_logger
     

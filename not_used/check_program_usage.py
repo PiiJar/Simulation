@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tarkista mitä ohjelmia generate_matrix_stretched() käyttää.
+Tarkista mitä ohjelmia generate_matrix() käyttää.
 """
 
 import os
@@ -65,7 +65,7 @@ def check_program_usage():
                         print(f"  {name}: CalcTime={calc_time} {status}")
     
     # Tarkista mitä load_batch_program_stretched käyttää
-    print(f"\n🎯 MITÄ generate_matrix_stretched() KÄYTTÄÄ:")
+    print(f"\n🎯 MITÄ generate_matrix() KÄYTTÄÄ:")
     print("   Kokeile simuloida load_batch_program_stretched() logiikkaa...")
     
     # Simuloi prefer_optimized=True logiikka

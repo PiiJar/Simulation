@@ -5,28 +5,19 @@ import os
 import pandas as pd
 from ortools.sat.python import cp_model
 
-def cp_sat_stepwise(output_dir, hard_order_constraint=False):
+def cp_sat_optimization(output_dir, hard_order_constraint=False):
     # 1. Lue snapshotin tiedot
-    batches = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-batches.csv"))
-    stations = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-stations.csv"))
-    transfers = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-transfer-tasks.csv"))
+    batches = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_batches.csv"))
+    stations = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_stations.csv"))
+    transfers = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_transfer_tasks.csv"))
     treatment_programs = {}
     for batch in batches["Batch"]:
         batch_int = int(batch)
-        fname = os.path.join(output_dir, "initialization", f"cp-sat-treatment-program-{batch_int}.csv")
+        fname = os.path.join(output_dir, "cp_sat", f"cp_sat_treatment_program_{batch_int}.csv")
         df = pd.read_csv(fname)
         treatment_programs[batch_int] = df
 
-    # 1. Lue snapshotin tiedot
-    batches = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-batches.csv"))
-    stations = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-stations.csv"))
-    transfers = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-transfer-tasks.csv"))
-    treatment_programs = {}
-    for batch in batches["Batch"]:
-        batch_int = int(batch)
-        fname = os.path.join(output_dir, "initialization", f"cp-sat-treatment-program-{batch_int}.csv")
-        df = pd.read_csv(fname)
-        treatment_programs[batch_int] = df
+    # (Removed duplicate block)
 
     model = cp_model.CpModel()
     MAX_TIME = 10**6
@@ -58,9 +49,6 @@ def cp_sat_stepwise(output_dir, hard_order_constraint=False):
         # Käytetään batch-numeroiden nousevaa järjestystä
         batch_ids = sorted([int(b) for b in batches["Batch"]])
         batch_end_vars = [task_vars[(batch_id, 0)]["end"] for batch_id in batch_ids]
-        print("[DEBUG] KOVA JÄRJESTYSRAJOITE KÄYTÖSSÄ (END)")
-        print(f"[DEBUG] batch_ids: {batch_ids}")
-        print(f"[DEBUG] batch_end_vars: {[str(v) for v in batch_end_vars]}")
         for i in range(len(batch_ids)):
             for j in range(i+1, len(batch_ids)):
                 model.Add(batch_end_vars[i] <= batch_end_vars[j])
@@ -102,10 +90,10 @@ def cp_sat_stepwise(output_dir, hard_order_constraint=False):
             transfer_bools = []
             for from_stat in prev_vars["possible_stations"]:
                 for to_stat in this_vars["possible_stations"]:
-                    mask = (transfers["from_station"] == from_stat) & (transfers["to_station"] == to_stat)
+                    mask = (transfers["From_Station"] == from_stat) & (transfers["To_Station"] == to_stat)
                     if not mask.any():
                         continue
-                    transfer_time = int(transfers[mask].iloc[0]["total_task_time"])
+                    transfer_time = int(transfers[mask].iloc[0]["TotalTaskTime"])
                     is_transfer = model.NewBoolVar(f"is_transfer_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}")
                     model.Add(prev_vars["station"] == from_stat).OnlyEnforceIf(is_transfer)
                     model.Add(prev_vars["station"] != from_stat).OnlyEnforceIf(is_transfer.Not())
@@ -175,16 +163,11 @@ def solve_and_save(model, task_vars, treatment_programs, output_dir):
         if stage == 0:
             batch_starts.append((batch, solver.Value(vars["start"])))
             batch_ends.append((batch, solver.Value(vars["end"])))
-    print(f"[DEBUG] Vaihe 0 start-arvot: {sorted(batch_starts)}")
-    print(f"[DEBUG] Vaihe 0 end-arvot: {sorted(batch_ends)}")
     status_str = {cp_model.OPTIMAL: "OPTIMAL", cp_model.FEASIBLE: "FEASIBLE", cp_model.INFEASIBLE: "INFEASIBLE", cp_model.MODEL_INVALID: "MODEL_INVALID", cp_model.UNKNOWN: "UNKNOWN"}.get(status, str(status))
-    print(f"[CP-SAT] Solver status: {status} ({status_str})")
-    print(f"[CP-SAT] Wall time: {solver.WallTime()}s, Conflicts: {solver.NumConflicts()}, Branches: {solver.NumBranches()}")
     logs_dir = os.path.join(output_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
-    result_path = os.path.join(logs_dir, "cp-sat-stepwise-schedule.csv")
+    result_path = os.path.join(logs_dir, "cp_sat_optimization_schedule.csv")
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        print(f"[CP-SAT] Ei toteuttamiskelpoista ratkaisua! Status: {status}")
         return
     results = []
     for (batch, stage), vars in task_vars.items():
@@ -198,7 +181,6 @@ def solve_and_save(model, task_vars, treatment_programs, output_dir):
         })
     df_result = pd.DataFrame(results)
     df_result.to_csv(result_path, index=False)
-    print(f"[CP-SAT] Optimoinnin tulokset tallennettu: {result_path}")
 
 
     validate_and_save_transfers(df_result, task_vars, logs_dir)
@@ -208,12 +190,34 @@ def solve_and_save(model, task_vars, treatment_programs, output_dir):
     import pandas as pd
     sys.path.append(os.path.join(os.path.dirname(__file__), 'not_used'))
     from not_used.optimize_final_schedule import update_production_and_programs
-    class DummyLogger:
-        def log_optimization(self, msg):
-            print(f"[UPDATE_PRODUCTION] {msg}")
-    logger = DummyLogger()
     orig_prod = pd.read_csv(os.path.join(output_dir, "initialization", "production.csv"))
-    update_production_and_programs(orig_prod, df_result, output_dir, logger)
+    update_production_and_programs(orig_prod, df_result, output_dir, None)
+
+    # Poista Stage 0 -rivit treatment_program_optimized/-kansiosta
+    optimized_dir = os.path.join(output_dir, "cp_sat", "treatment_program_optimized")
+    if os.path.exists(optimized_dir):
+        for filename in os.listdir(optimized_dir):
+            if filename.startswith("Batch_") and filename.endswith(".csv"):
+                file_path = os.path.join(optimized_dir, filename)
+                df = pd.read_csv(file_path)
+                df = df[df["Stage"] != 0].copy()
+                df.to_csv(file_path, index=False)
+
+    # Poista Stage 0 -rivi kaikista treatment_program_optimized -tiedostoista
+    remove_stage0_from_optimized_programs(output_dir)
+
+def remove_stage0_from_optimized_programs(output_dir):
+    import os
+    import pandas as pd
+    optimized_dir = os.path.join(output_dir, "cp_sat", "treatment_program_optimized")
+    if not os.path.exists(optimized_dir):
+        return
+    for filename in os.listdir(optimized_dir):
+        if filename.startswith("Batch_") and filename.endswith(".csv"):
+            file_path = os.path.join(optimized_dir, filename)
+            df = pd.read_csv(file_path)
+            df = df[df["Stage"] != 0].copy()
+            df.to_csv(file_path, index=False)
 
 def validate_and_save_transfers(df_result, task_vars, logs_dir):
     import pandas as pd
@@ -238,12 +242,10 @@ def validate_and_save_transfers(df_result, task_vars, logs_dir):
                 "End": end[0]
             })
     df_siirrot = pd.DataFrame(siirrot)
-    siirrot_path = os.path.join(logs_dir, "cp-sat-stepwise-transfers.csv")
+    siirrot_path = os.path.join(logs_dir, "cp_sat_optimization_transfers.csv")
     df_siirrot.to_csv(siirrot_path, index=False)
-    print(f"[CP-SAT] Nostimen siirtointervallit tallennettu: {siirrot_path}")
 
     # Validointi: tarkista, ettei AddNoOverlap rajoita askel 0:aa, mutta toimii muille vaiheille
-    print("[VALIDOINTI] Tarkistetaan päällekkäisyydet muissa vaiheissa kuin askel 0...")
     for station in df_result['Station'].unique():
         df_station = df_result[df_result['Station'] == station]
         # Järjestetään aloitusajan mukaan
@@ -253,9 +255,9 @@ def validate_and_save_transfers(df_result, task_vars, logs_dir):
         prev_stage = None
         for idx, row in df_station.iterrows():
             if row['Stage'] == 0:
-                continue  # askel 0 saa olla päällekkäin
+                continue  # step 0 can overlap
             if prev_end is not None and row['Start'] < prev_end:
-                print(f"[VAROITUS] Päällekkäisyys asemalla {station}: Batch {prev_batch} Stage {prev_stage} ja Batch {row['Batch']} Stage {row['Stage']}")
+                pass  # Overlap warning removed
             prev_end = row['End']
             prev_batch = row['Batch']
             prev_stage = row['Stage']

@@ -46,7 +46,7 @@ Simulointi- ja optimointiputki koostuu seuraavista päävaiheista:
    - Visualisointi ja raportointi
    - Kaikki tulokset tallennetaan reports-kansioon
    - **Funktiot:**
-     - `generate_matrix_stretched`
+  - `generate_matrix`
      - `extract_transporter_tasks`
      - `create_detailed_movements`
      - `visualize_stretched_matrix`

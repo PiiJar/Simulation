@@ -22,7 +22,7 @@ CP-SAT optimointi toimi, mutta **tulokset eivät päivittyneet** seuraaviin vaih
 - Järjestää erät: aikajärjestykseen (optimoitu järjestys)
 - Raportoi: jos erien järjestys muuttui
 
-### 3. Päivitetty `generate_matrix_stretched.py`
+### 3. Päivitetty `generate_matrix.py`
 **Lukee optimoidut arvot automaattisesti:**
 ```python
 # ENNEN: Luki aina initialization/production.csv (vanhat arvot)
@@ -52,7 +52,7 @@ save_optimized_production()
     ↓
 optimized_programs/production_optimized.csv  ← Start_optimized, järjestys
     ↓
-generate_matrix_stretched.py
+generate_matrix.py
     ↓ (lukee optimized_programs/)
 line_matrix_stretched.csv  ← Lopullinen matriisi optimoiduilla arvoilla
     ↓
@@ -66,7 +66,7 @@ Visualisointi & Raportit
    - `optimize_transporter_schedule()` - kutsuu tallennusfunktioita
    - Disjunktiiviset rajoitteet (RAJOITE 4)
 
-2. `generate_matrix_stretched.py`:
+2. `generate_matrix.py`:
    - `load_production_batches_stretched()` - tarkistaa optimoidun version
 
 ## Tulokset

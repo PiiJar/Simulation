@@ -143,7 +143,7 @@ def visualize_stretched_matrix(output_dir):
                     # Käsittelyaika - OHENNETTU
                     ax.plot([processing_start, processing_end], [y, y],
                             color=color, linestyle='-', linewidth=3, alpha=0.9)
-                    # Käytä samaa logiikkaa kuin generate_matrix_stretched: optimized_programs jos saatavilla
+                    # Käytä samaa logiikkaa kuin generate_matrix: optimized_programs jos saatavilla
                     optimized_file = os.path.join(output_dir, "optimized_programs", f"Batch_{batch_int:03d}_Treatment_program_{treatment_program:03d}.csv")
                     stretched_file = os.path.join(output_dir, "stretched_programs", f"Batch_{batch_int:03d}_Treatment_program_{treatment_program:03d}.csv")
                     

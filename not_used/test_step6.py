@@ -19,7 +19,7 @@ import pandas as pd
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from visualize_stretched_matrix import visualize_stretched_matrix
 from simulation_logger import init_logger
-from generate_matrix_stretched import generate_matrix_stretched
+from generate_matrix import generate_matrix
 from create_sorted_line_matrix import create_sorted_line_matrix
 
 def test_step_6(output_dir):
@@ -34,9 +34,9 @@ def test_step_6(output_dir):
     init_logger(output_dir)
     try:
         # Käytä optimoitua matriisia jos on saatavilla
-        matrix_file = os.path.join(output_dir, "Logs", "line_matrix_stretched.csv")
+        matrix_file = os.path.join(output_dir, "logs", "line_matrix.csv")
         if not os.path.exists(matrix_file):
-            generate_matrix_stretched(output_dir)
+            generate_matrix(output_dir)
         
         create_sorted_line_matrix(output_dir)
         

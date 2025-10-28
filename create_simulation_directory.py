@@ -5,10 +5,11 @@ from glob import glob
 
 def create_simulation_directory(base_dir="output"):
     """
-    Luo simulaatiokansion, kopioi tarvittavat kansiot ja alustaa logitiedoston INIT-tapahtumilla.
-    Palauttaa luodun simulaatiokansion polun.
+    Create the simulation directory, copy required folders, and initialize the log file with INIT events.
+    Returns the path to the created simulation directory.
     """
-    # Lue asiakas ja laitos
+ 
+     # Read Customer and Plant information
     customer = "Customer"
     plant = "Plant"
     customer_plant_path = os.path.join("initialization", "customer_and_plant.csv")
@@ -18,22 +19,23 @@ def create_simulation_directory(base_dir="output"):
         if not df_cp.empty:
             customer = str(df_cp.iloc[0]["Customer"]).strip().replace(" ", "_")
             plant = str(df_cp.iloc[0]["Plant"]).strip().replace(" ", "_")
-    # Luo aikaleimapohjainen kansio
+    
+    # Create a timestamp-based directory
     now = datetime.now()
     name = f"{customer}_{plant}_" + now.strftime("%Y-%m-%d_%H-%M-%S")
     full_path = os.path.join(base_dir, name)
     os.makedirs(full_path, exist_ok=True)
 
-    # Luo initialization/treatment_program_originals, jos ei ole olemassa
+    # Create initialization/treatment_program_originals if it does not exist
     tpo_dir = os.path.join("initialization", "treatment_program_originals")
     os.makedirs(tpo_dir, exist_ok=True)
 
-    # Luo cp_sat ja treatment_program_optimized simulaatiokansion alle
+    # Create cp_sat and treatment_program_optimized under the simulation directory
     cp_sat_dir = os.path.join(full_path, "cp_sat")
     tpo_optimized_dir = os.path.join(cp_sat_dir, "treatment_program_optimized")
     os.makedirs(tpo_optimized_dir, exist_ok=True)
 
-    # Luo logs-kansio
+    # Create logs directory
     logs_dir = os.path.join(full_path, "logs")
     os.makedirs(logs_dir, exist_ok=True)
 
@@ -41,20 +43,20 @@ def create_simulation_directory(base_dir="output"):
     for src, dst_name in [
         ("initialization", "initialization"),
         ("programs", "original_programs")
-    ]:
+        ]:
         if os.path.exists(src):
             dst = os.path.join(full_path, dst_name)
             if os.path.exists(dst):
                 shutil.rmtree(dst)
             shutil.copytree(src, dst)
 
-    # Varmista että Transporters_start_positions.csv kopioituu initialization-kansioon
+    # Ensure that Transporters_start_positions.csv is copied to the initialization folder
     src_start_positions = os.path.join("initialization", "Transporters_start_positions.csv")
     dst_start_positions = os.path.join(full_path, "initialization", "Transporters_start_positions.csv")
     if os.path.exists(src_start_positions):
         shutil.copy2(src_start_positions, dst_start_positions)
 
-    # Luo simulation_log.csv ja kirjaa STEP- ja INIT-tapahtumat
+    # Create simulation_log.csv and log events
     log_file = os.path.join(logs_dir, "simulation_log.csv")
     with open(log_file, "w", encoding="utf-8") as f:
         f.write("Timestamp,Type,Description\n")
@@ -75,13 +77,8 @@ def create_simulation_directory(base_dir="output"):
             f.write(f"{timestamp},INIT,Documentation file: {os.path.basename(file)}\n")
         f.write(f"{timestamp},STEP,STEP 1 COMPLETED: SIMULATION DIRECTORY READY\n")
 
-    # Luo reports-kansio
+    # Create reports directory
     reports_dir = os.path.join(full_path, "reports")
     os.makedirs(reports_dir, exist_ok=True)
-    # Poistettu: original_programs-kansion ja eräkohtaisten ohjelmien luonti (tämä tehdään vaiheessa 2)
-    # Tulosta vain aloitus ja lopetus
-    return full_path
 
-# Esimerkkikutsu
-if __name__ == "__main__":
-    create_simulation_directory()
+    return full_path

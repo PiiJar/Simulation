@@ -35,8 +35,8 @@ def create_transporter_tasks_final(output_dir):
         source_type = "stretched"
     else:
         from datetime import datetime
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}] VIRHE: Ei löydy optimoituja eikä venytettyjä nostintehtäviä")
-        print("Pipeline keskeytetään. Varmista, että vaihe stretch_hoist_tasks on ajettu ennen tätä.")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}] VIRHE: Ei löydy optimoituja eikä venytettyjä nostintehtäviä")
+    print("Pipeline keskeytetään. Varmista, että vaihe generate_matrix on ajettu ennen tätä.")
         raise FileNotFoundError(f"Nostintehtävätiedostoja ei löydy: {optimized_file} tai {stretched_file}")
     
     matrix_file = os.path.join(logs_dir, "line_matrix_stretched.csv")

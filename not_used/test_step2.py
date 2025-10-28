@@ -18,7 +18,7 @@ Kaikki vaiheet kirjaavat etenemisensä simulation_log.csv-tiedostoon.
 import os
 import sys
 from datetime import datetime
-from generate_batch_treatment_programs_original import generate_batch_treatment_programs_original
+from not_used.generate_batch_treatment_programs_original import generate_batch_treatment_programs_original
 
 def create_original_programs(output_dir):
     """

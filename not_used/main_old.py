@@ -14,7 +14,7 @@ from create_simulation_directory import create_simulation_directory
 from generate_batch_treatment_programs_original import generate_batch_treatment_programs_original
 from preprocess_for_cpsat import preprocess_for_cpsat
 from cp_sat_stepwise import cp_sat_stepwise, solve_and_save
-from generate_matrix_stretched import generate_matrix_stretched
+from generate_matrix import generate_matrix
 from extract_transporter_tasks import extract_transporter_tasks, create_detailed_movements
 from visualize_stretched_matrix import visualize_stretched_matrix
 from simulation_logger import init_logger
@@ -37,7 +37,7 @@ def main():
 
     # 4. Results
     # Generate stretched matrix and transporter movements
-    generate_matrix_stretched(output_dir)
+    generate_matrix(output_dir)
     extract_transporter_tasks(output_dir)
     create_detailed_movements(output_dir)
 
@@ -215,8 +215,8 @@ def main_old():
         print(f"[POST] initialization/production.csv päivitetty Start_optimized-sarakkeella ja järjestetty aikajärjestykseen.")
 
     # --- Vaihe 6: Luo venytetty matriisi ---
-    from generate_matrix_stretched import generate_matrix_stretched
-    generate_matrix_stretched(output_dir)
+    from generate_matrix import generate_matrix
+    generate_matrix(output_dir)
     print("[STEP6] Venytetty matriisi luotu.")
 
 
