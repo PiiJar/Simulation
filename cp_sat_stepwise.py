@@ -5,7 +5,18 @@ import os
 import pandas as pd
 from ortools.sat.python import cp_model
 
-def cp_sat_stepwise(output_dir):
+def cp_sat_stepwise(output_dir, hard_order_constraint=False):
+    # 1. Lue snapshotin tiedot
+    batches = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-batches.csv"))
+    stations = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-stations.csv"))
+    transfers = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-transfer-tasks.csv"))
+    treatment_programs = {}
+    for batch in batches["Batch"]:
+        batch_int = int(batch)
+        fname = os.path.join(output_dir, "initialization", f"cp-sat-treatment-program-{batch_int}.csv")
+        df = pd.read_csv(fname)
+        treatment_programs[batch_int] = df
+
     # 1. Lue snapshotin tiedot
     batches = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-batches.csv"))
     stations = pd.read_csv(os.path.join(output_dir, "initialization", "cp-sat-stations.csv"))
@@ -41,6 +52,18 @@ def cp_sat_stepwise(output_dir):
             station = model.NewIntVarFromDomain(station_domain, f"station_{batch_int}_{stage}")
             model.Add(end == start + duration)
             task_vars[(batch_int, stage)] = {"start": start, "end": end, "duration": duration, "station": station, "possible_stations": possible_stations}
+
+    # Kovien järjestysrajoitteiden lisäys vain jos hard_order_constraint=True
+    if hard_order_constraint:
+        # Käytetään batch-numeroiden nousevaa järjestystä
+        batch_ids = sorted([int(b) for b in batches["Batch"]])
+        batch_end_vars = [task_vars[(batch_id, 0)]["end"] for batch_id in batch_ids]
+        print("[DEBUG] KOVA JÄRJESTYSRAJOITE KÄYTÖSSÄ (END)")
+        print(f"[DEBUG] batch_ids: {batch_ids}")
+        print(f"[DEBUG] batch_end_vars: {[str(v) for v in batch_end_vars]}")
+        for i in range(len(batch_ids)):
+            for j in range(i+1, len(batch_ids)):
+                model.Add(batch_end_vars[i] <= batch_end_vars[j])
 
     # Vaihe 2: Käsittelyjärjestys constraint (vaiheiden järjestys)
     for batch in batches["Batch"]:
@@ -111,7 +134,30 @@ def cp_sat_stepwise(output_dir):
     if last_ends:
         makespan = model.NewIntVar(0, MAX_TIME, "makespan")
         model.AddMaxEquality(makespan, last_ends)
-        model.Minimize(makespan)
+        # Järjestysrikkomuspenalty: penalisoidaan, jos pienempi batch alkaa myöhemmin kuin suurempi batch
+        batch_start_vars = []
+        batch_ids = []
+        for batch in batches["Batch"]:
+            batch_int = int(batch)
+            batch_start_vars.append(task_vars[(batch_int, 0)]["start"])
+            batch_ids.append(batch_int)
+        # Penalisoidaan kaikki parit (i, j), joissa batch_ids[i] < batch_ids[j] mutta start[i] > start[j]
+        order_violations = []
+        for i in range(len(batch_ids)):
+            for j in range(i+1, len(batch_ids)):
+                if batch_ids[i] < batch_ids[j]:
+                    violation = model.NewBoolVar(f"order_violation_{batch_ids[i]}_{batch_ids[j]}")
+                    model.Add(batch_start_vars[i] > batch_start_vars[j]).OnlyEnforceIf(violation)
+                    model.Add(batch_start_vars[i] <= batch_start_vars[j]).OnlyEnforceIf(violation.Not())
+                    order_violations.append(violation)
+        if order_violations:
+            order_penalty = model.NewIntVar(0, len(order_violations), "order_penalty")
+            model.Add(order_penalty == sum(order_violations))
+        else:
+            order_penalty = model.NewIntVar(0, 0, "order_penalty")
+            model.Add(order_penalty == 0)
+        # Ensisijaisesti minimoi makespan, toissijaisesti järjestysrikkomukset
+        model.Minimize(makespan * (len(batch_ids)+1) + order_penalty)
 
     # Vaihe 7: Erityistapaukset (askel 0)
     # (Tässä vaiheessa askel 0 sallitaan päällekkäisyys, koska AddNoOverlap ei rajoita sitä)
@@ -122,6 +168,15 @@ def solve_and_save(model, task_vars, treatment_programs, output_dir):
     import os
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
+    # Debug: tulosta batchien vaiheen 0 start ja end arvot
+    batch_starts = []
+    batch_ends = []
+    for (batch, stage), vars in task_vars.items():
+        if stage == 0:
+            batch_starts.append((batch, solver.Value(vars["start"])))
+            batch_ends.append((batch, solver.Value(vars["end"])))
+    print(f"[DEBUG] Vaihe 0 start-arvot: {sorted(batch_starts)}")
+    print(f"[DEBUG] Vaihe 0 end-arvot: {sorted(batch_ends)}")
     status_str = {cp_model.OPTIMAL: "OPTIMAL", cp_model.FEASIBLE: "FEASIBLE", cp_model.INFEASIBLE: "INFEASIBLE", cp_model.MODEL_INVALID: "MODEL_INVALID", cp_model.UNKNOWN: "UNKNOWN"}.get(status, str(status))
     print(f"[CP-SAT] Solver status: {status} ({status_str})")
     print(f"[CP-SAT] Wall time: {solver.WallTime()}s, Conflicts: {solver.NumConflicts()}, Branches: {solver.NumBranches()}")

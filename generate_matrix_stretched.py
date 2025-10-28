@@ -140,21 +140,18 @@ def generate_matrix_stretched_pure(output_dir):
     production_df = load_production_batches_stretched(output_dir)
     stations_df = load_stations(output_dir)
     transporters_df = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
-    # Optional: read stretched transporter tasks to reuse Stage 0 sink station decisions
-    stretched_tasks_path = os.path.join(output_dir, "logs", "transporter_tasks_stretched.csv")
-    stretched_tasks_df = None
-    if os.path.exists(stretched_tasks_path):
+    # Lue esilasketut siirtoajat (nostinliikkeet) tiedostosta
+    transfers_path = os.path.join(output_dir, "logs", "cp-sat-stepwise-transfers.csv")
+    transfers_df = None
+    if os.path.exists(transfers_path):
         try:
-            stretched_tasks_df = pd.read_csv(stretched_tasks_path)
-            # Varmista oikeat tyypit vertailua varten
-            if 'Batch' in stretched_tasks_df.columns:
-                stretched_tasks_df['Batch'] = stretched_tasks_df['Batch'].astype(int)
-            if 'Stage' in stretched_tasks_df.columns:
-                stretched_tasks_df['Stage'] = stretched_tasks_df['Stage'].astype(int)
-            if 'Sink_stat' in stretched_tasks_df.columns:
-                stretched_tasks_df['Sink_stat'] = stretched_tasks_df['Sink_stat'].astype(int)
+            transfers_df = pd.read_csv(transfers_path)
+            # Varmista oikeat tyypit
+            for col in ["Batch", "Stage", "From_Station", "To_Station"]:
+                if col in transfers_df.columns:
+                    transfers_df[col] = transfers_df[col].astype(int)
         except Exception:
-            stretched_tasks_df = None
+            transfers_df = None
     
     # Asemavaraukset rinnakkaisten asemien hallintaan
     station_reservations = {}
@@ -184,13 +181,13 @@ def generate_matrix_stretched_pure(output_dir):
         first_max_stat = int(first_prog_row["MaxStat"])
         
         # Valitse kohdestation (Stage 1:n asema)
-        # Ensisijaisesti käytä venytetyn simulaation Stage 0 -päätöstä, jos saatavilla
+        # Jos transfers_df sisältää Sink_stat, käytä sitä
         temp_sink_stat = None
-        if stretched_tasks_df is not None:
-            st0 = stretched_tasks_df[(stretched_tasks_df['Batch'] == batch_id) & (stretched_tasks_df['Stage'] == 0)]
-            if not st0.empty:
+        if transfers_df is not None:
+            match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == 0)]
+            if not match.empty and "Sink_stat" in match.columns:
                 try:
-                    temp_sink_stat = int(st0.iloc[0]['Sink_stat'])
+                    temp_sink_stat = int(match.iloc[0]["Sink_stat"])
                 except Exception:
                     temp_sink_stat = None
         # Muuten valitse ensimmäinen vapaa asema MinStat–MaxStat -väliltä
@@ -198,14 +195,21 @@ def generate_matrix_stretched_pure(output_dir):
             temp_sink_stat = select_available_station(first_min_stat, first_max_stat, station_reservations, 
                                                       int(start_time_seconds), int(start_time_seconds))
         
-        # Laske fysiikka Stage 0:lle (start_station → Stage 1 asema)
-        transporter_0 = select_capable_transporter(start_station, temp_sink_stat, stations_df, transporters_df)
-        lift_station_0 = stations_df[stations_df['Number'] == start_station].iloc[0]
-        sink_station_0 = stations_df[stations_df['Number'] == temp_sink_stat].iloc[0]
-        
-        phase_2_0 = calculate_lift_time(lift_station_0, transporter_0)
-        phase_3_0 = calculate_physics_transfer_time(lift_station_0, sink_station_0, transporter_0)
-        phase_4_0 = calculate_sink_time(sink_station_0, transporter_0)
+        # Hae esilasketut siirtoajat Stage 0:lle
+        phase_2_0 = phase_3_0 = phase_4_0 = 0
+        if transfers_df is not None:
+            match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == 0)]
+            if not match.empty:
+                phase_2_0 = match.iloc[0]["Phase_2"] if "Phase_2" in match.columns else 0
+                phase_3_0 = match.iloc[0]["Phase_3"] if "Phase_3" in match.columns else 0
+                phase_4_0 = match.iloc[0]["Phase_4"] if "Phase_4" in match.columns else 0
+        else:
+            transporter_0 = select_capable_transporter(start_station, temp_sink_stat, stations_df, transporters_df)
+            lift_station_0 = stations_df[stations_df['Number'] == start_station].iloc[0]
+            sink_station_0 = stations_df[stations_df['Number'] == temp_sink_stat].iloc[0]
+            phase_2_0 = calculate_lift_time(lift_station_0, transporter_0)
+            phase_3_0 = calculate_physics_transfer_time(lift_station_0, sink_station_0, transporter_0)
+            phase_4_0 = calculate_sink_time(sink_station_0, transporter_0)
         transport_time_0 = phase_2_0 + phase_3_0 + phase_4_0
         # Stage 0 ExitTime = start_time (nostin lähtee liikkeelle start-aikaan)
         stage0_exit = int(start_time_seconds)
@@ -261,16 +265,24 @@ def generate_matrix_stretched_pure(output_dir):
             lift_station_row = stations_df[stations_df['Number'] == lift_stat].iloc[0]
             sink_station_row = stations_df[stations_df['Number'] == sink_stat].iloc[0]
 
-            if i == 0:
-                phase_1 = 0.0
+            # Hae esilasketut siirtoajat Stage > 0
+            phase_1 = phase_2 = phase_3 = phase_4 = 0
+            if transfers_df is not None:
+                match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == stage)]
+                if not match.empty:
+                    phase_1 = match.iloc[0]["Phase_1"] if "Phase_1" in match.columns else 0
+                    phase_2 = match.iloc[0]["Phase_2"] if "Phase_2" in match.columns else 0
+                    phase_3 = match.iloc[0]["Phase_3"] if "Phase_3" in match.columns else 0
+                    phase_4 = match.iloc[0]["Phase_4"] if "Phase_4" in match.columns else 0
             else:
-                prev_station_row = stations_df[stations_df['Number'] == previous_sink_stat].iloc[0]
-                phase_1 = calculate_physics_transfer_time(prev_station_row, lift_station_row, transporter)
-
-            phase_2 = calculate_lift_time(lift_station_row, transporter)
-            phase_3 = calculate_physics_transfer_time(lift_station_row, sink_station_row, transporter)
-            phase_4 = calculate_sink_time(sink_station_row, transporter)
-
+                if i == 0:
+                    phase_1 = 0.0
+                else:
+                    prev_station_row = stations_df[stations_df['Number'] == previous_sink_stat].iloc[0]
+                    phase_1 = calculate_physics_transfer_time(prev_station_row, lift_station_row, transporter)
+                phase_2 = calculate_lift_time(lift_station_row, transporter)
+                phase_3 = calculate_physics_transfer_time(lift_station_row, sink_station_row, transporter)
+                phase_4 = calculate_sink_time(sink_station_row, transporter)
             transport_time = phase_2 + phase_3 + phase_4
             
             # EntryTime = edellinen exit + siirtoaika (P2+P3+P4)
