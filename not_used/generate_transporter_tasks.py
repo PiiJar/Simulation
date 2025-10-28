@@ -1,102 +1,85 @@
 import pandas as pd
 import os
-from simulation_logger import get_logger
 
 def generate_transporter_tasks(output_dir):
-    """Luo kuljetintehtävät line_matrix_original.csv:n perusteella ja lisää Shift-sarake (aluksi 0)."""
-    logger = get_logger()
-    if logger is None:
-        raise RuntimeError("Logger is not initialized. Call init_logger(output_dir) before using generate_transporter_tasks.")
-    print("Vaihe alkaa: Kuljetintehtävien generointi")
-    logger.log_phase("Kuljetintehtävien generointi alkaa")
-    
-    matrix_file = os.path.join(output_dir, "line_matrix_original.csv")
-    if not os.path.exists(matrix_file):
-        logger.log_error(f"line_matrix_original.csv ei löydy: {matrix_file}")
-        print("Virhe: line_matrix_original.csv ei löydy")
-        raise FileNotFoundError(f"line_matrix_original.csv ei löydy: {matrix_file}")
-    
-    logger.log_io(f"Luetaan line_matrix_original.csv: {matrix_file}")
-    try:
-        df = pd.read_csv(matrix_file)
-        logger.log_data(f"Ladattu {len(df)} vaihetta, {df['Batch'].nunique()} erää")
-        df = df.sort_values(["Batch", "Stage"]).reset_index(drop=True)
-        tasks = []
-        for idx, row in df.iterrows():
-            tasks.append({
-                "Batch": int(row["Batch"]),
-                "Treatment_program": int(row["Treatment_program"]),
-                "Stage": int(row["Stage"]),
-                "Lift_stat": int(row["Station"]),
-                "Lift_time": float(row["ExitTime"]),
-                "Sink_stat": int(df.iloc[idx + 1]["Station"]) if idx + 1 < len(df) and row["Batch"] == df.iloc[idx + 1]["Batch"] else None,
-                "Sink_time": float(df.iloc[idx + 1]["EntryTime"]) if idx + 1 < len(df) and row["Batch"] == df.iloc[idx + 1]["Batch"] else None,
-                "Shift": 0.0
-            })
-        # Poista viimeinen tehtävä jokaisesta batchista (koska sillä ei ole seuraavaa vaihetta)
-        tasks = [t for t in tasks if t["Sink_stat"] is not None]
-        tasks_df = pd.DataFrame(tasks)
-        # Varmistetaan sarakejärjestys ja Shift-nimi
-        cols = ["Batch", "Treatment_program", "Stage", "Lift_stat", "Lift_time", "Sink_stat", "Sink_time", "Shift"]
-        tasks_df = tasks_df[cols]
-    except Exception as e:
-        logger.log_error(f"Kuljetintehtävien generointi epäonnistui: {e}")
-        print(f"Virhe: kuljetintehtävien generointi epäonnistui: {e}")
-        raise
+    # Oletetaan, että tarvittavat tiedot on luettu DataFrameen df
+    # df:ssä sarakkeet: Batch, Stage, Lift_stat, Sink_stat, Phase_1, Phase_2, Phase_3, Phase_4, Lift_time
+    # Tässä esimerkissä lasketaan Sink_time kaavalla: Lift_time + Phase_2 + Phase_3 + Phase_4
+    tasks_file = os.path.join(output_dir, "Logs", "transporter_tasks_raw.csv")
+    df = pd.read_csv(tasks_file)
+    if not all(col in df.columns for col in ["Lift_time", "Phase_2", "Phase_3", "Phase_4"]):
+        raise ValueError("Puuttuvia sarakkeita: Lift_time, Phase_2, Phase_3, Phase_4")
+    df["Sink_time"] = df["Lift_time"] + df["Phase_2"] + df["Phase_3"] + df["Phase_4"]
+    # Tallennus (jos halutaan)
+    df.to_csv(tasks_file, index=False)
+    return df
 
-    os.makedirs(output_dir, exist_ok=True)
+def create_transporter_tasks_final(output_dir):
+    """
+    Luo lopulliset nostintehtävät optimoiduista tehtävistä ja lopullisesta matriisista.
+    Käyttää AINA transporter_tasks_optimized.csv jos se on olemassa.
+    """
+    # Lue optimoidut nostintehtävät ja lopullinen matriisi
     logs_dir = os.path.join(output_dir, "logs")
-    os.makedirs(logs_dir, exist_ok=True)
+    
+    # Kokeile ensin optimoituja tehtäviä
+    optimized_file = os.path.join(logs_dir, "transporter_tasks_optimized.csv")
+    stretched_file = os.path.join(logs_dir, "transporter_tasks_stretched.csv")
+    
+    # Valitse paras saatavilla oleva nostintehtävätiedosto
+    if os.path.exists(optimized_file):
+        transporter_file = optimized_file
+        source_type = "optimized"
+    elif os.path.exists(stretched_file):
+        transporter_file = stretched_file
+        source_type = "stretched"
+    else:
+        from datetime import datetime
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}] VIRHE: Ei löydy optimoituja eikä venytettyjä nostintehtäviä")
+        print("Pipeline keskeytetään. Varmista, että vaihe stretch_hoist_tasks on ajettu ennen tätä.")
+        raise FileNotFoundError(f"Nostintehtävätiedostoja ei löydy: {optimized_file} tai {stretched_file}")
+    
+    matrix_file = os.path.join(logs_dir, "line_matrix_stretched.csv")
+    final_file = os.path.join(logs_dir, "transporter_tasks_final.csv")
+    
+    # Tarkista, että line_matrix_stretched.csv on olemassa
+    if not os.path.exists(matrix_file):
+        from datetime import datetime
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}] VIRHE: line_matrix_stretched.csv puuttuu polusta: {matrix_file}")
+        print("Pipeline keskeytetään. Varmista, että vaihe generate_matrix_stretched on ajettu ennen tätä.")
+        raise FileNotFoundError(f"line_matrix_stretched.csv puuttuu polusta: {matrix_file}")
+    
+    df_transporter = pd.read_csv(transporter_file)
+    df_matrix = pd.read_csv(matrix_file)
+    
+    # Oletetaan, että df_transporter: Batch, Treatment_program, Stage, Lift_stat, Sink_stat, ...
+    # df_matrix: Batch, Stage, Station, EntryTime, ExitTime, ...
+    lift_times = []
+    sink_times = []
+    for idx, row in df_transporter.iterrows():
+        batch = row["Batch"]
+        stage = row["Stage"]
+        lift_stat = row["Lift_stat"]
+        sink_stat = row["Sink_stat"]
+        # Lift_time: line_matrix_stretched ExitTime, jossa sama Batch, Stage, Station=Lift_stat
+        lift_match = df_matrix[(df_matrix["Batch"] == batch) & (df_matrix["Stage"] == stage) & (df_matrix["Station"] == lift_stat)]
+        if not lift_match.empty:
+            lift_time = lift_match.iloc[0]["ExitTime"]
+        else:
+            lift_time = None
+        # Sink_time: line_matrix_stretched EntryTime, jossa sama Batch, Stage+1, Station=Sink_stat
+        sink_match = df_matrix[(df_matrix["Batch"] == batch) & (df_matrix["Stage"] == stage+1) & (df_matrix["Station"] == sink_stat)]
+        if not sink_match.empty:
+            sink_time = sink_match.iloc[0]["EntryTime"]
+        else:
+            sink_time = None
+        lift_times.append(lift_time)
+        sink_times.append(sink_time)
+    df_transporter["Lift_time"] = lift_times
+    df_transporter["Sink_time"] = sink_times
+    df_transporter.to_csv(final_file, index=False)
+    return final_file
 
-    # Tallenna kaikkiin vaiheisiin Shift-sarake (aluksi 0)
-    raw_file = os.path.join(logs_dir, "transporter_tasks_raw.csv")
-    tasks_df.to_csv(raw_file, index=False)
-    logger.log_io(f"Kuljetintehtävät tallennettu: {raw_file}")
-
-    ordered_df = tasks_df.sort_values(["Batch", "Lift_time"]).reset_index(drop=True)
-    ordered_df = ordered_df[cols]
-    ordered_file = os.path.join(logs_dir, "transporter_tasks_ordered.csv")
-    ordered_df.to_csv(ordered_file, index=False)
-    logger.log_io(f"Kuljetintehtävät tallennettu (batch ja aika): {ordered_file}")
-
-    resolved_df = ordered_df.copy()[cols]
-    resolved_file = os.path.join(logs_dir, "transporter_tasks_resolved.csv")
-    resolved_df.to_csv(resolved_file, index=False)
-    logger.log_io(f"Kuljetintehtävät tallennettu (resolved): {resolved_file}")
-
-    # Stretched-vaiheessa Shift-sarake päivitetään myöhemmin stretch-skriptissä
-    try:
-        stretched_df = resolved_df.copy()[cols]
-        stretched_df["Shift"] = 0.0  # Varmistetaan Shift-sarake
-        n = len(stretched_df)
-        SHIFT_GAP = 5.0
-        for i in range(n-1):
-            row_a = stretched_df.iloc[i]
-            row_b = stretched_df.iloc[i+1]
-            if row_a["Batch"] != row_b["Batch"]:
-                continue
-            actual_gap = row_b["Lift_time"] - row_a["Sink_time"]
-            if actual_gap < SHIFT_GAP:
-                shift = SHIFT_GAP - actual_gap
-                stretched_df.at[i+1, "Shift"] = shift
-                for j in range(i+1, n):
-                    if stretched_df.loc[j, "Batch"] == row_b["Batch"]:
-                        stretched_df.at[j, "Lift_time"] += shift
-                        stretched_df.at[j, "Sink_time"] += shift
-        stretched_file = os.path.join(logs_dir, "transporter_tasks_stretched.csv")
-        stretched_df.to_csv(stretched_file, index=False)
-        logger.log_io(f"Kuljetintehtävät tallennettu (stretched, Shift laskettu): {stretched_file}")
-    except Exception as e:
-        logger.log_error(f"Stretched-vaiheen Shift-laskenta epäonnistui: {e}")
-        print(f"Virhe: stretched-vaiheen Shift-laskenta epäonnistui: {e}")
-        raise
-
-    logger.log_phase(f"Kuljetintehtävien generointi valmis: {len(tasks_df)} tehtävää")
-    print("Vaihe valmis: Kuljetintehtävien generointi")
-    return tasks_df, ordered_df, resolved_df, stretched_df
-
-if __name__ == "__main__":
-    import sys
-    output_dir = sys.argv[1] if len(sys.argv) > 1 else "output"
-    generate_transporter_tasks(output_dir)
-
+# Esimerkkikäyttö:
+# generate_transporter_tasks("output")
+# create_transporter_tasks_final("output")

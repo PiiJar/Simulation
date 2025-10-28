@@ -200,7 +200,20 @@ def solve_and_save(model, task_vars, treatment_programs, output_dir):
     df_result.to_csv(result_path, index=False)
     print(f"[CP-SAT] Optimoinnin tulokset tallennettu: {result_path}")
 
+
     validate_and_save_transfers(df_result, task_vars, logs_dir)
+
+    # --- Päivitä production.csv ja ohjelmat optimoiduilla ajoilla ---
+    import sys
+    import pandas as pd
+    sys.path.append(os.path.join(os.path.dirname(__file__), 'not_used'))
+    from not_used.optimize_final_schedule import update_production_and_programs
+    class DummyLogger:
+        def log_optimization(self, msg):
+            print(f"[UPDATE_PRODUCTION] {msg}")
+    logger = DummyLogger()
+    orig_prod = pd.read_csv(os.path.join(output_dir, "initialization", "production.csv"))
+    update_production_and_programs(orig_prod, df_result, output_dir, logger)
 
 def validate_and_save_transfers(df_result, task_vars, logs_dir):
     import pandas as pd

@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from datetime import datetime
-from transporter_physics import calculate_physics_transfer_time, calculate_lift_time, calculate_sink_time
+
 
 def load_stations(output_dir):
     """Lataa Stations.csv tiedoston"""
@@ -67,30 +67,16 @@ def load_production_batches_stretched(output_dir):
     
     df = pd.read_csv(production_file)
     
-    # Valitse oikea Start-sarake prioriteetin mukaan:
-    # 1. Start_optimized (CP-SAT optimoinnin tulos) - KORKEIN PRIORITEETTI
-    # 2. Start_stretch (perinteisen venytyksen tulos)
-    # 3. Start_station_check (konfliktien ratkaisun tulos)
-    # 4. Start_original (alkuperäinen)
-    
+    # Käytetään VAIN Start_optimized -kenttää (CP-SAT optimoinnin tulos)
     if "Start_optimized" in df.columns and df["Start_optimized"].notna().any():
         start_field = "Start_optimized"
         print(f"  📊 Käytetään CP-SAT optimoituja alkuaikoja (Start_optimized)")
-    elif "Start_stretch" in df.columns:
-        start_field = "Start_stretch"
-        print(f"  ℹ️  Käytetään venytettyjä alkuaikoja (Start_stretch)")
-    elif "Start_station_check" in df.columns:
-        start_field = "Start_station_check"
-        print(f"  ℹ️  Käytetään konfliktien ratkaisun alkuaikoja (Start_station_check)")
-    elif "Start_original" in df.columns:
-        start_field = "Start_original"
-        print(f"  ℹ️  Käytetään alkuperäisiä alkuaikoja (Start_original)")
     else:
-        raise ValueError(f"Start-kenttää ei löydy production.csv:stä: {list(df.columns)}")
-    
-    # Muunna Start-kenttä (HH:MM:SS) sekunteiksi laskentaa varten
+        raise ValueError(f"Start_optimized-kenttää ei löydy production.csv:stä tai se on tyhjä. Sarakkeet: {list(df.columns)}.\nVarmista, että optimointi on ajettu ja tulokset tallennettu oikein.")
+
+    # Muunna Start_optimized (HH:MM:SS) sekunneiksi laskentaa varten
     df["Start_time_seconds"] = pd.to_timedelta(df[start_field]).dt.total_seconds()
-    
+
     return df
 
 def load_batch_program_optimized(programs_dir, batch_id, treatment_program):
@@ -142,16 +128,15 @@ def generate_matrix_stretched_pure(output_dir):
     transporters_df = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
     # Lue esilasketut siirtoajat (nostinliikkeet) tiedostosta
     transfers_path = os.path.join(output_dir, "logs", "cp-sat-stepwise-transfers.csv")
-    transfers_df = None
-    if os.path.exists(transfers_path):
-        try:
-            transfers_df = pd.read_csv(transfers_path)
-            # Varmista oikeat tyypit
-            for col in ["Batch", "Stage", "From_Station", "To_Station"]:
-                if col in transfers_df.columns:
-                    transfers_df[col] = transfers_df[col].astype(int)
-        except Exception:
-            transfers_df = None
+    if not os.path.exists(transfers_path):
+        raise FileNotFoundError(f"Precomputed transfer times file not found: {transfers_path}\nRun preprocessing/optimization first!")
+    try:
+        transfers_df = pd.read_csv(transfers_path)
+        for col in ["Batch", "Stage", "From_Station", "To_Station"]:
+            if col in transfers_df.columns:
+                transfers_df[col] = transfers_df[col].astype(int)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load precomputed transfer times: {e}")
     
     # Asemavaraukset rinnakkaisten asemien hallintaan
     station_reservations = {}
@@ -196,20 +181,13 @@ def generate_matrix_stretched_pure(output_dir):
                                                       int(start_time_seconds), int(start_time_seconds))
         
         # Hae esilasketut siirtoajat Stage 0:lle
-        phase_2_0 = phase_3_0 = phase_4_0 = 0
-        if transfers_df is not None:
-            match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == 0)]
-            if not match.empty:
-                phase_2_0 = match.iloc[0]["Phase_2"] if "Phase_2" in match.columns else 0
-                phase_3_0 = match.iloc[0]["Phase_3"] if "Phase_3" in match.columns else 0
-                phase_4_0 = match.iloc[0]["Phase_4"] if "Phase_4" in match.columns else 0
+        match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == 0)]
+        if not match.empty:
+            phase_2_0 = match.iloc[0]["Phase_2"] if "Phase_2" in match.columns else 0
+            phase_3_0 = match.iloc[0]["Phase_3"] if "Phase_3" in match.columns else 0
+            phase_4_0 = match.iloc[0]["Phase_4"] if "Phase_4" in match.columns else 0
         else:
-            transporter_0 = select_capable_transporter(start_station, temp_sink_stat, stations_df, transporters_df)
-            lift_station_0 = stations_df[stations_df['Number'] == start_station].iloc[0]
-            sink_station_0 = stations_df[stations_df['Number'] == temp_sink_stat].iloc[0]
-            phase_2_0 = calculate_lift_time(lift_station_0, transporter_0)
-            phase_3_0 = calculate_physics_transfer_time(lift_station_0, sink_station_0, transporter_0)
-            phase_4_0 = calculate_sink_time(sink_station_0, transporter_0)
+            raise RuntimeError(f"Precomputed transfer times missing for Batch={batch_id}, Stage=0. Run preprocessing/optimization first!")
         transport_time_0 = phase_2_0 + phase_3_0 + phase_4_0
         # Stage 0 ExitTime = start_time (nostin lähtee liikkeelle start-aikaan)
         stage0_exit = int(start_time_seconds)
@@ -266,23 +244,14 @@ def generate_matrix_stretched_pure(output_dir):
             sink_station_row = stations_df[stations_df['Number'] == sink_stat].iloc[0]
 
             # Hae esilasketut siirtoajat Stage > 0
-            phase_1 = phase_2 = phase_3 = phase_4 = 0
-            if transfers_df is not None:
-                match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == stage)]
-                if not match.empty:
-                    phase_1 = match.iloc[0]["Phase_1"] if "Phase_1" in match.columns else 0
-                    phase_2 = match.iloc[0]["Phase_2"] if "Phase_2" in match.columns else 0
-                    phase_3 = match.iloc[0]["Phase_3"] if "Phase_3" in match.columns else 0
-                    phase_4 = match.iloc[0]["Phase_4"] if "Phase_4" in match.columns else 0
+            match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == stage)]
+            if not match.empty:
+                phase_1 = match.iloc[0]["Phase_1"] if "Phase_1" in match.columns else 0
+                phase_2 = match.iloc[0]["Phase_2"] if "Phase_2" in match.columns else 0
+                phase_3 = match.iloc[0]["Phase_3"] if "Phase_3" in match.columns else 0
+                phase_4 = match.iloc[0]["Phase_4"] if "Phase_4" in match.columns else 0
             else:
-                if i == 0:
-                    phase_1 = 0.0
-                else:
-                    prev_station_row = stations_df[stations_df['Number'] == previous_sink_stat].iloc[0]
-                    phase_1 = calculate_physics_transfer_time(prev_station_row, lift_station_row, transporter)
-                phase_2 = calculate_lift_time(lift_station_row, transporter)
-                phase_3 = calculate_physics_transfer_time(lift_station_row, sink_station_row, transporter)
-                phase_4 = calculate_sink_time(sink_station_row, transporter)
+                raise RuntimeError(f"Precomputed transfer times missing for Batch={batch_id}, Stage={stage}. Run preprocessing/optimization first!")
             transport_time = phase_2 + phase_3 + phase_4
             
             # EntryTime = edellinen exit + siirtoaika (P2+P3+P4)

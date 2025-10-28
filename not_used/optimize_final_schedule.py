@@ -233,35 +233,29 @@ def update_production_and_programs(df_original, df_optimized, output_dir, logger
                 if stage == 0 and abs(shift) > 30:  # Suuri lähtöaikamuutos
                     significant_shifts_needed = True
     
-    # Päivitä Production.csv vain jos on merkittäviä lähtöaikamuutoksia
-    # KORJAUS: Käytä production_station_conflicts.csv lähtötietona, mutta älä siirrä lähtöaikoja aggressiivisesti
-    if False:  # POISTETTU: Aggressiivinen Production.csv siirto
-        production_file = os.path.join(output_dir, "initialization", "Production.csv")
-        if os.path.exists(production_file):
-            prod_df = pd.read_csv(production_file)
-            
-            start_time_updates = 0
-            for (batch, program, stage), shift in changes.items():
-                if stage == 0 and abs(shift) > 30:  # Vain merkittävät siirrot
-                    mask = prod_df["Batch"] == batch
-                    if mask.any():
-                        old_time = pd.to_timedelta(prod_df.loc[mask, "Start_time"]).dt.total_seconds().values[0]
-                        new_time = old_time + shift
-                        prod_df.loc[mask, "Start_time"] = pd.to_datetime(new_time, unit='s').strftime('%H:%M:%S')
-                        if "Start_time_seconds" in prod_df.columns:
-                            prod_df.loc[mask, "Start_time_seconds"] = new_time
-                        
-                        start_time_updates += 1
-                        logger.log_optimization(f"📅 Updated Production.csv: Batch {batch} Start_time by {shift:+.1f}s "
-                                              f"(as last resort after CalcTime optimization)")
-            
-            if start_time_updates > 0:
-                prod_df.to_csv(production_file, index=False)
-                logger.log_optimization(f"Updated {start_time_updates} batch start times in Production.csv")
-        
-        logger.log_optimization("⚠️  Note: Start time shifts applied as last resort. CalcTime optimization is primary strategy.")
+    # Päivitä Production.csv: lisää/ylikirjoita Start_optimized-sarake Stage 1:n alkamisajalla
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
+    if os.path.exists(production_file):
+        prod_df = pd.read_csv(production_file)
+        schedule_file = os.path.join(output_dir, "logs", "cp-sat-stepwise-schedule.csv")
+        if os.path.exists(schedule_file):
+            schedule_df = pd.read_csv(schedule_file)
+            # Poimi Stage 1:n Start jokaiselle batchille
+            start_optimized = {}
+            for _, row in schedule_df.iterrows():
+                if int(row["Stage"]) == 1:
+                    batch = row["Batch"]
+                    start_sec = int(row["Start"])
+                    # Muunna sekunnit HH:MM:SS
+                    start_optimized[batch] = pd.to_datetime(start_sec, unit='s').strftime('%H:%M:%S')
+            # Lisää/ylikirjoita sarake
+            prod_df["Start_optimized"] = prod_df["Batch"].map(start_optimized)
+            prod_df.to_csv(production_file, index=False)
+            logger.log_optimization(f"✅ Start_optimized-sarake päivitetty Production.csv-tiedostoon ({len(start_optimized)} erää)")
+        else:
+            logger.log_optimization(f"❌ Ei löydy optimoinnin aikataulutiedostoa: {schedule_file}")
     else:
-        logger.log_optimization("✅ Production.csv lähtöaikojen siirto ohitettu - keskitytään CalcTime-optimointiin!")
+        logger.log_optimization(f"❌ Ei löydy Production.csv-tiedostoa: {production_file}")
 
 def check_and_fix_calctime_violations(output_dir, logger):
     """Tarkistaa ja korjaa CalcTime-arvot jotka ylittävät MaxTime-rajoja"""

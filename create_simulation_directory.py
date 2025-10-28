@@ -8,11 +8,30 @@ def create_simulation_directory(base_dir="output"):
     Luo simulaatiokansion, kopioi tarvittavat kansiot ja alustaa logitiedoston INIT-tapahtumilla.
     Palauttaa luodun simulaatiokansion polun.
     """
+    # Lue asiakas ja laitos
+    customer = "Customer"
+    plant = "Plant"
+    customer_plant_path = os.path.join("initialization", "customer_and_plant.csv")
+    if os.path.exists(customer_plant_path):
+        import pandas as pd
+        df_cp = pd.read_csv(customer_plant_path)
+        if not df_cp.empty:
+            customer = str(df_cp.iloc[0]["Customer"]).strip().replace(" ", "_")
+            plant = str(df_cp.iloc[0]["Plant"]).strip().replace(" ", "_")
     # Luo aikaleimapohjainen kansio
     now = datetime.now()
-    name = now.strftime("%Y-%m-%d_%H-%M-%S")
+    name = f"{customer}_{plant}_" + now.strftime("%Y-%m-%d_%H-%M-%S")
     full_path = os.path.join(base_dir, name)
     os.makedirs(full_path, exist_ok=True)
+
+    # Luo initialization/treatment_program_originals, jos ei ole olemassa
+    tpo_dir = os.path.join("initialization", "treatment_program_originals")
+    os.makedirs(tpo_dir, exist_ok=True)
+
+    # Luo cp_sat ja treatment_program_optimized simulaatiokansion alle
+    cp_sat_dir = os.path.join(full_path, "cp_sat")
+    tpo_optimized_dir = os.path.join(cp_sat_dir, "treatment_program_optimized")
+    os.makedirs(tpo_optimized_dir, exist_ok=True)
 
     # Luo logs-kansio
     logs_dir = os.path.join(full_path, "logs")
