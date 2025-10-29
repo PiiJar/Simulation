@@ -226,8 +226,8 @@ def update_production_and_programs(df_original, df_optimized, output_dir, logger
                     start_sec = int(row["Start"])
                     # Muunna sekunnit HH:MM:SS
                     start_optimized[batch] = pd.to_datetime(start_sec, unit='s').strftime('%H:%M:%S')
-            # Lisää/ylikirjoita sarake
-            prod_df["Start_optimized"] = prod_df["Batch"].map(start_optimized)
+            # Lisää/ylikirjoita sarake, täytä tyhjät arvot tyhjällä merkkijonolla
+            prod_df["Start_optimized"] = prod_df["Batch"].map(start_optimized).fillna("")
             prod_df.to_csv(production_file, index=False)
             # logger.log_optimization removed
         # logger.log_optimization removed

@@ -19,8 +19,7 @@ def preprocess_for_cpsat(output_dir):
         src = os.path.join(originals_dir, f"Batch_{batch_num:03d}_Treatment_program_{program_num:03d}.csv")
         dst = os.path.join(cp_sat_dir, f"cp_sat_treatment_program_{batch_num}.csv")
         df = pd.read_csv(src)
-    
-    # Add step 0 at the beginning
+        # Add step 0 at the beginning
         start_station = int(row["Start_station"])
         step0 = {
             "Stage": 0,
@@ -30,14 +29,14 @@ def preprocess_for_cpsat(output_dir):
             "MaxTime": "100:00:00"
         }
         df = pd.concat([pd.DataFrame([step0]), df], ignore_index=True)
-    
-    # Replace Stage column with running numbers (0,1,2,...)
+        # Replace Stage column with running numbers (0,1,2,...)
         df["Stage"] = range(len(df))
         df.to_csv(dst, index=False, encoding="utf-8")
     
-    # Create cp_sat_batches.csv (copy production.csv, but with the correct name)
+    # Create cp_sat_batches.csv (copy production.csv, but with the correct name and all columns)
     production = pd.read_csv(os.path.join(init_dir, "production.csv"))
     batches_path = os.path.join(cp_sat_dir, "cp_sat_batches.csv")
+    # Säilytä kaikki sarakkeet, myös Start_optimized, jos se on olemassa
     production.to_csv(batches_path, index=False, encoding="utf-8")
     
     # Preprocesses existing data into a format suitable for CP-SAT, but does not invent any new data.
@@ -47,37 +46,35 @@ def preprocess_for_cpsat(output_dir):
     stations = pd.read_csv(os.path.join(init_dir, "stations.csv"))
     transporters = pd.read_csv(os.path.join(init_dir, "transporters.csv"))
     
-    # Create only one transfer time file using physics functions, with a unified name
     from transporter_physics import calculate_physics_transfer_time, calculate_lift_time, calculate_sink_time
     transfer_tasks_path = os.path.join(cp_sat_dir, "cp_sat_transfer_tasks.csv")
-    transporter_row = transporters.iloc[0]  # Assume one hoist, extend if needed
     rows = []
-    for batch_row in production.itertuples():
-        batch_num = int(batch_row.Batch)
-        program_num = int(batch_row.Treatment_program)
-        # Lataa ohjelma
-        prog_file = os.path.join(originals_dir, f"Batch_{batch_num:03d}_Treatment_program_{program_num:03d}.csv")
-        prog_df = pd.read_csv(prog_file)
-        prog_df["Stage"] = range(len(prog_df))
-        for stage_row in prog_df.itertuples():
-            stage = int(stage_row.Stage)
-            from_station = int(stage_row.MinStat) if stage == 0 else int(prog_df.iloc[stage-1].MaxStat)
-            to_station = int(stage_row.MaxStat)
-            lift_time = calculate_lift_time(stations[stations["Number"] == from_station].iloc[0], transporter_row)
-            sink_time = calculate_sink_time(stations[stations["Number"] == to_station].iloc[0], transporter_row)
-            transfer_time = calculate_physics_transfer_time(stations[stations["Number"] == from_station].iloc[0], stations[stations["Number"] == to_station].iloc[0], transporter_row)
-            total_task_time = lift_time + transfer_time + sink_time
-            rows.append({
-                "Batch": batch_num,
-                "Stage": stage,
-                "From_Station": from_station,
-                "To_Station": to_station,
-                "LiftTime": lift_time,
-                "TransferTime": transfer_time,
-                "SinkTime": sink_time,
-                "TotalTaskTime": total_task_time
-            })
+    # Jokaiselle nostimelle kaikki mahdolliset siirrot sen toiminta-alueella
+    for _, transporter_row in transporters.iterrows():
+        transporter_id = int(transporter_row["Transporter_id"])
+        min_x = transporter_row["Min_x_position"]
+        max_x = transporter_row["Max_x_Position"]
+        stations_in_area = stations[(stations["X Position"] >= min_x) & (stations["X Position"] <= max_x)]
+        station_numbers = stations_in_area["Number"].unique()
+        for from_station in station_numbers:
+            for to_station in station_numbers:
+                if from_station != to_station:
+                    lift_time = round(float(calculate_lift_time(stations[stations["Number"] == from_station].iloc[0], transporter_row)), 1)
+                    sink_time = round(float(calculate_sink_time(stations[stations["Number"] == to_station].iloc[0], transporter_row)), 1)
+                    transfer_time = round(float(calculate_physics_transfer_time(stations[stations["Number"] == from_station].iloc[0], stations[stations["Number"] == to_station].iloc[0], transporter_row)), 1)
+                    total_task_time = round(lift_time + transfer_time + sink_time, 1)
+                    rows.append({
+                        "Transporter": transporter_id,
+                        "From_Station": from_station,
+                        "To_Station": to_station,
+                        "LiftTime": lift_time,
+                        "TransferTime": transfer_time,
+                        "SinkTime": sink_time,
+                        "TotalTaskTime": total_task_time
+                    })
     transfer_tasks = pd.DataFrame(rows)
+    # Järjestä sarakkeet haluttuun järjestykseen
+    transfer_tasks = transfer_tasks[["Transporter", "From_Station", "To_Station", "LiftTime", "TransferTime", "SinkTime", "TotalTaskTime"]]
     transfer_tasks.to_csv(transfer_tasks_path, index=False)
 
     # Also save files required by CP-SAT optimization with correct names to cp_sat directory

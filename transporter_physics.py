@@ -30,12 +30,12 @@ def calculate_physics_transfer_time(from_station_row, to_station_row, transporte
         # Oikea kaava: t_accel = sqrt(distance / accel), t_decel = sqrt(distance / decel)
         t_accel = np.sqrt(distance / accel)
         t_decel = np.sqrt(distance / decel)
-        return int(round(t_accel + t_decel))
+        return round(t_accel + t_decel, 1)
     else:
         # Trapezoidinen profiili
         s_const = distance - s_accel - s_decel
         t_const = s_const / max_speed
-        return int(round(t_accel + t_const + t_decel))
+        return round(t_accel + t_const + t_decel, 1)
 
 def calculate_lift_time(station_row, transporter_row):
     device_delay = float(station_row.get('Device_delay', 0))
@@ -49,7 +49,7 @@ def calculate_lift_time(station_row, transporter_row):
     fast_up = (z_total - z_slow - z_slow_end) / z_fast_speed
     slow_up_2 = z_slow_end / z_slow_speed
     lift_time = device_delay + slow_up_1 + fast_up + slow_up_2 + dropping_time
-    return int(round(lift_time))
+    return round(lift_time, 1)
 
 def calculate_sink_time(station_row, transporter_row):
     device_delay = float(station_row.get('Device_delay', 0))
@@ -60,4 +60,4 @@ def calculate_sink_time(station_row, transporter_row):
     fast_down = (z_total - z_slow) / z_fast_speed
     slow_down = z_slow / z_slow_speed
     sink_time = device_delay + fast_down + slow_down
-    return int(round(sink_time))
+    return round(sink_time, 1)

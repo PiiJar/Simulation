@@ -130,9 +130,10 @@ def generate_matrix_pure(output_dir):
 		raise FileNotFoundError(f"Precomputed transfer times file not found: {transfers_path}\nRun preprocessing/optimization first!")
 	try:
 		transfers_df = pd.read_csv(transfers_path)
-		for col in ["Batch", "Stage", "From_Station", "To_Station"]:
-			if col in transfers_df.columns:
-				transfers_df[col] = transfers_df[col].astype(int)
+		# Varmista oikeat sarakkeet ja tyypit
+		transfers_df["Transporter"] = transfers_df["Transporter"].astype(int)
+		transfers_df["From_Station"] = transfers_df["From_Station"].astype(int)
+		transfers_df["To_Station"] = transfers_df["To_Station"].astype(int)
 	except Exception as e:
 		raise RuntimeError(f"Failed to load precomputed transfer times: {e}")
     
@@ -163,30 +164,18 @@ def generate_matrix_pure(output_dir):
 		first_min_stat = int(first_prog_row["MinStat"])
 		first_max_stat = int(first_prog_row["MaxStat"])
         
-		# Valitse kohdestation (Stage 1:n asema)
-		# Jos transfers_df sisältää Sink_stat, käytä sitä
-		temp_sink_stat = None
-		if transfers_df is not None:
-			match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == 0)]
-			if not match.empty and "Sink_stat" in match.columns:
-				try:
-					temp_sink_stat = int(match.iloc[0]["Sink_stat"])
-				except Exception:
-					temp_sink_stat = None
-		# Muuten valitse ensimmäinen vapaa asema MinStat–MaxStat -väliltä
-		if temp_sink_stat is None:
-			temp_sink_stat = select_available_station(first_min_stat, first_max_stat, station_reservations, 
-													  int(start_time_seconds), int(start_time_seconds))
+		# Valitse kohdeasema (Stage 1:n asema): aina ensimmäinen vapaa asema MinStat–MaxStat -väliltä
+		temp_sink_stat = select_available_station(first_min_stat, first_max_stat, station_reservations, 
+												 int(start_time_seconds), int(start_time_seconds))
         
-		# Hae esilasketut siirtoajat Stage 0:lle
-		match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == 0)]
+		# Hae geneerinen siirtoaika Stage 0:lle (nostin, from_station=start_station, to_station=first käsittelyasema)
+		transporter = select_capable_transporter(start_station, temp_sink_stat, stations_df, transporters_df)
+		transporter_id = int(transporter["Transporter_id"])
+		match = transfers_df[(transfers_df["Transporter"] == transporter_id) & (transfers_df["From_Station"] == start_station) & (transfers_df["To_Station"] == temp_sink_stat)]
 		if not match.empty:
-			phase_2_0 = match.iloc[0]["Phase_2"] if "Phase_2" in match.columns else 0
-			phase_3_0 = match.iloc[0]["Phase_3"] if "Phase_3" in match.columns else 0
-			phase_4_0 = match.iloc[0]["Phase_4"] if "Phase_4" in match.columns else 0
+			transport_time_0 = float(match.iloc[0]["TotalTaskTime"])
 		else:
-			raise RuntimeError(f"Precomputed transfer times missing for Batch={batch_id}, Stage=0. Run preprocessing/optimization first!")
-		transport_time_0 = phase_2_0 + phase_3_0 + phase_4_0
+			raise RuntimeError(f"Precomputed transfer time missing for Transporter={transporter_id}, From={start_station}, To={temp_sink_stat}")
 		# Stage 0 ExitTime = start_time (nostin lähtee liikkeelle start-aikaan)
 		stage0_exit = int(start_time_seconds)
         
@@ -203,10 +192,7 @@ def generate_matrix_pure(output_dir):
 			# Stage 0 EntryTime on tuotannon start_time
 			"EntryTime": int(start_time_seconds),
 			"ExitTime": stage0_exit,
-			"Phase_1": 0.0,
-			"Phase_2": phase_2_0,
-			"Phase_3": phase_3_0,
-			"Phase_4": phase_4_0
+			"TransportTime": transport_time_0
 		})
 
 		if start_station not in station_reservations:
@@ -238,19 +224,16 @@ def generate_matrix_pure(output_dir):
 				sink_stat = select_available_station(min_stat, max_stat, station_reservations, temp_entry, temp_exit)
 
 			transporter = select_capable_transporter(lift_stat, sink_stat, stations_df, transporters_df)
+			transporter_id = int(transporter["Transporter_id"])
 			lift_station_row = stations_df[stations_df['Number'] == lift_stat].iloc[0]
 			sink_station_row = stations_df[stations_df['Number'] == sink_stat].iloc[0]
 
-			# Hae esilasketut siirtoajat Stage > 0
-			match = transfers_df[(transfers_df["Batch"] == batch_id) & (transfers_df["Stage"] == stage)]
+			# Hae geneerinen siirtoaika (nostin, from, to)
+			match = transfers_df[(transfers_df["Transporter"] == transporter_id) & (transfers_df["From_Station"] == lift_stat) & (transfers_df["To_Station"] == sink_stat)]
 			if not match.empty:
-				phase_1 = match.iloc[0]["Phase_1"] if "Phase_1" in match.columns else 0
-				phase_2 = match.iloc[0]["Phase_2"] if "Phase_2" in match.columns else 0
-				phase_3 = match.iloc[0]["Phase_3"] if "Phase_3" in match.columns else 0
-				phase_4 = match.iloc[0]["Phase_4"] if "Phase_4" in match.columns else 0
+				transport_time = float(match.iloc[0]["TotalTaskTime"])
 			else:
-				raise RuntimeError(f"Precomputed transfer times missing for Batch={batch_id}, Stage={stage}. Run preprocessing/optimization first!")
-			transport_time = phase_2 + phase_3 + phase_4
+				raise RuntimeError(f"Precomputed transfer time missing for Transporter={transporter_id}, From={lift_stat}, To={sink_stat}")
             
 			# EntryTime = edellinen exit + siirtoaika (P2+P3+P4)
 			# Sink valmis = EntryTime (nostin on juuri laskenut erän)
@@ -258,12 +241,12 @@ def generate_matrix_pure(output_dir):
 			# ExitTime = Sink valmis + CalcTime + Phase_2 (Lift)
             
 			tentative_entry_time = int(previous_exit + transport_time)
-			tentative_exit_time = tentative_entry_time + int(calc_time) + int(phase_2)  # FIX: Lisää Phase_2 (Lift)
+			tentative_exit_time = tentative_entry_time + int(calc_time)
             
 			# KRIITTINEN: Asema on varattu koko ajan kun nostin on siellä:
 			# - Varaustila alkaa: EntryTime - Phase_4 (nostin saapuu)
 			# - Varaustila päättyy: ExitTime (nostin lähtee)
-			reservation_start = tentative_entry_time - int(phase_4)  # Nostin saapuu
+			reservation_start = tentative_entry_time  # Nostin saapuu (ei erillistä phase_4)
 			reservation_end = tentative_exit_time  # Nostin lähtee
             
 			# KRIITTINEN: Nostin ei voi aloittaa uutta tehtävää ennen kuin edellinen valmis!
@@ -273,7 +256,7 @@ def generate_matrix_pure(output_dir):
 				shift = transporter_free_at - reservation_start
 				tentative_entry_time += shift
 				tentative_exit_time += shift
-				reservation_start = tentative_entry_time - int(phase_4)
+				reservation_start = tentative_entry_time
 				reservation_end = tentative_exit_time
             
 			# Tarkista onko sink_stat varattu - JOS ON, ODOTA kunnes vapautuu!
@@ -285,7 +268,7 @@ def generate_matrix_pure(output_dir):
 						shift = res_end - reservation_start
 						tentative_entry_time += shift
 						tentative_exit_time += shift
-						reservation_start = tentative_entry_time - int(phase_4)
+						reservation_start = tentative_entry_time
 						reservation_end = tentative_exit_time
             
 			entry_time = tentative_entry_time
@@ -314,10 +297,7 @@ def generate_matrix_pure(output_dir):
 				"CalcTime": int(calc_time),
 				"EntryTime": entry_time,
 				"ExitTime": exit_time,
-				"Phase_1": round(phase_1, 2),
-				"Phase_2": round(phase_2, 2),
-				"Phase_3": round(phase_3, 2),
-				"Phase_4": round(phase_4, 2)
+				"TransportTime": transport_time
 			})
 
 
@@ -332,11 +312,8 @@ def generate_matrix_pure(output_dir):
 	for col in matrix.select_dtypes(include=['float']).columns:
 		matrix[col] = matrix[col].round(2)
     
-	# Poista Phase_x sarakkeet ennen tallennusta
-	phase_cols = [col for col in matrix.columns if col.startswith("Phase_")]
-	matrix_no_phase = matrix.drop(columns=phase_cols)
 	os.makedirs(os.path.dirname(output_file), exist_ok=True)
-	matrix_no_phase.to_csv(output_file, index=False)
+	matrix.to_csv(output_file, index=False)
     
 	# Lokita toiminta
 	log_file = os.path.join(logs_dir, "simulation_log.csv")

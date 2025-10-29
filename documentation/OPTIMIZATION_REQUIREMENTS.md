@@ -21,6 +21,7 @@ Käsittelyohjelmien ohjelma-askeleiden käsittelyaikoja pitää kunnioittaa. Jok
 
 ### Sääntö 3
 Asemalla voi olla vain yksi erä kerrallaan. Tämä tarkoittaa, että aseman resurssit ovat varattuja yhden erän käsittelyn aikana, eikä päällekkäisyyksiä sallita.
+---> Poikkeuksena aloitusasema (stage 0) tämä lisätään käsittelyohjelmaan vain optimointia varten. kaikkien erien stage 0 minimi aika on 00:00:00 ja maksimia aika 100:00:00. Kuviteellisesti kaikki erät ovat simulaation alkaessa aloitusasemalla, ja lähtevät siiä, kun muiden ehtojen mukaan se on mahdollista.
 
 ### Sääntö 3.1 – Aseman vapautuminen ja nostimen käyttö
 

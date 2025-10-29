@@ -6,10 +6,54 @@ import pandas as pd
 from ortools.sat.python import cp_model
 
 def cp_sat_optimization(output_dir, hard_order_constraint=False):
+    # (Poistettu: ei enää pakoteta pienimmän erän aloitusta nollaan)
     # 1. Lue snapshotin tiedot
     batches = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_batches.csv"))
     stations = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_stations.csv"))
     transfers = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_transfer_tasks.csv"))
+    transporters = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
+    treatment_programs = {}
+    for batch in batches["Batch"]:
+        batch_int = int(batch)
+        fname = os.path.join(output_dir, "cp_sat", f"cp_sat_treatment_program_{batch_int}.csv")
+        df = pd.read_csv(fname)
+        treatment_programs[batch_int] = df
+
+    model = cp_model.CpModel()
+    MAX_TIME = 10**6
+
+    # Vaihe 1: Käsittelyjärjestys ja muuttujat
+    # Jokaiselle (batch, stage): start, end, duration, station
+    task_vars = {}
+    for batch in batches["Batch"]:
+        batch_int = int(batch)
+        program = treatment_programs[batch_int]
+        for idx, row in program.iterrows():
+            stage = int(row["Stage"])
+            min_stat = int(row["MinStat"])
+            max_stat = int(row["MaxStat"])
+            group = stations[stations["Number"] == min_stat]["Group"].iloc[0]
+            possible_stations = stations[(stations["Number"] >= min_stat) & (stations["Number"] <= max_stat) & (stations["Group"] == group)]["Number"].tolist()
+            min_time = int(pd.to_timedelta(row["MinTime"]).total_seconds())
+            max_time = int(pd.to_timedelta(row["MaxTime"]).total_seconds())
+            duration = model.NewIntVar(min_time, max_time, f"duration_{batch_int}_{stage}")
+            start = model.NewIntVar(0, MAX_TIME, f"start_{batch_int}_{stage}")
+            end = model.NewIntVar(0, MAX_TIME, f"end_{batch_int}_{stage}")
+            station_domain = cp_model.Domain.FromValues(possible_stations)
+            station = model.NewIntVarFromDomain(station_domain, f"station_{batch_int}_{stage}")
+            model.Add(end == start + duration)
+            task_vars[(batch_int, stage)] = {"start": start, "end": end, "duration": duration, "station": station, "possible_stations": possible_stations}
+
+    # Pakota, että ensimmäinen tuotantotapahtuma (minkä tahansa erän Stage 0) alkaa ajassa 0:00:00
+    stage0_starts = [vars["start"] for (batch, stage), vars in task_vars.items() if stage == 0]
+    if stage0_starts:
+        model.AddMinEquality(model.NewIntVar(0, MAX_TIME, "first_start"), stage0_starts)
+        model.AddMinEquality(0, stage0_starts)
+    # 1. Lue snapshotin tiedot
+    batches = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_batches.csv"))
+    stations = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_stations.csv"))
+    transfers = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_transfer_tasks.csv"))
+    transporters = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
     treatment_programs = {}
     for batch in batches["Batch"]:
         batch_int = int(batch)
@@ -44,6 +88,14 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
             model.Add(end == start + duration)
             task_vars[(batch_int, stage)] = {"start": start, "end": end, "duration": duration, "station": station, "possible_stations": possible_stations}
 
+
+    # Pakota, että jos mikään muu ei rajoita, ensimmäisen erän ensimmäinen oikea vaihe (stage 1) alkaa ajassa 0
+    stage1_starts = [(batch, vars["start"]) for (batch, stage), vars in task_vars.items() if stage == 1]
+    if stage1_starts:
+        min_stage1_start = model.NewIntVar(0, MAX_TIME, "min_stage1_start")
+        model.AddMinEquality(min_stage1_start, [s for _, s in stage1_starts])
+        model.Add(min_stage1_start == 0)
+
     # Kovien järjestysrajoitteiden lisäys vain jos hard_order_constraint=True
     if hard_order_constraint:
         # Käytetään batch-numeroiden nousevaa järjestystä
@@ -63,10 +115,12 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
             this_stage = stages[i]
             model.Add(task_vars[(batch_int, this_stage)]["start"] >= task_vars[(batch_int, prev_stage)]["end"])
 
-    # Vaihe 3: Aseman yksikäyttöisyys (AddNoOverlap)
+    # Vaihe 3: Aseman yksikäyttöisyys (AddNoOverlap, mutta ei aloitusasemalle/stage 0)
     for station in stations["Number"]:
         intervals = []
         for (batch, stage), vars in task_vars.items():
+            if stage == 0:
+                continue  # Älä rajoita aloitusasemaa
             if station in vars["possible_stations"]:
                 is_this_station = model.NewBoolVar(f"is_{batch}_{stage}_at_{station}")
                 model.Add(vars["station"] == station).OnlyEnforceIf(is_this_station)
@@ -76,8 +130,9 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
         if intervals:
             model.AddNoOverlap(intervals)
 
-    # Vaihe 4: Nostimen siirrot eksplisiittisesti ja siirron kesto aina transfer-tiedoston mukainen
-    transporter_intervals = []
+    # Vaihe 4: Nostimen siirrot eksplisiittisesti ja siirron kesto transfer-tiedoston mukainen (korjattu logiikka)
+    # Kerätään nostinintervallit per nostin
+    transporter_intervals_by_id = {}
     for batch in batches["Batch"]:
         batch_int = int(batch)
         program = treatment_programs[batch_int]
@@ -90,28 +145,44 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
             transfer_bools = []
             for from_stat in prev_vars["possible_stations"]:
                 for to_stat in this_vars["possible_stations"]:
-                    mask = (transfers["From_Station"] == from_stat) & (transfers["To_Station"] == to_stat)
-                    if not mask.any():
-                        continue
-                    transfer_time = int(transfers[mask].iloc[0]["TotalTaskTime"])
-                    is_transfer = model.NewBoolVar(f"is_transfer_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}")
-                    model.Add(prev_vars["station"] == from_stat).OnlyEnforceIf(is_transfer)
-                    model.Add(prev_vars["station"] != from_stat).OnlyEnforceIf(is_transfer.Not())
-                    model.Add(this_vars["station"] == to_stat).OnlyEnforceIf(is_transfer)
-                    model.Add(this_vars["station"] != to_stat).OnlyEnforceIf(is_transfer.Not())
-                    trans_start = prev_vars["end"]
-                    trans_end = model.NewIntVar(0, MAX_TIME, f"trans_end_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}")
-                    model.Add(trans_end == trans_start + transfer_time).OnlyEnforceIf(is_transfer)
-                    model.Add(this_vars["start"] == trans_end).OnlyEnforceIf(is_transfer)
-                    interval = model.NewOptionalIntervalVar(trans_start, transfer_time, trans_end, is_transfer, f"trans_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}")
-                    transporter_intervals.append(interval)
-                    transfer_bools.append(is_transfer)
+                    for _, transporter in transporters.iterrows():
+                        min_x = transporter['Min_x_position']
+                        max_x = transporter['Max_x_Position']
+                        stations_df = stations
+                        lift_x = stations_df[stations_df['Number'] == from_stat]['X Position'].iloc[0]
+                        sink_x = stations_df[stations_df['Number'] == to_stat]['X Position'].iloc[0]
+                        if min_x <= lift_x <= max_x and min_x <= sink_x <= max_x:
+                            transporter_id = int(transporter['Transporter_id'])
+                            mask = (
+                                (transfers["Transporter"] == transporter_id) &
+                                (transfers["From_Station"] == from_stat) &
+                                (transfers["To_Station"] == to_stat)
+                            )
+                            if not mask.any():
+                                continue
+                            transfer_time = float(transfers[mask].iloc[0]["TotalTaskTime"])
+                            is_transfer = model.NewBoolVar(f"is_transfer_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}_T{transporter_id}")
+                            model.Add(prev_vars["station"] == from_stat).OnlyEnforceIf(is_transfer)
+                            model.Add(prev_vars["station"] != from_stat).OnlyEnforceIf(is_transfer.Not())
+                            model.Add(this_vars["station"] == to_stat).OnlyEnforceIf(is_transfer)
+                            model.Add(this_vars["station"] != to_stat).OnlyEnforceIf(is_transfer.Not())
+                            trans_start = prev_vars["end"]
+                            trans_end = model.NewIntVar(0, MAX_TIME, f"trans_end_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}_T{transporter_id}")
+                            model.Add(trans_end == trans_start + int(round(transfer_time))).OnlyEnforceIf(is_transfer)
+                            model.Add(this_vars["start"] == trans_end).OnlyEnforceIf(is_transfer)
+                            interval = model.NewOptionalIntervalVar(trans_start, int(round(transfer_time)), trans_end, is_transfer, f"trans_{batch_int}_{prev_stage}_{this_stage}_{from_stat}_{to_stat}_T{transporter_id}")
+                            if transporter_id not in transporter_intervals_by_id:
+                                transporter_intervals_by_id[transporter_id] = []
+                            transporter_intervals_by_id[transporter_id].append(interval)
+                            transfer_bools.append(is_transfer)
+                            break  # Käytä vain ensimmäinen sopiva nostin
             # Vain yksi siirto voi olla aktiivinen per batch, stage
             if transfer_bools:
                 model.Add(sum(transfer_bools) == 1)
-    # Vaihe 5: Nostimen yksikäyttöisyys (AddNoOverlap nostimelle, Sääntö 4.1)
-    if transporter_intervals:
-        model.AddNoOverlap(transporter_intervals)
+    # Vaihe 5: Nostimen yksikäyttöisyys (AddNoOverlap per nostin, Sääntö 4.1)
+    for transporter_id, intervals in transporter_intervals_by_id.items():
+        if intervals:
+            model.AddNoOverlap(intervals)
 
     # Vaihe 6: Optimointikriteeri (minimoi makespan)
     last_ends = []

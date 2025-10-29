@@ -17,6 +17,7 @@ def main():
     # --- 1. Initialization ---
     # Create simulation directory and copy all input data
     output_dir = create_simulation_directory()
+    init_logger(output_dir)
     generate_batch_treatment_programs(output_dir)
 
     # --- 2. Preprocessing ---
@@ -29,13 +30,12 @@ def main():
     solve_and_save(model, task_vars, treatment_programs, output_dir)
 
     # --- 4. Results ---
-    # Generate stretched matrix and transporter movements
+    # Generate matrix and transporter movements
     generate_matrix(output_dir)
-    # extract_transporter_tasks(output_dir)
-    # create_detailed_movements(output_dir)
+    extract_transporter_tasks(output_dir)
+    create_detailed_movements(output_dir)
 
     # Visualization and reporting
-    # init_logger(output_dir)
     # visualize_stretched_matrix(output_dir)
     # generate_production_report(output_dir)
 

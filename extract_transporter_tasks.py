@@ -46,11 +46,11 @@ def extract_transporter_tasks(output_dir):
     logger.log("STEP", "STEP 8.6 STARTED: EXTRACT TRANSPORTER TASKS FROM STRETCHED MATRIX")
     
     logs_dir = os.path.join(output_dir, "logs")
-    matrix_file = os.path.join(logs_dir, "line_matrix_stretched.csv")
+    matrix_file = os.path.join(logs_dir, "line_matrix.csv")
     
     if not os.path.exists(matrix_file):
-        logger.log_error(f"line_matrix_stretched.csv ei löydy: {matrix_file}")
-        raise FileNotFoundError(f"line_matrix_stretched.csv ei löydy: {matrix_file}")
+        logger.log_error(f"line_matrix.csv ei löydy: {matrix_file}")
+        raise FileNotFoundError(f"line_matrix.csv ei löydy: {matrix_file}")
     
     # Lataa asema- ja nostintiedot nostinvalintaa varten
     stations_file = os.path.join(output_dir, "initialization", "stations.csv")
@@ -369,7 +369,7 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_1_start']),  # prev_stop = next_start
                 'From_Station': phase_1_from_station,
                 'To_Station': phase_1_from_station,
-                'Description': 'Odotus/paikoillaan'
+                'Description': 'Idle'
             },
             {
                 'Transporter': transporter_id,
@@ -379,7 +379,7 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_2_start']),  # prev_stop = next_start
                 'From_Station': phase_1_from_station,
                 'To_Station': int(task['Lift_stat']),
-                'Description': 'Siirto nostoasemalle'
+                'Description': 'Move to lifting station'
             },
             {
                 'Transporter': transporter_id,
@@ -389,7 +389,7 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_3_start']),  # prev_stop = next_start
                 'From_Station': int(task['Lift_stat']),
                 'To_Station': int(task['Lift_stat']),
-                'Description': 'Nostaminen'
+                'Description': 'Lifting'
             },
             {
                 'Transporter': transporter_id,
@@ -399,7 +399,7 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_4_start']),  # prev_stop = next_start
                 'From_Station': int(task['Lift_stat']),
                 'To_Station': int(task['Sink_stat']),
-                'Description': 'Siirto laskuasemalle'
+                'Description': 'Move to sinking station'
             },
             {
                 'Transporter': transporter_id,
@@ -409,7 +409,7 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_4_stop']),  # Ainoa jolla on erillinen stop-aika
                 'From_Station': int(task['Sink_stat']),
                 'To_Station': int(task['Sink_stat']),
-                'Description': 'Laskeminen'
+                'Description': 'Sinking'
             }
         ])
         
@@ -494,9 +494,8 @@ def create_detailed_movements(output_dir):
                     'End_Time': return_end_time,
                     'From_Station': current_location,
                     'To_Station': start_position,
-                    'Description': 'Siirto alkupaikkaan'
+                    'Description': 'Move to lifting station'
                 })
-                
                 # Lisää Phase 0: Odotus alkupaikassa simuloinnin loppuun
                 movements.append({
                     'Transporter': transporter_id,
@@ -506,7 +505,7 @@ def create_detailed_movements(output_dir):
                     'End_Time': max(global_final_time, return_end_time),  # Varmista ettei mene negatiiviseksi
                     'From_Station': start_position,
                     'To_Station': start_position,
-                    'Description': 'Odotus simuloinnin lopussa'
+                    'Description': 'Idle'
                 })
             else:
                 # Nostin on jo alkupaikassa, lisää vain Phase 0 odotus
@@ -518,23 +517,23 @@ def create_detailed_movements(output_dir):
                     'End_Time': max(global_final_time, transporter_final_times[transporter_id]),  # Varmista ettei mene negatiiviseksi
                     'From_Station': start_position,
                     'To_Station': start_position,
-                    'Description': 'Odotus simuloinnin lopussa'
+                    'Description': 'Idle'
                 })
     
     # Tallenna DataFrame
     movements_df = pd.DataFrame(movements)
-    
-    # Järjestä: Transporter -> Batch -> Phase (säilytä vaihejärjestys)
-    movements_df = movements_df.sort_values(['Transporter', 'Batch', 'Phase']).reset_index(drop=True)
-    
+
+    # Järjestä: Transporter -> Start_Time -> Phase (kronologinen liikejärjestys)
+    movements_df = movements_df.sort_values(['Transporter', 'Start_Time', 'Phase']).reset_index(drop=True)
+
     # Päivitä Movement_ID peräkkäiseksi
     movements_df['Movement_ID'] = range(1, len(movements_df) + 1)
-    
+
     output_file = os.path.join(logs_dir, "transporters_movement.csv")
     movements_df.to_csv(output_file, index=False)
-    
+
     logger.log("STEP", "STEP 8.7 COMPLETED: CREATE DETAILED TRANSPORTER MOVEMENTS")
-    
+
     return movements_df
 
 if __name__ == "__main__":
