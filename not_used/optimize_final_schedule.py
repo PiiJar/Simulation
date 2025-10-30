@@ -211,17 +211,17 @@ def update_production_and_programs(df_original, df_optimized, output_dir, logger
     
     # Removed Lift_time-based shift logic: not present in program files
     
-    # Päivitä Production.csv: lisää/ylikirjoita Start_optimized-sarake Stage 1:n alkamisajalla
+    # Päivitä Production.csv: lisää/ylikirjoita Start_optimized-sarake Stage 0:n alkamisajalla (eli todellinen lähtöaika)
     production_file = os.path.join(output_dir, "initialization", "production.csv")
     if os.path.exists(production_file):
         prod_df = pd.read_csv(production_file)
         schedule_file = os.path.join(output_dir, "logs", "cp_sat_optimization_schedule.csv")
         if os.path.exists(schedule_file):
             schedule_df = pd.read_csv(schedule_file)
-            # Poimi Stage 1:n Start jokaiselle batchille
+            # Poimi Stage 0:n Start jokaiselle batchille
             start_optimized = {}
             for _, row in schedule_df.iterrows():
-                if int(row["Stage"]) == 1:
+                if int(row["Stage"]) == 0:
                     batch = row["Batch"]
                     start_sec = int(row["Start"])
                     # Muunna sekunnit HH:MM:SS

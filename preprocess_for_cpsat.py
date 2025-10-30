@@ -26,9 +26,15 @@ def preprocess_for_cpsat(output_dir):
             "MinStat": start_station,
             "MaxStat": start_station,
             "MinTime": "00:00:00",
-            "MaxTime": "100:00:00"
+            "MaxTime": "100:00:00",
+            "CalcTime": "00:00:00"
         }
-        df = pd.concat([pd.DataFrame([step0]), df], ignore_index=True)
+        # Varmista, että CalcTime on olemassa myös muissa riveissä
+        if "CalcTime" not in df.columns:
+            df["CalcTime"] = df["MinTime"]
+        # Yhdistä oikeassa sarakejärjestyksessä
+        columns = ["Stage", "MinStat", "MaxStat", "MinTime", "MaxTime", "CalcTime"]
+        df = pd.concat([pd.DataFrame([step0], columns=columns), df[columns]], ignore_index=True)
         # Replace Stage column with running numbers (0,1,2,...)
         df["Stage"] = range(len(df))
         df.to_csv(dst, index=False, encoding="utf-8")

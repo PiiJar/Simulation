@@ -26,9 +26,7 @@ def create_simulation_directory(base_dir="output"):
     full_path = os.path.join(base_dir, name)
     os.makedirs(full_path, exist_ok=True)
 
-    # Create initialization/treatment_program_originals if it does not exist
-    tpo_dir = os.path.join("initialization", "treatment_program_originals")
-    os.makedirs(tpo_dir, exist_ok=True)
+    # (Poistettu: treatment_program_originals-kansiota ei luoda projektin juureen)
 
     # Create cp_sat and treatment_program_optimized under the simulation directory
     cp_sat_dir = os.path.join(full_path, "cp_sat")

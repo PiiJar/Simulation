@@ -89,12 +89,7 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
             task_vars[(batch_int, stage)] = {"start": start, "end": end, "duration": duration, "station": station, "possible_stations": possible_stations}
 
 
-    # Pakota, että jos mikään muu ei rajoita, ensimmäisen erän ensimmäinen oikea vaihe (stage 1) alkaa ajassa 0
-    stage1_starts = [(batch, vars["start"]) for (batch, stage), vars in task_vars.items() if stage == 1]
-    if stage1_starts:
-        min_stage1_start = model.NewIntVar(0, MAX_TIME, "min_stage1_start")
-        model.AddMinEquality(min_stage1_start, [s for _, s in stage1_starts])
-        model.Add(min_stage1_start == 0)
+    # (Poistettu: ei pakoteta stage 1:n alkuaikaa, koska se määräytyy edellisen vaiheen ja siirron mukaan)
 
     # Kovien järjestysrajoitteiden lisäys vain jos hard_order_constraint=True
     if hard_order_constraint:
@@ -240,6 +235,12 @@ def solve_and_save(model, task_vars, treatment_programs, output_dir):
     logs_dir = os.path.join(output_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
     result_path = os.path.join(logs_dir, "cp_sat_optimization_schedule.csv")
+    # Kirjoita status lokiin
+    log_file = os.path.join(logs_dir, "simulation_log.csv")
+    from datetime import datetime
+    with open(log_file, "a", encoding="utf-8") as f:
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        f.write(f"{timestamp},OPTIMIZATION_STATUS,{status_str}\n")
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return
     results = []

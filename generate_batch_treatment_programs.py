@@ -29,27 +29,10 @@ def generate_batch_treatment_programs(output_dir):
         source_file = os.path.join(output_dir, "initialization", f"treatment_program_{treatment_program}.csv")
         if not os.path.exists(source_file):
             raise FileNotFoundError(f"Treatment program not found: {source_file}")
+        # Lue ohjelma ja lisää CalcTime, jos puuttuu
         program_df = pd.read_csv(source_file)
-        # Ensure MinTime exists
-        if "MinTime" not in program_df.columns:
-            raise ValueError(f"MinTime column missing from file: {source_file}")
-        # Add step 0 at the beginning: station = Start_station, MinTime=0, MaxTime=360000 (100h), CalcTime=0
-        start_station = int(row["Start_station"])
-        step0 = {
-            "Stage": 0,
-            "MinStat": start_station,
-            "MaxStat": start_station,
-            "MinTime": "00:00:00",
-            "MaxTime": "100:00:00",
-            "CalcTime": "00:00:00"
-        }
-        columns = ["Stage", "MinStat", "MaxStat", "MinTime", "MaxTime", "CalcTime"]
-        program_df["CalcTime"] = program_df["MinTime"]
-        program_df = program_df[columns]
-        program_df = pd.concat([
-            pd.DataFrame([step0], columns=columns),
-            program_df
-        ], ignore_index=True)
+        if "CalcTime" not in program_df.columns:
+            program_df["CalcTime"] = program_df["MinTime"]
         target_file = os.path.join(originals_dir, f"Batch_{batch_id}_Treatment_program_{treatment_program}.csv")
         program_df.to_csv(target_file, index=False)
         created_files.append(os.path.basename(target_file))

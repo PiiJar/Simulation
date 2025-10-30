@@ -1,3 +1,5 @@
+
+
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -10,7 +12,7 @@ def visualize_matrix(output_dir):
     logger.log_data("Stretched matrix visualization started")
     logs_dir = os.path.join(output_dir, "logs")
     log_file = os.path.join(logs_dir, "simulation_log.csv")
-    matrix_file = os.path.join(logs_dir, "line_matrix.csv")
+    matrix_file = os.path.join(logs_dir, "line_matrix_stretched.csv")
     stations_file = os.path.join(output_dir, "initialization", "stations.csv")
 
     for file_path in [matrix_file, stations_file]:

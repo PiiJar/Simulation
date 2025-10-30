@@ -26,17 +26,17 @@ def main():
 
     # --- 3. Optimization / Simulation ---
     # Solve production scheduling with CP-SAT model (hard order constraint)
-    # model, task_vars, treatment_programs = cp_sat_optimization(output_dir, hard_order_constraint=True)
-    # solve_and_save(model, task_vars, treatment_programs, output_dir)
+    model, task_vars, treatment_programs = cp_sat_optimization(output_dir, hard_order_constraint=True)
+    solve_and_save(model, task_vars, treatment_programs, output_dir)
 
     # --- 4. Results ---
     # Generate matrix and transporter movements
-    # generate_matrix(output_dir)
-    # extract_transporter_tasks(output_dir)
-    # create_detailed_movements(output_dir)
+    generate_matrix(output_dir)
+    extract_transporter_tasks(output_dir)
+    create_detailed_movements(output_dir)
 
     # Visualization and reporting
-    # visualize_matrix(output_dir)
+    visualize_matrix(output_dir)
     # generate_production_report(output_dir)
 
     print("[PIPELINE] Simulation and optimization pipeline completed.")
