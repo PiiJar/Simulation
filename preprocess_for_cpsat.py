@@ -12,7 +12,7 @@ def preprocess_for_cpsat(output_dir):
     production_df = pd.read_csv(os.path.join(init_dir, "production.csv"))
     
     # For each batch, create the correct program file based on production.csv
-    originals_dir = os.path.join("initialization", "treatment_program_originals")
+    originals_dir = os.path.join(output_dir, "initialization", "treatment_program_originals")
     for _, row in production_df.iterrows():
         batch_num = int(row["Batch"])
         program_num = int(row["Treatment_program"])
@@ -58,20 +58,22 @@ def preprocess_for_cpsat(output_dir):
         station_numbers = stations_in_area["Number"].unique()
         for from_station in station_numbers:
             for to_station in station_numbers:
-                if from_station != to_station:
-                    lift_time = round(float(calculate_lift_time(stations[stations["Number"] == from_station].iloc[0], transporter_row)), 1)
-                    sink_time = round(float(calculate_sink_time(stations[stations["Number"] == to_station].iloc[0], transporter_row)), 1)
+                lift_time = round(float(calculate_lift_time(stations[stations["Number"] == from_station].iloc[0], transporter_row)), 1)
+                sink_time = round(float(calculate_sink_time(stations[stations["Number"] == to_station].iloc[0], transporter_row)), 1)
+                if from_station == to_station:
+                    transfer_time = 0.0
+                else:
                     transfer_time = round(float(calculate_physics_transfer_time(stations[stations["Number"] == from_station].iloc[0], stations[stations["Number"] == to_station].iloc[0], transporter_row)), 1)
-                    total_task_time = round(lift_time + transfer_time + sink_time, 1)
-                    rows.append({
-                        "Transporter": transporter_id,
-                        "From_Station": from_station,
-                        "To_Station": to_station,
-                        "LiftTime": lift_time,
-                        "TransferTime": transfer_time,
-                        "SinkTime": sink_time,
-                        "TotalTaskTime": total_task_time
-                    })
+                total_task_time = round(lift_time + transfer_time + sink_time, 1)
+                rows.append({
+                    "Transporter": transporter_id,
+                    "From_Station": from_station,
+                    "To_Station": to_station,
+                    "LiftTime": lift_time,
+                    "TransferTime": transfer_time,
+                    "SinkTime": sink_time,
+                    "TotalTaskTime": total_task_time
+                })
     transfer_tasks = pd.DataFrame(rows)
     # Järjestä sarakkeet haluttuun järjestykseen
     transfer_tasks = transfer_tasks[["Transporter", "From_Station", "To_Station", "LiftTime", "TransferTime", "SinkTime", "TotalTaskTime"]]

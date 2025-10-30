@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from simulation_logger import get_logger
 
-def visualize_stretched_matrix(output_dir):
+def visualize_matrix(output_dir):
     logger = get_logger()
     if logger is None:
         raise RuntimeError("Logger is not initialized. Please initialize logger in main pipeline before calling this function.")

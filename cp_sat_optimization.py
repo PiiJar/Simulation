@@ -145,6 +145,8 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
             transfer_bools = []
             for from_stat in prev_vars["possible_stations"]:
                 for to_stat in this_vars["possible_stations"]:
+                    if from_stat == to_stat:
+                        continue  # Skip same-station transfers
                     for _, transporter in transporters.iterrows():
                         min_x = transporter['Min_x_position']
                         max_x = transporter['Max_x_Position']

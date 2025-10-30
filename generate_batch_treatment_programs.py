@@ -8,9 +8,16 @@ def generate_batch_treatment_programs(output_dir):
     Create the original_programs folder and copy treatment programs batch-wise according to Production.csv.
     Also copy all programs to the optimized_programs folder (pipeline robustness).
     """
-    # Create original treatment programs in initialization/treatment_program_originals directory
-    originals_dir = os.path.join("initialization", "treatment_program_originals")
-    os.makedirs(originals_dir, exist_ok=True)
+    # Create original treatment programs in output_dir/initialization/treatment_program_originals directory (unique per simulation)
+    originals_dir = os.path.join(output_dir, "initialization", "treatment_program_originals")
+    # Remove old contents if exists (ensure uniqueness)
+    if os.path.exists(originals_dir):
+        for f in os.listdir(originals_dir):
+            fp = os.path.join(originals_dir, f)
+            if os.path.isfile(fp):
+                os.remove(fp)
+    else:
+        os.makedirs(originals_dir, exist_ok=True)
     production_file = os.path.join(output_dir, "initialization", "production.csv")
     if not os.path.exists(production_file):
         raise FileNotFoundError(f"production.csv not found: {production_file}")
@@ -23,11 +30,9 @@ def generate_batch_treatment_programs(output_dir):
         if not os.path.exists(source_file):
             raise FileNotFoundError(f"Treatment program not found: {source_file}")
         program_df = pd.read_csv(source_file)
-        
         # Ensure MinTime exists
         if "MinTime" not in program_df.columns:
             raise ValueError(f"MinTime column missing from file: {source_file}")
-        
         # Add step 0 at the beginning: station = Start_station, MinTime=0, MaxTime=360000 (100h), CalcTime=0
         start_station = int(row["Start_station"])
         step0 = {
@@ -49,7 +54,7 @@ def generate_batch_treatment_programs(output_dir):
         program_df.to_csv(target_file, index=False)
         created_files.append(os.path.basename(target_file))
     
-    # Copy all programs to cp_sat/treatment_program_optimized directory
+    # Copy all programs to cp_sat/treatment_program_optimized directory (unique per simulation)
     cp_sat_dir = os.path.join(output_dir, "cp_sat")
     optimized_dir = os.path.join(cp_sat_dir, "treatment_program_optimized")
     os.makedirs(optimized_dir, exist_ok=True)
