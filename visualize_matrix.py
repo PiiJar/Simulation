@@ -161,7 +161,7 @@ def visualize_matrix(output_dir):
                             text_x_position = (visible_start + visible_end) / 2
                             time_text = f"{min_time_prog}/{calc_time_prog}/{max_time_prog}"
                             logger.log_data(f"Annotating stage {stage_int} at station {y}: {time_text}")
-                            ax.text(text_x_position, y + 0.15, time_text, color=time_color, fontsize=5, ha='center', va='bottom', fontweight='normal', alpha=0.8)
+                            ax.text(text_x_position, y + 0.08, time_text, color=time_color, fontsize=7, ha='center', va='bottom', fontweight='normal', alpha=0.8)
                     else:
                         logger.log_data(f"NO ANNOTATION: stage {stage_int} at station {y} - min:{min_time_prog} calc:{calc_time_prog} max:{max_time_prog}")
                     # (poistettu duplikaatti annotaatio)
@@ -192,7 +192,7 @@ def visualize_matrix(output_dir):
         # Legend poistettu käyttäjän pyynnöstä
 
         # Save chart for this page
-    output_file = os.path.join(reports_dir, f"matrix_timeline_page_{page+1}.png")
+        output_file = os.path.join(reports_dir, f"matrix_timeline_page_{page+1}.png")
         plt.tight_layout()
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         plt.close(fig)

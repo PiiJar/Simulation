@@ -110,6 +110,10 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
             this_stage = stages[i]
             model.Add(task_vars[(batch_int, this_stage)]["start"] >= task_vars[(batch_int, prev_stage)]["end"])
 
+    # --- Korjaus: viimeisen vaiheen duration voi olla 0, mutta siirto viimeiselle asemalle tehdään aina ---
+    # Ei vaadita, että viimeisen vaiheen duration kattaa siirtoajan, vaan siirto tehdään aina, vaikka duration=0
+    # Tämä vaikuttaa vain siirtologiikkaan, ei duration-muuttujaan
+
     # Vaihe 3: Aseman yksikäyttöisyys (AddNoOverlap, mutta ei aloitusasemalle/stage 0)
     for station in stations["Number"]:
         intervals = []
@@ -125,9 +129,10 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
         if intervals:
             model.AddNoOverlap(intervals)
 
-    # Vaihe 4: Nostimen siirrot eksplisiittisesti ja siirron kesto transfer-tiedoston mukainen (korjattu logiikka)
-    # Kerätään nostinintervallit per nostin
+    # Vaihe 4: Nostimen siirrot ja deadhead-siirtymät eksplisiittisesti
     transporter_intervals_by_id = {}
+    deadhead_intervals_by_id = {}
+    last_transporter_task_end = {}  # transporter_id -> end time of last task
     for batch in batches["Batch"]:
         batch_int = int(batch)
         program = treatment_programs[batch_int]
@@ -172,10 +177,44 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
                                 transporter_intervals_by_id[transporter_id] = []
                             transporter_intervals_by_id[transporter_id].append(interval)
                             transfer_bools.append(is_transfer)
+                            # DEADHEAD: Jos tämä ei ole ensimmäinen siirto tälle nostimelle, lisää deadhead-siirtymä edellisen tehtävän jälkeen
+                            if transporter_id in last_transporter_task_end:
+                                prev_end = last_transporter_task_end[transporter_id]
+                                # Deadhead-siirtymä: edellisen tehtävän päättymisestä tämän tehtävän alkuun (nostin siirtyy ilman kuormaa)
+                                deadhead_start = prev_end
+                                deadhead_end = trans_start
+                                prev_to_stat_val = from_stat
+                                mask_deadhead = (
+                                    (transfers["Transporter"] == transporter_id) &
+                                    (transfers["From_Station"] == prev_to_stat_val) &
+                                    (transfers["To_Station"] == from_stat)
+                                )
+                                deadhead_time = None
+                                if mask_deadhead.any():
+                                    deadhead_time = int(round(float(transfers[mask_deadhead].iloc[0]["TransferTime"])))
+                                elif prev_to_stat_val == from_stat:
+                                    deadhead_time = 0  # paikallaan odotus
+                                else:
+                                    deadhead_time = None  # ei reittiä, ei mallinneta deadheadia
+                                if deadhead_time is not None:
+                                    deadhead_duration = model.NewIntVar(deadhead_time, deadhead_time, f"deadhead_{batch_int}_{prev_stage}_{this_stage}_T{transporter_id}")
+                                    model.Add(deadhead_end == deadhead_start + deadhead_duration).OnlyEnforceIf(is_transfer)
+                                    deadhead_interval = model.NewOptionalIntervalVar(deadhead_start, deadhead_duration, deadhead_end, is_transfer, f"deadhead_{batch_int}_{prev_stage}_{this_stage}_T{transporter_id}")
+                                    if transporter_id not in deadhead_intervals_by_id:
+                                        deadhead_intervals_by_id[transporter_id] = []
+                                    deadhead_intervals_by_id[transporter_id].append(deadhead_interval)
+                            last_transporter_task_end[transporter_id] = trans_end
                             break  # Käytä vain ensimmäinen sopiva nostin
             # Vain yksi siirto voi olla aktiivinen per batch, stage
             if transfer_bools:
                 model.Add(sum(transfer_bools) == 1)
+    # AddNoOverlap kaikille nostimen tehtäville ja deadhead-siirtymille
+    for transporter_id in transporter_intervals_by_id:
+        intervals = transporter_intervals_by_id[transporter_id]
+        if transporter_id in deadhead_intervals_by_id:
+            intervals += deadhead_intervals_by_id[transporter_id]
+        if intervals:
+            model.AddNoOverlap(intervals)
     # Vaihe 5: Nostimen yksikäyttöisyys (AddNoOverlap per nostin, Sääntö 4.1)
     for transporter_id, intervals in transporter_intervals_by_id.items():
         if intervals:
@@ -212,16 +251,19 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
         else:
             order_penalty = model.NewIntVar(0, 0, "order_penalty")
             model.Add(order_penalty == 0)
-        # Ensisijaisesti minimoi makespan, toissijaisesti järjestysrikkomukset
-        model.Minimize(makespan * (len(batch_ids)+1) + order_penalty)
+    # Vaatimusten mukaisesti: minimoi vain makespan, toissijaisesti järjestysrikkomukset
+    model.Minimize(makespan * 10000 + order_penalty * 100)
 
     # Vaihe 7: Erityistapaukset (askel 0)
     # (Tässä vaiheessa askel 0 sallitaan päällekkäisyys, koska AddNoOverlap ei rajoita sitä)
+    # Suorita optimointi ja tallenna tulokset heti pipeline-vaiheessa
+    solve_and_save(model, task_vars, treatment_programs, output_dir)
     return model, task_vars, treatment_programs
 def solve_and_save(model, task_vars, treatment_programs, output_dir):
     from ortools.sat.python import cp_model
     import pandas as pd
     import os
+    from datetime import datetime
     solver = cp_model.CpSolver()
     status = solver.Solve(model)
     # Debug: tulosta batchien vaiheen 0 start ja end arvot
@@ -235,13 +277,20 @@ def solve_and_save(model, task_vars, treatment_programs, output_dir):
     logs_dir = os.path.join(output_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
     result_path = os.path.join(logs_dir, "cp_sat_optimization_schedule.csv")
-    # Kirjoita status lokiin
-    log_file = os.path.join(logs_dir, "simulation_log.csv")
-    from datetime import datetime
-    with open(log_file, "a", encoding="utf-8") as f:
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        f.write(f"{timestamp},OPTIMIZATION_STATUS,{status_str}\n")
+    # Käytä simulation_loggeria yhtenäiseen aikaleimaan
+    from simulation_logger import get_logger
+    logger = get_logger()
+    logger.log('OPTIMIZATION_STATUS', f'{status_str.lower()}')
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        # Kirjoita tarkempi syy, jos epäonnistui
+        if status == cp_model.INFEASIBLE:
+            logger.log('ERROR', 'cp-sat infeasible: tarkista siirtorajoitteet, duration-rajat ja mahdolliset asemat')
+        elif status == cp_model.MODEL_INVALID:
+            logger.log('ERROR', 'cp-sat model invalid: tarkista muuttujien domainit ja constraintit')
+        elif status == cp_model.UNKNOWN:
+            logger.log('ERROR', 'cp-sat tuntematon virhe')
+        else:
+            logger.log('ERROR', f'cp-sat status: {status_str.lower()}')
         return
     results = []
     for (batch, stage), vars in task_vars.items():

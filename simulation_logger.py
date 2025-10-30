@@ -1,3 +1,17 @@
+# Palauttaa viimeisimmän OPTIMIZATION_STATUS-rivin statuksen lokitiedostosta
+def get_last_optimization_status(output_dir):
+    import os
+    log_path = os.path.join(output_dir, "logs", "simulation_log.csv")
+    if not os.path.exists(log_path):
+        return None
+    status = None
+    with open(log_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if ",OPTIMIZATION_STATUS," in line:
+                parts = line.strip().split(",")
+                if len(parts) >= 3:
+                    status = parts[2].strip().lower()
+    return status
 """
 Simulation Logger Module
 Handles logging of all simulation phases and calculations
@@ -26,8 +40,8 @@ class SimulationLogger:
         """Log an event with timestamp, class and description"""
         # Muutetaan class_type aina isoiksi kirjaimiksi
         class_type = str(class_type).upper()
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-        
+        # Millisekunnin tarkkuus: kolme desimaalia
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         with open(self.log_file, 'a', encoding='utf-8') as f:
             f.write(f"{timestamp},{class_type},{description}\n")
     

@@ -46,6 +46,9 @@ Jos käsittelyohjelmassa on vaihe, jossa MinStat < MaxStat, voidaan kyseiseen va
 ### Vapausaste 3
 Erien keskinäistä käsittelyjärjestystä voidaan vaihtaa, jos sillä on merkitystä paremman lopputuloksen löytämiseksi. Erän sisäinen tehtäväjärjestys pitää kuitenkin säilyä, eli käsittelyohjelma määrittää missä vaihejärjestyksessä erän pitää edetä. Nostimelle voidaan kuitenkin valita mitä erää milloinkin se siirtää. Jos tehtävien välisellä järjestyksen vaihdolla ei kuitenkaan paranneta (siis päästään huonompaan tai samaan kuin edellinen versio) kokonaiskapasiteettia, slilytetään alkuperäinen järjestys.
 
+### Vapausaste 4
+Erä valmistuu, kun se on siirretty käsittelyohjelman viimeiselle asemalle. Nostin on heti laskun jälkeen vapa muihin tehtäviin. Lisäksi erän 'katoaa' tuotannosta, joten se ei myöskään varaa käsittelyohjelman viimeistä asemaa käsittelyajan jälkeen (käytänössä 0 ekuntia).
+
 ## Erien ja nostimien määrä
 - Optimointi tukee useita eriä. Yhdellä asemalla voi olla vain yksi erä kerrallaan.
 - Tässä vaiheessa keskitytään yhden nostimen optimointiin, mutta malli voidaan laajentaa useammalle nostimelle myöhemmin.
