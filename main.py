@@ -6,7 +6,7 @@ import os
 from create_simulation_directory import create_simulation_directory
 from generate_batch_treatment_programs import generate_batch_treatment_programs
 from preprocess_for_cpsat import preprocess_for_cpsat
-from cp_sat_optimization import cp_sat_optimization, solve_and_save
+from cp_sat_optimization import cp_sat_optimization
 from generate_matrix import generate_matrix
 from extract_transporter_tasks import extract_transporter_tasks, create_detailed_movements
 from visualize_matrix import visualize_matrix
@@ -37,7 +37,7 @@ def main():
     if status == 'infeasible':
         logger.log('ERROR', 'Pipeline stopped: optimization infeasible, no further steps executed.')
         return
-    solve_and_save(model, task_vars, treatment_programs, output_dir)
+    # solve_and_save kutsutaan nyt cp_sat_optimization funktiossa
     logger.log('STEP', 'CP_SAT optimizatio  ready')
 
     # --- 4. Results ---
