@@ -39,12 +39,14 @@ Nostin ei voi olla kahdessa paikassa yhtäaikaa. Kaikkien siirtotehtävien väli
 
 ### Vapausaste 1
 Käsittelyohjelmien käsittelyajat voivat olla mitä tahansa määritellyn minimi- ja maksimiarvon välillä. Tämä mahdollistaa nostimen tehtävien ajoittamisen ja päällekkäisyyksien eliminoinnin säätämällä käsittelyaikoja.
+**Selvennys:** Vaikka yksittäisen vaiheen kesto pitenisi, se voi vapauttaa nostimen suorittamaan toista tehtävää ja siten lyhentää kokonaistuotantoaikaa (makespan). Joustavuus on siis työkalu nostimen pullonkaulojen ratkaisemiseen.
 
 ### Vapausaste 2
 Jos käsittelyohjelmassa on vaihe, jossa MinStat < MaxStat, voidaan kyseiseen vaiheeseen valita mikä tahansa asema tältä väliltä, kunhan asema kuuluu samaan Group-numeroon. Näin mahdollistetaan rinnakkaisten asemien käyttö ja resurssien tehokkaampi hyödyntäminen. Jos Group-numero on sama, asemat ovat rinnakkaisia ja niitä voidaan käyttää yhtäaikaisesti.
 
 ### Vapausaste 3
-Erien keskinäistä käsittelyjärjestystä voidaan vaihtaa, jos sillä on merkitystä paremman lopputuloksen löytämiseksi. Erän sisäinen tehtäväjärjestys pitää kuitenkin säilyä, eli käsittelyohjelma määrittää missä vaihejärjestyksessä erän pitää edetä. Nostimelle voidaan kuitenkin valita mitä erää milloinkin se siirtää. Jos tehtävien välisellä järjestyksen vaihdolla ei kuitenkaan paranneta (siis päästään huonompaan tai samaan kuin edellinen versio) kokonaiskapasiteettia, slilytetään alkuperäinen järjestys.
+Erien keskinäistä käsittelyjärjestystä voidaan vaihtaa, jos sillä on merkitystä paremman lopputuloksen löytämiseksi. Erän sisäinen tehtäväjärjestys pitää kuitenkin säilyä, eli käsittelyohjelma määrittää missä vaihejärjestyksessä erän pitää edetä. Nostimelle voidaan kuitenkin valita mitä erää milloinkin se siirtää. 
+**Selvennys:** Jos kaksi tai useampi erä on täysin identtinen (sama käsittelyohjelma), niiden keskinäisen järjestyksen vaihtaminen ei tuota parempaa tulosta. Tällöin voidaan käyttää "symmetrian rikkomista" ja lukita identtisten erien järjestys, jotta optimoija ei tuhlaa aikaa turhien permutaatioiden tutkimiseen. Tämä nopeuttaa ratkaisun löytymistä.
 
 ### Vapausaste 4
 Erä valmistuu, kun se on siirretty käsittelyohjelman viimeiselle asemalle. Nostin on heti laskun jälkeen vapa muihin tehtäviin. Lisäksi erän 'katoaa' tuotannosta, joten se ei myöskään varaa käsittelyohjelman viimeistä asemaa käsittelyajan jälkeen (käytänössä 0 ekuntia).
@@ -66,6 +68,7 @@ Erä valmistuu, kun se on siirretty käsittelyohjelman viimeiselle asemalle. Nos
 
    ### Vastaus kysymykseen 2
    Tuotantosuunnitelmassa on luettelo eristä. Osoittautui, että sen huomioiminen CP-SAT-optimoinnissa oli vaikeaa. Tämän vuoksi ohjelmaan lisättiin askel 0, joka edustaa erän lähtöä prosessiin. Askeleelle 0 asetetaan mahdollisimman laaja aikaikkuna, jotta optimoinnilla on suurin vapausaste "säätää" mahdollisia nostimen tehtävien päällekkäisyyksiä.
+   **Selvennys:** "Askel 0" on virtuaalinen odotusaika, joka antaa joustavuutta erän aloitukselle. Se ei ole fyysinen tehtävä, joka sitoo nostimen resursseja.
 
 3. Mitä tarkoitat sillä, että optimointi ei ole valjastettu oikein?
    - Onko ongelma rajoitteiden mallinnuksessa, muuttujien rajoissa vai optimoinnin tavoitteessa?
@@ -166,8 +169,8 @@ Erä valmistuu, kun se on siirretty käsittelyohjelman viimeiselle asemalle. Nos
 12. Onko nostimella aloituspaikka ja/tai “lepopaikka”, jonne se palaa, jos ei ole tehtäviä?
 
    ### Vastaus kysymykseen 12
-
-   Nostimelle on määritelty aloituspaikka tiedostossa trasnporters_start_poisiton.csv. Mutta tällä hetkellä sille ei ole optimoinnissa käyttöä, koska simulointi alkaa ajassa 00:00:00, ja nostimen 1. tehtävä alkaa siitä, ja simulointi päättyy, kun nostin on laskenut viimeisen erän viimeiseen ohjelmaskeleen mukaiseen asemaan. Simuloinnin sisällä nostin odottaa viimeisen tehtävän lopun kohdalla.
+   Nostimelle on määritelty aloituspaikka tiedostossa trasnporters_start_poisiton.csv. 
+   **Selvennys:** Nykyisessä yhden nostimen optimoinnissa aloituspaikalla ei ole merkitystä, koska simulointi alkaa ajasta nolla ja päättyy viimeisen tehtävän loppuun. Aloituspaikka tulee merkitykselliseksi, kun optimoidaan useamman nostimen toimintaa.
 
 13. Voiko useampi erä olla samassa asemassa yhtä aikaa, jos asema sallii rinnakkaisuuden (esim. useampi paikka yhdellä asemalla)?
 
