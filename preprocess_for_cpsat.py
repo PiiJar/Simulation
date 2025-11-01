@@ -88,3 +88,7 @@ def preprocess_for_cpsat(output_dir):
     # Also save files required by CP-SAT optimization with correct names to cp_sat directory
     stations.to_csv(os.path.join(cp_sat_dir, "cp_sat_stations.csv"), index=False, encoding="utf-8")
     transporters.to_csv(os.path.join(cp_sat_dir, "cp_sat_transporters.csv"), index=False, encoding="utf-8")
+    
+    # Copy transporter start positions with cp_sat naming convention
+    start_positions = pd.read_csv(os.path.join(init_dir, "transporters_start_positions.csv"))
+    start_positions.to_csv(os.path.join(cp_sat_dir, "cp_sat_transporters_start_positions.csv"), index=False, encoding="utf-8")
