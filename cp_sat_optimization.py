@@ -334,6 +334,71 @@ def solve_and_save_simple(model, task_vars, treatment_programs, output_dir):
         print(f"💾 Production.csv päivitetty: {production_path}")
     else:
         print(f"⚠️ Production.csv ei löytynyt: {production_path}")
+    
+    # Päivitä eräkohtaiset käsittelyohjelmat optimoiduilla ajoilla
+    print("💾 Päivitetään käsittelyohjelmat...")
+    optimized_dir = os.path.join(output_dir, "cp_sat", "treatment_program_optimized")
+    os.makedirs(optimized_dir, exist_ok=True)
+    
+    # Ryhmittele tulokset erittäin
+    batches_results = {}
+    for _, result_row in df_result.iterrows():
+        batch_num = result_row["Batch"]
+        if batch_num not in batches_results:
+            batches_results[batch_num] = []
+        batches_results[batch_num].append(result_row)
+    
+    # Päivitä kunkin erän käsittelyohjelma
+    for batch_num, batch_rows in batches_results.items():
+        # Järjestä rivit stage-järjestykseen
+        batch_rows = sorted(batch_rows, key=lambda x: x["Stage"])
+        
+        # Luo optimoitu käsittelyohjelma (ilman stage 0)
+        optimized_program = []
+        for row in batch_rows:
+            if row["Stage"] == 0:  # Poista stage 0
+                continue
+                
+            # Muunna sekunnit takaisin hh:mm:ss muotoon
+            duration_seconds = row["Duration"]
+            hours = duration_seconds // 3600
+            minutes = (duration_seconds % 3600) // 60
+            seconds = duration_seconds % 60
+            calc_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+            # Hae alkuperäiset min/max ajat
+            original_program = treatment_programs[batch_num]
+            stage_info = original_program[original_program["Stage"] == row["Stage"]]
+            if not stage_info.empty:
+                min_time = stage_info.iloc[0]["MinTime"]
+                max_time = stage_info.iloc[0]["MaxTime"]
+                min_stat = stage_info.iloc[0]["MinStat"]
+                max_stat = stage_info.iloc[0]["MaxStat"]
+            else:
+                # Fallback arvot
+                min_time = calc_time
+                max_time = calc_time
+                min_stat = row["Station"]
+                max_stat = row["Station"]
+            
+            optimized_program.append({
+                "Stage": row["Stage"],
+                "MinStat": min_stat,
+                "MaxStat": max_stat,
+                "MinTime": min_time,
+                "MaxTime": max_time,
+                "CalcTime": calc_time  # Optimoitu aika
+            })
+        
+        # Tallenna optimoitu käsittelyohjelma
+        if optimized_program:
+            optimized_df = pd.DataFrame(optimized_program)
+            filename = f"Batch_{batch_num:03d}_Treatment_program_001.csv"
+            filepath = os.path.join(optimized_dir, filename)
+            optimized_df.to_csv(filepath, index=False)
+            print(f"   Erä {batch_num}: {len(optimized_program)} vaihetta tallennettu → {filename}")
+    
+    print(f"💾 Käsittelyohjelmat päivitetty: {optimized_dir}")
 
 
 # Poista kaikki vanha koodi alta

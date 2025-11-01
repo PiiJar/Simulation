@@ -106,51 +106,73 @@ def load_batch_program_optimized(programs_dir, batch_id, treatment_program):
 
 def generate_matrix_pure(output_dir):
 	"""
-	Luo lopullisen matriisin päivitetyn Production.csv:n ja optimoitujen ohjelmien perusteella.
-	EI ratkaise konflikteja, EI päivitä Production.csv:ää.
+	Luo yksinkertaisen matriisin käyttäen CP-SAT optimoinnin tuloksia.
+	EI tee optimointia, vain simuloi tuotantokoneen näkökulmaa.
     
 	LOGIIKKA:
-	1. Käyttää päivitettyä Production.csv Start_time kenttää (muuntaa sekunteiksi)
-	2. Käyttää AINA optimoituja ohjelmia (optimized_programs/) 
-	3. Laskee EntryTime/ExitTime peräkkäisesti ohjelman vaiheiden mukaan
-	4. Huomioi rinnakkaiset asemat (MinStat-MaxStat) asemavarausten kanssa
-	5. Laskee nostimen fysiikan (Phase_1, Phase_2, Phase_3, Phase_4)
+	1. Käyttää Start_optimized aikoja production.csv:stä (CP-SAT:n tulos)
+	2. Käyttää CalcTime arvoja optimoiduista ohjelmista (CP-SAT:n tulos)
+	3. Laskee yksinkertaisen aikajanahoidon: start_time + transport_time + calc_time
+	4. EI ratkaise asemakonflikteja - käyttää vain ensimmäistä vapaata asemaa
 	"""
 	logs_dir = os.path.join(output_dir, "logs")
 	optimized_dir = os.path.join(output_dir, "cp_sat", "treatment_program_optimized")
 	output_file = os.path.join(logs_dir, "line_matrix.csv")
     
-	# Lataa lähtötiedot - päivitetty Production.csv jossa Start_time ON oikein
+	# Lataa lähtötiedot - production.csv jossa Start_optimized (CP-SAT:n tulos)
 	production_df = load_production_batches_stretched(output_dir)
 	stations_df = load_stations(output_dir)
 	transporters_df = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
-	# Lue esilasketut siirtoajat (nostinliikkeet) tiedostosta uudella nimellä ja sijainnilla
+	
+	# Lue esilasketut siirtoajat
 	transfers_path = os.path.join(output_dir, "cp_sat", "cp_sat_transfer_tasks.csv")
 	if not os.path.exists(transfers_path):
 		raise FileNotFoundError(f"Precomputed transfer times file not found: {transfers_path}\nRun preprocessing/optimization first!")
 	try:
 		transfers_df = pd.read_csv(transfers_path)
-		# Varmista oikeat sarakkeet ja tyypit
 		transfers_df["Transporter"] = transfers_df["Transporter"].astype(int)
 		transfers_df["From_Station"] = transfers_df["From_Station"].astype(int)
 		transfers_df["To_Station"] = transfers_df["To_Station"].astype(int)
 	except Exception as e:
 		raise RuntimeError(f"Failed to load precomputed transfer times: {e}")
     
-	# Asemavaraukset rinnakkaisten asemien hallintaan
-	station_reservations = {}
+def generate_matrix_pure(output_dir):
+	"""
+	Luo yksinkertaisen matriisin käyttäen CP-SAT optimoinnin tuloksia.
+	EI tee optimointia, vain simuloi tuotantokoneen näkökulmaa.
+    
+	LOGIIKKA:
+	1. Käyttää Start_optimized aikoja production.csv:stä (CP-SAT:n tulos)
+	2. Käyttää CalcTime arvoja optimoiduista ohjelmista (CP-SAT:n tulos)
+	3. Laskee yksinkertaisen aikajanahoidon: start_time + transport_time + calc_time
+	4. EI ratkaise asemakonflikteja - käyttää vain ensimmäistä vapaata asemaa
+	"""
+	logs_dir = os.path.join(output_dir, "logs")
+	optimized_dir = os.path.join(output_dir, "cp_sat", "treatment_program_optimized")
+	output_file = os.path.join(logs_dir, "line_matrix.csv")
+    
+	# Lataa lähtötiedot - production.csv jossa Start_optimized (CP-SAT:n tulos)
+	production_df = load_production_batches_stretched(output_dir)
+	stations_df = load_stations(output_dir)
+	transporters_df = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
+	
+	# Lue esilasketut siirtoajat
+	transfers_path = os.path.join(output_dir, "cp_sat", "cp_sat_transfer_tasks.csv")
+	if not os.path.exists(transfers_path):
+		raise FileNotFoundError(f"Precomputed transfer times file not found: {transfers_path}\nRun preprocessing/optimization first!")
+	try:
+		transfers_df = pd.read_csv(transfers_path)
+		transfers_df["Transporter"] = transfers_df["Transporter"].astype(int)
+		transfers_df["From_Station"] = transfers_df["From_Station"].astype(int)
+		transfers_df["To_Station"] = transfers_df["To_Station"].astype(int)
+	except Exception as e:
+		raise RuntimeError(f"Failed to load precomputed transfer times: {e}")
     
 	all_rows = []
     
-	# 📌 Ohjelmoidaan matrix, jossa otetaan huomioin sekä asemien että nostinten rajoitukset
-	station_reservations = {}  # Jokaiselle asemalle: [(start, end), ...]
-	transporter_free_at = 0  # KRIITTINEN: Milloin nostin on vapaa aloittamaan seuraavan tehtävän
-
-	all_rows = []
-    
-	# KRIITTINEN: Käy läpi erät AIKAJÄRJESTYKSESSÄ (Start_time_seconds)
-	# Muuten erät menevät päällekkäin kun ne prosessoidaan väärässä järjestyksessä!
-	production_df_sorted = production_df.sort_values('Start_time_seconds').reset_index(drop=True)    # Käy läpi jokainen erä AIKAJÄRJESTYKSESSÄ
+	# Käy läpi erät aikajärjestyksessä
+	production_df_sorted = production_df.sort_values('Start_time_seconds').reset_index(drop=True)
+	
 	for _, batch_row in production_df_sorted.iterrows():
 		batch_id = int(batch_row["Batch"])
 		start_station = int(batch_row["Start_station"])
@@ -159,27 +181,28 @@ def generate_matrix_pure(output_dir):
 
 		prog_df = load_batch_program_optimized(optimized_dir, batch_id, treatment_program)
 
-	# Stage 0: Laske transport-aika start_station → ensimmäinen käsittelyasema
+		# Stage 0: Siirto start_station → ensimmäinen käsittelyasema
 		first_prog_row = prog_df.iloc[0]
 		first_min_stat = int(first_prog_row["MinStat"])
 		first_max_stat = int(first_prog_row["MaxStat"])
         
-		# Valitse kohdeasema (Stage 1:n asema): aina ensimmäinen vapaa asema MinStat–MaxStat -väliltä
-		temp_sink_stat = select_available_station(first_min_stat, first_max_stat, station_reservations, 
-												 int(start_time_seconds), int(start_time_seconds))
+		# Valitse ensimmäinen asema käsittelyvaiheen alueelta (yksinkertainen valinta)
+		target_station = first_min_stat
         
-		# Hae geneerinen siirtoaika Stage 0:lle (nostin, from_station=start_station, to_station=first käsittelyasema)
-		transporter = select_capable_transporter(start_station, temp_sink_stat, stations_df, transporters_df)
+		# Hae siirtoaika Stage 0:lle 
+		transporter = select_capable_transporter(start_station, target_station, stations_df, transporters_df)
 		transporter_id = int(transporter["Transporter_id"])
-		match = transfers_df[(transfers_df["Transporter"] == transporter_id) & (transfers_df["From_Station"] == start_station) & (transfers_df["To_Station"] == temp_sink_stat)]
+		match = transfers_df[(transfers_df["Transporter"] == transporter_id) & 
+		                    (transfers_df["From_Station"] == start_station) & 
+		                    (transfers_df["To_Station"] == target_station)]
 		if not match.empty:
 			transport_time_0 = float(match.iloc[0]["TotalTaskTime"])
 		else:
-			raise RuntimeError(f"Precomputed transfer time missing for Transporter={transporter_id}, From={start_station}, To={temp_sink_stat}")
-		# Stage 0 ExitTime = start_time (nostin lähtee liikkeelle start-aikaan)
+			raise RuntimeError(f"Precomputed transfer time missing for Transporter={transporter_id}, From={start_station}, To={target_station}")
+		
+		# Stage 0: Siirto alkaa start_time:ssa
 		stage0_exit = int(start_time_seconds)
         
-		# Stage 0 = Tuotannosta ensimmäiselle asemalle siirto
 		all_rows.append({
 			"Batch": batch_id,
 			"Program": treatment_program,
@@ -189,18 +212,14 @@ def generate_matrix_pure(output_dir):
 			"MinTime": 0,
 			"MaxTime": 0,
 			"CalcTime": 0,
-			# Stage 0 EntryTime on tuotannon start_time
 			"EntryTime": int(start_time_seconds),
 			"ExitTime": stage0_exit,
 			"TransportTime": transport_time_0
 		})
 
-		if start_station not in station_reservations:
-			station_reservations[start_station] = []
-		station_reservations[start_station].append((start_time_seconds, stage0_exit))
-
-		previous_sink_stat = temp_sink_stat  # Stage 0 päättyy ensimmäiselle käsittelyasemalle
-		previous_exit = stage0_exit
+		# Käsittele varsinaiset käsittelyvaiheet
+		current_time = start_time_seconds
+		previous_station = start_station
 
 		for i, (_, prog_row) in enumerate(prog_df.iterrows()):
 			stage = int(prog_row["Stage"])
@@ -210,88 +229,34 @@ def generate_matrix_pure(output_dir):
 			min_stat = int(prog_row["MinStat"])
 			max_stat = int(prog_row["MaxStat"])
 
+			# Yksinkertainen aseman valinta: aina ensimmäinen asema alueelta
 			if i == 0:
-				lift_stat = start_station
+				# Ensimmäinen vaihe käyttää jo valittua asemaa
+				current_station = target_station
 			else:
-				lift_stat = previous_sink_stat
-
-			temp_entry = int(previous_exit)
-			temp_exit = temp_entry + int(calc_time)
-			# Ensimmäinen käsittelyvaihe käyttää Stage 0 -valittua asemaa jos saatavilla
-			if i == 0 and previous_sink_stat is not None:
-				sink_stat = int(previous_sink_stat)
-			else:
-				sink_stat = select_available_station(min_stat, max_stat, station_reservations, temp_entry, temp_exit)
-
-			transporter = select_capable_transporter(lift_stat, sink_stat, stations_df, transporters_df)
+				current_station = min_stat
+			
+			# Hae siirtoaika edellisestä asemasta nykyiseen
+			transporter = select_capable_transporter(previous_station, current_station, stations_df, transporters_df)
 			transporter_id = int(transporter["Transporter_id"])
-			lift_station_row = stations_df[stations_df['Number'] == lift_stat].iloc[0]
-			sink_station_row = stations_df[stations_df['Number'] == sink_stat].iloc[0]
-
-			# Hae geneerinen siirtoaika (nostin, from, to)
-			match = transfers_df[(transfers_df["Transporter"] == transporter_id) & (transfers_df["From_Station"] == lift_stat) & (transfers_df["To_Station"] == sink_stat)]
+			match = transfers_df[(transfers_df["Transporter"] == transporter_id) & 
+			                    (transfers_df["From_Station"] == previous_station) & 
+			                    (transfers_df["To_Station"] == current_station)]
 			if not match.empty:
 				transport_time = float(match.iloc[0]["TotalTaskTime"])
 			else:
-				raise RuntimeError(f"Precomputed transfer time missing for Transporter={transporter_id}, From={lift_stat}, To={sink_stat}")
+				raise RuntimeError(f"Precomputed transfer time missing for Transporter={transporter_id}, From={previous_station}, To={current_station}")
             
-			# EntryTime = edellinen exit + siirtoaika (P2+P3+P4)
-			# Sink valmis = EntryTime (nostin on juuri laskenut erän)
-			# Käsittely: Sink valmis ... Lift alkaa
-			# ExitTime = Sink valmis + CalcTime + Phase_2 (Lift)
-            
-			tentative_entry_time = int(previous_exit + transport_time)
-			tentative_exit_time = tentative_entry_time + int(calc_time)
-            
-			# KRIITTINEN: Asema on varattu koko ajan kun nostin on siellä:
-			# - Varaustila alkaa: EntryTime - Phase_4 (nostin saapuu)
-			# - Varaustila päättyy: ExitTime (nostin lähtee)
-			reservation_start = tentative_entry_time  # Nostin saapuu (ei erillistä phase_4)
-			reservation_end = tentative_exit_time  # Nostin lähtee
-            
-			# KRIITTINEN: Nostin ei voi aloittaa uutta tehtävää ennen kuin edellinen valmis!
-			# Nostin vapautuu = edellisen tehtävän ExitTime
-			# Jos nostin ei ole vielä vapaa, ODOTA
-			if reservation_start < transporter_free_at:
-				shift = transporter_free_at - reservation_start
-				tentative_entry_time += shift
-				tentative_exit_time += shift
-				reservation_start = tentative_entry_time
-				reservation_end = tentative_exit_time
-            
-			# Tarkista onko sink_stat varattu - JOS ON, ODOTA kunnes vapautuu!
-			if sink_stat in station_reservations:
-				for res_start, res_end in station_reservations[sink_stat]:
-					# Jos tentatiivinen varaus menee päällekkäin toisen varauksen kanssa
-					if reservation_start < res_end and reservation_end > res_start:
-						# SIIRRÄ varaus kokonaan edellisen varauksen jälkeen
-						shift = res_end - reservation_start
-						tentative_entry_time += shift
-						tentative_exit_time += shift
-						reservation_start = tentative_entry_time
-						reservation_end = tentative_exit_time
-            
-			entry_time = tentative_entry_time
-			exit_time = tentative_exit_time
-            
-			# Päivitä nostimen vapautumisaika
-			transporter_free_at = exit_time
-
-			# Täsmädebug: Tulosta väliarvot erän 1, vaiheen 1 kohdalla
-			# if batch_id == 1 and stage == 1:
-			#     print(f"[DEBUG MATRIX] batch=1, stage=1, previous_exit={previous_exit}, phase_2={phase_2}, phase_3={phase_3}, phase_4={phase_4}, transport_time={transport_time}, entry_time={entry_time}")
-
-			# Tallenna aseman TODELLINEN varaus (nostin saapuu → nostin lähtee)
-			if sink_stat not in station_reservations:
-				station_reservations[sink_stat] = []
-			station_reservations[sink_stat].append((reservation_start, reservation_end))
-
+			# Yksinkertainen aikajana: edellinen loppu + siirtoaika
+			entry_time = int(current_time + transport_time)
+			exit_time = entry_time + int(calc_time)
+			
 			all_rows.append({
 				"Batch": batch_id,
 				"Program": treatment_program,
 				"Treatment_program": treatment_program,
 				"Stage": stage,
-				"Station": sink_stat,
+				"Station": current_station,
 				"MinTime": int(min_time),
 				"MaxTime": int(max_time),
 				"CalcTime": int(calc_time),
@@ -300,10 +265,9 @@ def generate_matrix_pure(output_dir):
 				"TransportTime": transport_time
 			})
 
-
-
-			previous_sink_stat = sink_stat
-			previous_exit = exit_time
+			# Päivitä seuraavaa vaihetta varten
+			current_time = exit_time
+			previous_station = current_station
     
 	# Luo DataFrame ja tallenna
 	matrix = pd.DataFrame(all_rows)
@@ -320,8 +284,8 @@ def generate_matrix_pure(output_dir):
 	if os.path.exists(log_file):
 		with open(log_file, "a", encoding="utf-8") as f:
 			timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-			f.write(f"{timestamp},TASK,Stretched matrix generated (pure): {os.path.basename(output_file)}\n")
-			f.write(f"{timestamp},TASK,Rows in stretched matrix: {len(matrix)}\n")
+			f.write(f"{timestamp},TASK,Simple matrix generated using optimization results: {os.path.basename(output_file)}\n")
+			f.write(f"{timestamp},TASK,Rows in matrix: {len(matrix)}\n")
     
 	return matrix
 
