@@ -311,23 +311,52 @@ def solve_and_save_simple(model, task_vars, treatment_programs, output_dir):
     if os.path.exists(production_path):
         production_df = pd.read_csv(production_path)
         
-        # Hae kunkin erän stage 0:n duration (lähtöasemalla vietetty aika)
+        # Laske todellinen optimaalinen aloitusaika kullekin erälle
+        # = Ensimmäisen käsittelyvaiheen (Stage 1) alkuaika - siirtoaika alkuasemasta
         for _, result_row in df_result.iterrows():
-            if result_row["Stage"] == 0:  # Lähtöasema
+            if result_row["Stage"] == 1:  # Ensimmäinen käsittelyvaihe
                 batch_num = result_row["Batch"]
-                duration_seconds = result_row["Duration"]
+                stage1_start = result_row["Start"]  # Milloin Stage 1 alkaa
                 
-                # Muunna sekunnit muotoon hh:mm:ss
-                hours = duration_seconds // 3600
-                minutes = (duration_seconds % 3600) // 60
-                seconds = duration_seconds % 60
-                time_formatted = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                
-                # Päivitä production.csv
-                mask = production_df["Batch"] == batch_num
-                if mask.any():
-                    production_df.loc[mask, "Start_optimized"] = time_formatted
-                    print(f"   Erä {batch_num}: Start_optimized = {time_formatted}")
+                # Hae siirtoaika alkuasemasta ensimmäiselle käsittelyasemalle
+                # Löydetään batch:n tiedot
+                batch_info = production_df[production_df["Batch"] == batch_num]
+                if not batch_info.empty:
+                    start_station = int(batch_info.iloc[0]["Start_station"])
+                    target_station = result_row["Station"]
+                    
+                    # Lataa siirtoajat
+                    transfers_path = os.path.join(output_dir, "cp_sat", "cp_sat_transfer_tasks.csv")
+                    if os.path.exists(transfers_path):
+                        transfers_df = pd.read_csv(transfers_path)
+                        
+                        # Hae siirtoaika (oletetaan nostin 1)
+                        match = transfers_df[
+                            (transfers_df["Transporter"] == 1) & 
+                            (transfers_df["From_Station"] == start_station) & 
+                            (transfers_df["To_Station"] == target_station)
+                        ]
+                        if not match.empty:
+                            transport_time = float(match.iloc[0]["TotalTaskTime"])
+                        else:
+                            transport_time = 0
+                    else:
+                        transport_time = 0
+                    
+                    # Todellinen optimaalinen aloitusaika = Stage 1 alkuaika - siirtoaika
+                    optimal_start_seconds = max(0, stage1_start - transport_time)
+                    
+                    # Muunna sekunnit muotoon hh:mm:ss
+                    hours = int(optimal_start_seconds) // 3600
+                    minutes = (int(optimal_start_seconds) % 3600) // 60
+                    seconds = int(optimal_start_seconds) % 60
+                    time_formatted = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    
+                    # Päivitä production.csv
+                    mask = production_df["Batch"] == batch_num
+                    if mask.any():
+                        production_df.loc[mask, "Start_optimized"] = time_formatted
+                        print(f"   Erä {batch_num}: Start_optimized = {time_formatted} (Stage 1 alkaa {stage1_start}s - siirtoaika {transport_time}s)")
         
         # Tallenna päivitetty production.csv
         production_df.to_csv(production_path, index=False)
@@ -353,9 +382,13 @@ def solve_and_save_simple(model, task_vars, treatment_programs, output_dir):
         # Järjestä rivit stage-järjestykseen
         batch_rows = sorted(batch_rows, key=lambda x: x["Stage"])
         
+        # Lataa nostin- ja asematiedot
+        stations_df = pd.read_csv(os.path.join(output_dir, "initialization", "stations.csv"))
+        transporters_df = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
+        
         # Luo optimoitu käsittelyohjelma (ilman stage 0)
         optimized_program = []
-        for row in batch_rows:
+        for i, row in enumerate(batch_rows):
             if row["Stage"] == 0:  # Poista stage 0
                 continue
                 
@@ -366,25 +399,60 @@ def solve_and_save_simple(model, task_vars, treatment_programs, output_dir):
             seconds = duration_seconds % 60
             calc_time = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             
+            # Valitse nostin: katso mistä asemasta tullaan
+            if i > 0:
+                # Edellinen asema (ei stage 0)
+                prev_stations = [r for r in batch_rows if r["Stage"] == row["Stage"] - 1 and r["Stage"] > 0]
+                if prev_stations:
+                    from_station = prev_stations[0]["Station"]
+                else:
+                    # Jos ei edellistä käsittelyasemaa, käytetään alkuasemaa
+                    batch_info = pd.read_csv(os.path.join(output_dir, "initialization", "production.csv"))
+                    batch_data = batch_info[batch_info["Batch"] == batch_num]
+                    from_station = int(batch_data.iloc[0]["Start_station"]) if not batch_data.empty else 301
+            else:
+                # Ensimmäinen käsittelyvaihe: tullaan alkuasemasta
+                batch_info = pd.read_csv(os.path.join(output_dir, "initialization", "production.csv"))
+                batch_data = batch_info[batch_info["Batch"] == batch_num]
+                from_station = int(batch_data.iloc[0]["Start_station"]) if not batch_data.empty else 301
+            
+            to_station = row["Station"]
+            
+            # Valitse sopiva nostin
+            def select_capable_transporter(lift_station, sink_station, stations_df, transporters_df):
+                # Hae asemien x-koordinaatit
+                lift_x = stations_df[stations_df['Number'] == lift_station]['X Position'].iloc[0]
+                sink_x = stations_df[stations_df['Number'] == sink_station]['X Position'].iloc[0]
+                
+                # Käy läpi nostimet järjestyksessä
+                for _, transporter in transporters_df.iterrows():
+                    min_x = transporter['Min_x_position']
+                    max_x = transporter['Max_x_Position']
+                    
+                    # Tarkista että molemmat asemat ovat nostimen alueella
+                    if min_x <= lift_x <= max_x and min_x <= sink_x <= max_x:
+                        return int(transporter["Transporter_id"])
+                
+                # Jos mikään nostin ei pysty, palautetaan ensimmäinen
+                return int(transporters_df.iloc[0]["Transporter_id"])
+            
+            transporter_id = select_capable_transporter(from_station, to_station, stations_df, transporters_df)
+            
             # Hae alkuperäiset min/max ajat
             original_program = treatment_programs[batch_num]
             stage_info = original_program[original_program["Stage"] == row["Stage"]]
             if not stage_info.empty:
                 min_time = stage_info.iloc[0]["MinTime"]
                 max_time = stage_info.iloc[0]["MaxTime"]
-                min_stat = stage_info.iloc[0]["MinStat"]
-                max_stat = stage_info.iloc[0]["MaxStat"]
             else:
                 # Fallback arvot
                 min_time = calc_time
                 max_time = calc_time
-                min_stat = row["Station"]
-                max_stat = row["Station"]
             
             optimized_program.append({
                 "Stage": row["Stage"],
-                "MinStat": min_stat,
-                "MaxStat": max_stat,
+                "Transporter": transporter_id,
+                "Station": row["Station"], 
                 "MinTime": min_time,
                 "MaxTime": max_time,
                 "CalcTime": calc_time  # Optimoitu aika
@@ -397,6 +465,7 @@ def solve_and_save_simple(model, task_vars, treatment_programs, output_dir):
             filepath = os.path.join(optimized_dir, filename)
             optimized_df.to_csv(filepath, index=False)
             print(f"   Erä {batch_num}: {len(optimized_program)} vaihetta tallennettu → {filename}")
+            print(f"     Sisältää: Stage, Transporter, Station, CalcTime kentät")
     
     print(f"💾 Käsittelyohjelmat päivitetty: {optimized_dir}")
 
