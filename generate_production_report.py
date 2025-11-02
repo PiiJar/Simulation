@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """
-gener    # Paths
-    production_file = os.path.join(output_dir, "logs", "Production.csv")
-    line_matrix_file = os.path.join(output_dir, "logs", "line_matrix_stretched.csv")
-    reports_dir = os.path.join(output_dir, "reports")
-    report_file = os.path.join(reports_dir, "production_report.html")roduction_report.py
+generate_production_report.py
 
 Luo raportin tuotannon läpivirtauksesta simulaatiossa.
 Analysoi erien kulkua linjan läpi ja laskee kapasiteettitietoja.
@@ -52,10 +48,10 @@ def generate_production_report(output_dir="output"):
     
     logger.log_data("Production report generation started")
     
-    # Paths
-    production_file = os.path.join(output_dir, "Initialization", "Production.csv")
-    matrix_file = os.path.join(output_dir, "logs", "line_matrix_stretched.csv")
-    reports_dir = os.path.join(output_dir, "Reports")
+    # Paths (yhtenäistetty muun putken kanssa)
+    production_file = os.path.join(output_dir, "initialization", "production.csv")
+    matrix_file = os.path.join(output_dir, "logs", "line_matrix.csv")
+    reports_dir = os.path.join(output_dir, "reports")
     report_file = os.path.join(reports_dir, "production_report.html")
     
     # Check if files exist
