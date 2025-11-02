@@ -186,9 +186,16 @@ Päätavoite on löytää lyhin mahdollinen kokonaistuotantoaika siten, että:
 
 1. Kokonaistuotantoajan määritelmä:
    - Alkaa hetkestä 00:00:00 (simulaation alku)
-   - Päättyy kun viimeinen erä on laskettu viimeiselle asemalleen
-   - Huom: Viimeinen valmistuva erä ei välttämättä ole viimeisenä linjaan lähtenyt erä
-   - Jos käsittelyohjelmat ovat erilaisia, aiemmin lähtenyt pitkä ohjelma voi valmistua myöhemmin kuin myöhemmin lähtenyt lyhyt ohjelma
+   - Päättyy tulostiedoston suurimpaan ExitTime-arvoon
+   - Kokonaistuotantoaika = max(ExitTime) kaikista tulostiedoston riveistä
+   - Optimoinnin tavoite on minimoida tämä maksimiarvo
+   
+   Huom: Suurin ExitTime ei välttämättä ole:
+   - Viimeisenä linjaan lähteneen erän
+   - Pisimmän käsittelyohjelman erän
+   - Viimeisen aseman tapahtuma
+   
+   Optimointi etsii sellaisen erien ajoituksen, jossa tämä suurin ExitTime on mahdollisimman pieni.
 
 2. Tuotantojärjestyksen optimointi:
    - Stage 0:n ExitTime-arvoja säätämällä voidaan välttää päällekkäisyydet muilla asemilla
