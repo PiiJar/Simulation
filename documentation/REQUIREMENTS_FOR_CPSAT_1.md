@@ -131,7 +131,13 @@ Optimointi voi hyödyntää seuraavia vapausasteita parhaan ratkaisun löytämis
   - Valinnan pitää huomioida aseman Group-numero
   - Mahdollistaa kuormituksen tasaamisen rinnakkaisten asemien välillä
 
-### 3. Aikataulutuksen optimointi
+### 3. Nostimen valinta
+- Siirtotehtävän suorittajaksi valitaan sopiva nostin toiminta-alueiden perusteella
+- Nostimen toiminta-alueen tulee kattaa sekä lähtö- että kohdeasema
+- Tulostiedostossa rivillä oleva Transporter kertoo nostimen, joka on tuonut erän kyseiselle asemalle
+- Nostinvalinta huomioi kunkin nostimen käytettävissä olevat asemat
+
+### 4. Aikataulutuksen optimointi
 - Voidaan suunnitella rinnakkaisia käsittelyjä eri asemilla
 - Voidaan minimoida asemien tyhjäkäyntiaikaa
 - Voidaan optimoida siirtymät huomioiden average_task_time ja change_time
