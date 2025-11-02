@@ -191,18 +191,9 @@ Optimointi voi hyödyntää seuraavia vapausasteita parhaan ratkaisun löytämis
 
 Päätavoite on löytää lyhin mahdollinen kokonaistuotantoaika siten, että:
 
-1. Kokonaistuotantoajan määritelmä:
-   - Alkaa hetkestä 00:00:00 (simulaation alku)
-   - Päättyy tulostiedoston suurimpaan ExitTime-arvoon
+1. Optimointitavoite:
    - Kokonaistuotantoaika = max(ExitTime) kaikista tulostiedoston riveistä
-   - Optimoinnin tavoite on minimoida tämä maksimiarvo
-   
-   Huom: Suurin ExitTime ei välttämättä ole:
-   - Viimeisenä linjaan lähteneen erän
-   - Pisimmän käsittelyohjelman erän
-   - Viimeisen aseman tapahtuma
-   
-   Optimointi etsii sellaisen erien ajoituksen, jossa tämä suurin ExitTime on mahdollisimman pieni.
+   - Optimointi minimoi tämän maksimiarvon
 
 2. Tuotantojärjestyksen optimointi:
    - Stage 0:n ExitTime-arvoja säätämällä voidaan välttää päällekkäisyydet muilla asemilla
@@ -237,14 +228,13 @@ Rivien sisältö ja muodostus:
 - Jokainen rivi kuvaa yhden erän tuonnin asemalle
 - Stage 0:sta ei tallenneta rivejä, koska eriä ei tuoda sinne
 - ExitTime on aina EntryTime + kyseisen aseman MinTime
-- Transporter valitaan sen mukaan, minkä nostimen toiminta-alueella sekä nosto- että laskuasema ovat
+- Siirtotehtävän suorittavan nostimen valinta:
+  - Nostimen ajoalueen tulee kattaa sekä nostoasema että laskuasema
   - Stage 0:sta lähteville erille nostin valitaan aloitusaseman (production-tiedostosta) ja ensimmäisen varsinaisen aseman perusteella
 
 Rivien järjestys:
 1. Ensisijainen: Transporter (nostimen mukaan)
 2. Toissijainen: ExitTime (nouseva)
-
-Tiedosto toimii lähtötietona vaiheen 2 nostinoptimoinnille, jossa suunnitellaan nostimien tarkka reititys.
 
 ### Aikamäärittelyt
 - Kaikki ajat ovat sekunteina simulaation alusta (t=0)
