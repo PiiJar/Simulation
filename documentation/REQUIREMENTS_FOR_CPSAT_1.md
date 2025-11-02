@@ -70,11 +70,24 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 1. Ensisijainen: Minimoi kokonaisläpimenoaika (makespan)
 2. Toissijainen: Jätä joustoa käsittelyaikoihin vaihetta 2 varten
 
-## Tulostiedot vaiheelle 2
-1. Erien lähtöajat
-2. Valitut asemat jokaiselle vaiheelle
-3. Käsittelyaikojen alku- ja loppuajat
-4. Asemien varausajat
+## Tulostiedot
+
+### Tulostiedosto: cp_sat_batch_schedule.csv
+Optimoitu aikataulu tallennetaan samaan kansioon lähtötietojen kanssa.
+
+Sarakkeet:
+- Transporter: Nostimen tunniste
+- Batch: Erän numero
+- Station: Valittu asema
+- EntryTime: Asemalle saapumisaika (sekunteina)
+- ExitTime: Asemalta poistumisaika (sekunteina)
+
+Tiedosto sisältää kaikki asemavaraukset aikajärjestyksessä ja toimii lähtötietona vaiheen 2 nostinoptimoinnille.
+
+### Aikamäärittelyt
+- Kaikki ajat ovat sekunteina simulaation alusta (t=0)
+- EntryTime: Hetki jolloin erä on asemalla ja käsittely voi alkaa
+- ExitTime: Hetki jolloin erän käsittely on päättynyt (ei sisällä nostimen siirtoaikaa)
 
 ## Huomioitavaa
 1. Vaihe 1 keskittyy vain asemakapasiteetin optimointiin

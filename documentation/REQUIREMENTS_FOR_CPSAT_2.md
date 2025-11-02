@@ -4,10 +4,24 @@
 Optimoi nostimen siirtotehtävät vaiheen 1 asemavarausaikataulun pohjalta hyödyntäen käsittelyaikojen joustoa.
 
 ## Lähtötiedot
-1. Vaiheen 1 tulokset (asemavaraukset ja alustavat käsittelyajat)
-2. Nostimen siirtymäajat asemien välillä
-3. Käsittelyaikojen MinTime-MaxTime rajat
-4. Transfer_tasks.csv siirtotehtävätiedot
+
+### Vaiheen 1 tulokset
+- `cp_sat_batch_schedule.csv`
+  - Optimoitu asemavarausaikataulu
+  - Sarakkeet: Transporter, Batch, Station, EntryTime, ExitTime
+
+### Muut lähtötiedot
+1. `cp_sat_transfer_tasks.csv`
+   - Nostimen siirtotehtävien tiedot
+   - Siirtymäajat asemien välillä
+
+2. `cp_sat_treatment_program_{batch_id}.csv`
+   - Käsittelyohjelmien MinTime-MaxTime rajat
+   - Käytetään käsittelyaikojen hienosäätöön
+
+3. `cp_sat_stations.csv`
+   - Asemien tiedot ja sijainnit
+   - Tarvitaan nostimen reitityksen optimointiin
 
 ## Optimoinnin muuttujat
 
