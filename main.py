@@ -12,7 +12,7 @@ from generate_matrix import generate_matrix
 from extract_transporter_tasks import extract_transporter_tasks, create_detailed_movements
 from visualize_matrix import visualize_matrix
 from simulation_logger import init_logger
-from generate_production_report import generate_production_report
+
 
 def main():
     from simulation_logger import get_logger
@@ -81,10 +81,12 @@ def main():
 
     # Visualization and reporting
     logger.log('STEP', 'Reporting started')
+
+    from generate_simulation_report import generate_simulation_report
     try:
         visualize_matrix(output_dir)
+        generate_simulation_report(output_dir)
         logger.log('STEP', 'Reporting ready')
-     #   generate_production_report(output_dir)
     except Exception as e:
         error_msg = f'Reporting failed: {str(e)}'
         print(f"❌ {error_msg}")
