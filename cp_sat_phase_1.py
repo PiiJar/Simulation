@@ -118,7 +118,8 @@ class CpSatPhase1Optimizer:
         
         for _, batch in self.batches.iterrows():
             batch_id = batch['Batch']
-            program = self.treatment_programs[batch['Treatment_program']]
+            # Käytä AINA batch-kohtaista ohjelmaa (avaimena batch_id)
+            program = self.treatment_programs[batch_id]
             
             # Stage 0 ExitTime (optimoinnin päämuuttuja)
             self.batch_starts[batch_id] = self.model.NewIntVar(
@@ -168,7 +169,8 @@ class CpSatPhase1Optimizer:
         """Lisää nostimien toiminta-aluerajoitteet."""
         for (batch_id, stage), station_var in self.station_assignments.items():
             # Haetaan vaiheen tiedot käsittelyohjelmasta
-            program = self.treatment_programs[self.batches[self.batches['Batch'] == batch_id]['Treatment_program'].iloc[0]]
+            # Käytä batch-kohtaista ohjelmaa
+            program = self.treatment_programs[batch_id]
             stage_row = program[program['Stage'] == stage].iloc[0]
             if (batch_id, stage) not in self.transporter_assignments:
                 raise KeyError(f"Transporter assignment not found for ({batch_id}, {stage})")
@@ -267,25 +269,28 @@ class CpSatPhase1Optimizer:
                         station1 = self.station_assignments[(b1, s1)]
                         station2 = self.station_assignments[(b2, s2)]
                         exit_b1 = self.exit_times[(b1, s1)]
+                        entry_b1 = self.entry_times[(b1, s1)]
+                        exit_b2 = self.exit_times[(b2, s2)]
                         entry_b2 = self.entry_times[(b2, s2)]
-                        
-                        # Jos asema on sama, vaaditaan vaihtoaika välissä
+
+                        # Sama asema? Vaihtoaika koskee vain tätä tapausta
                         same_station = self.model.NewBoolVar(f'same_station_{b1}_{s1}_{b2}_{s2}')
                         self.model.Add(station1 == station2).OnlyEnforceIf(same_station)
                         self.model.Add(station1 != station2).OnlyEnforceIf(same_station.Not())
-                        
-                        # Jos asema on sama, erän 2 täytyy odottaa että:
-                        # 1. Erä 1 on poistunut 
-                        # 2. Vaihtoaika on kulunut
+
+                        # Jos sama asema, täytyy päättää kumpi menee ensin ja erottaa change_time:lla
+                        b1_before_b2 = self.model.NewBoolVar(f'b1_before_b2_{b1}_{s1}_{b2}_{s2}')
+                        # b2 alkaa vasta kun b1 on poistunut + vaihtoaika
                         self.model.Add(
                             entry_b2 >= exit_b1 + self.change_time
-                        ).OnlyEnforceIf(same_station)
-                        
-                        # Jos asema on eri, ei tarvita vaihtoaikaa
-                        # Ainoa rajoite on että erät eivät voi olla samalla asemalla yhtä aikaa
+                        ).OnlyEnforceIf([same_station, b1_before_b2])
+                        # b1 alkaa vasta kun b2 on poistunut + vaihtoaika
                         self.model.Add(
-                            entry_b2 >= exit_b1
-                        ).OnlyEnforceIf(same_station.Not())
+                            entry_b1 >= exit_b2 + self.change_time
+                        ).OnlyEnforceIf([same_station, b1_before_b2.Not()])
+
+                        # HUOM: jos asema ei ole sama, ei lisätä järjestys- tai väliyhtälöitä
+                        # (rinnakkaisasemat toimivat itsenäisesti, ei change_time-vaatimusta)
                             
     def add_sequence_constraints(self):
         """Lisää erien sisäiset järjestysrajoitteet."""
@@ -319,10 +324,22 @@ class CpSatPhase1Optimizer:
         """Lukitse identtisten erien keskinäinen järjestys."""
         for program_id, batch_list in self.identical_batches.items():
             for i in range(len(batch_list) - 1):
-                # Seuraavan identtisen erän pitää lähteä myöhemmin
+                b_prev = batch_list[i]
+                b_next = batch_list[i + 1]
+                # 1) Stage 0 -tasolla: b_prev start <= b_next start
+                self.model.Add(self.batch_starts[b_prev] <= self.batch_starts[b_next])
+
+                # 2) Varmista myös, että ensimmäisen varsinaisen vaiheen (Stage > 0)
+                #    EntryTime noudattaa samaa järjestystä.
+                prog_prev = self.treatment_programs[b_prev]
+                prog_next = self.treatment_programs[b_next]
+                # Oletus: identtiset erät -> sama vaihejoukko; valitaan pienin Stage > 0
+                first_stage_prev = int(prog_prev[prog_prev['Stage'] > 0]['Stage'].min())
+                first_stage_next = int(prog_next[prog_next['Stage'] > 0]['Stage'].min())
+                # Lukitse järjestys ensimmäisessä varsinaisessa vaiheessa
                 self.model.Add(
-                    self.batch_starts[batch_list[i]] <= 
-                    self.batch_starts[batch_list[i + 1]]
+                    self.entry_times[(b_prev, first_stage_prev)] <=
+                    self.entry_times[(b_next, first_stage_next)]
                 )
                 
     def add_station_group_constraints(self):
@@ -338,9 +355,8 @@ class CpSatPhase1Optimizer:
                 self.model.Add(selected_group == group).OnlyEnforceIf(is_this_station)
                 
             # Varmista että asema on sallitulla välillä stage-kohtaisesti
-            program = self.treatment_programs[self.batches[
-                self.batches['Batch'] == batch_id
-            ]['Treatment_program'].iloc[0]]
+            # Käytä batch-kohtaista ohjelmaa myös tässä
+            program = self.treatment_programs[batch_id]
             stage_row = program[program['Stage'] == stage].iloc[0]
             self.model.Add(station_var >= stage_row['MinStat'])
             self.model.Add(station_var <= stage_row['MaxStat'])
