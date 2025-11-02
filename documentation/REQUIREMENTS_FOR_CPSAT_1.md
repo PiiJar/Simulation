@@ -76,10 +76,14 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 - Vertaillaan kaikki ohjelman parametrit: Stage, MinStat, MaxStat, MinTime, MaxTime
 - Ryhmitellään erät identtisten ohjelmien mukaan
 
-### 2. Symmetrian poisto
+### 2. Identtisten erien tunnistaminen ja symmetrian poisto
+- Erät ovat identtisiä, jos niillä on sama käsittelyohjelma
+  - Treatment_program määrittää identtisyyden
+  - Kaikki käsittelyohjelman parametrit tulevat samasta tiedostosta
+  - Ohjelma määrää kaikki vaiheet, ajat ja asemavalinnat
 - Identtisten erien keskinäisen järjestyksen vaihtaminen ei vaikuta kokonaisoptimiin
-- Jos erät A ja B ovat identtisiä, niiden järjestyksen vaihtaminen tuottaisi saman tuloksen
-- Karsitaan turhat vaihtoehdot säilyttämällä alkuperäinen järjestys
+  - Jos erät A ja B ovat identtisiä, niiden järjestyksen vaihtaminen tuottaisi saman tuloksen
+  - Karsitaan turhat vaihtoehdot säilyttämällä alkuperäinen järjestys
 
 ### 3. Optimoinnin tehostaminen
 - Lisätään rajoite: identtisen ryhmän sisällä erä N aloittaa ennen erää N+1
