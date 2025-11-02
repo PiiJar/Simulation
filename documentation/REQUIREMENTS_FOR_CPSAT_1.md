@@ -116,19 +116,31 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 - Asemavalinta sallittu vain saman Group-numeron sisällä
 - MinStat-MaxStat määrittelee valittavissa olevat asemat
 
-## Vapausasteet
+## Optimoinnin vapausasteet
 
-### 1. Erien järjestys
-- Erien keskinäinen käsittelyjärjestys on vapaa
-- Poikkeus: identtiset erät käsitellään alkuperäisessä järjestyksessä
+Optimointi voi hyödyntää seuraavia vapausasteita parhaan ratkaisun löytämiseksi:
 
-### 2. Asemavalinta
-- Vapaa valinta MinStat-MaxStat väliltä saman Group-numeron sisällä
-- Mahdollistaa rinnakkaisten asemien tehokkaan käytön
+### 1. Erien lähtöjärjestys ja -ajat
+- Erien keskinäinen suoritusjärjestys on täysin vapaasti valittavissa
+- Poikkeus: identtiset erät (sama käsittelyohjelma) käsitellään alkuperäisessä järjestyksessä
+- Jokaisen erän lähtöaika (Stage 0) on vapaasti valittavissa välillä [0, MAX_TIME]
 
-### 3. Käsittelyajat
-- Käytetään aina käsittelyohjelman minimiaikaa (MinTime)
-- Yksinkertaistettu malli: ei käsittelyaikojen optimointia
+### 2. Rinnakkaisten asemien käyttö
+- Jos käsittelyohjelma sallii useamman aseman (MinStat < MaxStat):
+  - Voidaan valita mikä tahansa asema väliltä MinStat-MaxStat
+  - Valinnan pitää huomioida aseman Group-numero
+  - Mahdollistaa kuormituksen tasaamisen rinnakkaisten asemien välillä
+
+### 3. Aikataulutuksen optimointi
+- Voidaan suunnitella rinnakkaisia käsittelyjä eri asemilla
+- Voidaan minimoida asemien tyhjäkäyntiaikaa
+- Voidaan optimoida siirtymät huomioiden average_task_time ja change_time
+
+### Rajoitetut vapausasteet (ei optimoida vaiheessa 1)
+1. Käsittelyajat: käytetään aina MinTime-arvoja
+2. Erän sisäinen vaihejärjestys: noudatetaan käsittelyohjelmaa
+3. Nostimen reititys: käytetään keskimääräisiä siirtoaikoja
+4. Identtisten erien järjestys: säilytetään alkuperäinen järjestys
 
 ## Optimoinnin tavoite
 1. Minimoi kokonaisläpimenoaika (makespan) käyttäen minimiaikoja
