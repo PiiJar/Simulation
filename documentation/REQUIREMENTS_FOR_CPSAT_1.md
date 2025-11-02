@@ -161,13 +161,17 @@ Optimoitu aikataulu tallennetaan samaan kansioon lähtötietojen kanssa.
 Sarakkeet:
 - Transporter: Nostimen tunniste
 - Batch: Erän numero
-- TreatmentProgram: Käsittelyohjelman numero
-- Stage: Käsittelyohjelman vaihe
+- Treatment_program: Käsittelyohjelman numero
+- Stage: Käsittelyohjelman vaihe (0 = aloitusasema)
 - Station: Valittu asema
 - EntryTime: Asemalle saapumisaika (sekunteina)
 - ExitTime: Asemalta poistumisaika (sekunteina)
 
-Tiedosto sisältää kaikki asemavaraukset aikajärjestyksessä ja toimii lähtötietona vaiheen 2 nostinoptimoinnille.
+Rivit järjestetään ExitTime-kentän mukaan nousevaan järjestykseen. Tämä on luontevaa, koska:
+1. ExitTime määrittää milloin erä on valmis siirrettäväksi seuraavaan vaiheeseen
+2. Vaiheen 2 nostinoptimointi käyttää ExitTime-aikoja siirtotehtävien aloitusaikoina
+
+Tiedosto toimii lähtötietona vaiheen 2 nostinoptimoinnille.
 
 ### Aikamäärittelyt
 - Kaikki ajat ovat sekunteina simulaation alusta (t=0)
