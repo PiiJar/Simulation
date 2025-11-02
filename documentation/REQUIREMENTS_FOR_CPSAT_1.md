@@ -108,13 +108,20 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 
 ### 1. Asemien yksikäyttöisyys ja vaihtoaika
 - Yhdellä asemalla voi olla vain yksi erä kerrallaan
-- Vaihtoajan käyttö asemilla:
-  - Jos erä B on tulossa asemalle, jolla erä A on:
+
+- Vaihtoajan käyttö:
+  - Vaihtoaikaa tarvitaan VAIN kun erä B on tulossa SAMALLE asemalle, jolla erä A on
+  - Tässä tilanteessa:
     1. Erä A pitää ensin viedä pois asemalta
     2. Vaihtoajan (change_time) verran aikaa kuluu
     3. Vasta sitten erä B voi tulla asemalle
   - Vaihtoaika = 2 × average_task_time
-  - Rajoite: Jos erä A poistuu asemalta hetkellä t, seuraava erä B voi saapua aikaisintaan hetkellä t + change_time
+  - Rajoite: Jos erä A poistuu asemalta hetkellä t, seuraava erä B voi saapua samalle asemalle aikaisintaan hetkellä t + change_time
+
+- Rinnakkaisasemien käyttö:
+  - Jos löytyy vapaa rinnakkainen asema (sama Group), erä B voi mennä sille välittömästi
+  - Vaihtoaikaa EI tarvita, koska kyseessä on eri asema
+  - Rinnakkaisasemat toimivat täysin itsenäisesti
 - Stage 0 on poikkeus:
   - On virtuaalinen aloitusasema, ei fyysinen asema
   - Sallii erien päällekkäisen läsnäolon
