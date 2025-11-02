@@ -4,9 +4,25 @@
 Optimoi erien käsittelyaikataulu asemilla huomioiden vain asemavaraukset ja käsittelyajat, ei nostimen rajoitteita.
 
 ## Lähtötiedot
-1. Erät ja niiden käsittelyohjelmat
-2. Asemien tiedot (MinStat-MaxStat, Group)
-3. Käsittelyaikojen rajat (MinTime-MaxTime)
+
+### Tiedostorakenne
+Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
+
+1. `cp_sat_batches.csv`
+   - Lista käsiteltävistä eristä
+   - Sarakkeet: Batch, Treatment_program
+
+2. `cp_sat_stations.csv`
+   - Asemien tiedot
+   - Sarakkeet: Station, Group (asemaryhmä)
+
+3. `cp_sat_treatment_program_{batch_id}.csv`
+   - Eräkohtaiset käsittelyohjelmat
+   - Sarakkeet: Stage, MinStat, MaxStat, MinTime, MaxTime
+
+4. `cp_sat_transfer_tasks.csv`
+   - Siirtotehtävien tiedot (ei käytetä vaiheessa 1)
+   - Säilytetään vaihetta 2 varten
 
 ## Optimoinnin muuttujat
 
@@ -65,3 +81,7 @@ Optimoi erien käsittelyaikataulu asemilla huomioiden vain asemavaraukset ja kä
 2. Ratkaisun on oltava toteutuskelpoinen myös nostinrajoitteiden kanssa
 3. Käsittelyaikoihin jätettävä riittävästi joustoa vaihetta 2 varten
 4. Tulos muodostaa lähtökohdan nostinoptimoinnille
+5. Toteutus voi hyödyntää nykyistä cp_sat_optimization.py rakennetta:
+   - Sama tiedostorakenne ja nimeämiskäytännöt
+   - Sama muuttujien alustuslogiikka
+   - Vain rajoitteet ja tavoitefunktio muuttuvat
