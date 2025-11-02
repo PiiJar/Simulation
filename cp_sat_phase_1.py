@@ -12,6 +12,12 @@ import os
 import pandas as pd
 from ortools.sat.python import cp_model
 
+# Visualisointi: käytetään olemassa olevaa skriptiä jos saatavilla
+try:
+    import visualize_schedule  # provides plot_schedule(df, output_dir, filename)
+except Exception:
+    visualize_schedule = None
+
 def load_input_data(output_dir):
     """Lataa kaikki tarvittavat lähtötiedot."""
     cp_sat_dir = os.path.join(output_dir, "cp_sat")
@@ -229,6 +235,13 @@ class CpSatPhase1Optimizer:
             
             # Käy läpi erän vaiheet järjestyksessä (paitsi Stage 0)
             stages = program[program['Stage'] > 0].sort_values('Stage')
+
+            # Stage 0 -> ensimmäinen varsinainen vaihe: täsmälleen average_task_time siirtoa
+            if not stages.empty:
+                first_stage = int(stages.iloc[0]['Stage'])
+                first_entry = self.entry_times[(batch_id, first_stage)]
+                start_exit = self.batch_starts[batch_id]  # Stage 0 ExitTime
+                self.model.Add(first_entry == start_exit + self.average_task_time)
             for i in range(len(stages) - 1):
                 curr_stage = stages.iloc[i]['Stage']
                 next_stage = stages.iloc[i + 1]['Stage']
@@ -237,10 +250,10 @@ class CpSatPhase1Optimizer:
                 curr_station = self.station_assignments[(batch_id, curr_stage)]
                 next_station = self.station_assignments[(batch_id, next_stage)]
                 
-                # Vaatimusten mukaan siirtoaika on AINA average_task_time
+                # Vaatimusten mukaan siirtoaika on AINA täsmälleen average_task_time
                 curr_exit = self.exit_times[(batch_id, curr_stage)]
                 next_entry = self.entry_times[(batch_id, next_stage)]
-                self.model.Add(next_entry >= curr_exit + self.average_task_time)
+                self.model.Add(next_entry == curr_exit + self.average_task_time)
         
         # 2. Asemavaraukset ja vaihtoajat (ERI ERIEN välillä)
         for _, batch1 in self.batches.iterrows():
@@ -468,6 +481,18 @@ class CpSatPhase1Optimizer:
         cp_sat_dir = os.path.join(self.output_dir, "cp_sat")
         result_path = os.path.join(cp_sat_dir, "cp_sat_batch_schedule.csv")
         df.to_csv(result_path, index=False)
+        print(f"Tallennettu aikataulu: {result_path}")
+
+        # Vaihe 1: Lisää yksinkertainen visualisointi heti aikataulun tallennuksen jälkeen
+        try:
+            if visualize_schedule is not None and hasattr(visualize_schedule, "plot_schedule"):
+                out_img = visualize_schedule.plot_schedule(df, self.output_dir, filename="schedule_gantt.png")
+                print(f"Tallennettu visualisointi: {out_img}")
+            else:
+                # Fallback: ei visualisointimoduulia saatavilla
+                print("Visualisointimoduulia ei löytynyt – ohitetaan kuvagenerointi vaiheessa 1.")
+        except Exception as viz_err:
+            print(f"Visualisoinnin luonti epäonnistui: {viz_err}")
         
         return df
 
