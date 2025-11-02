@@ -1,7 +1,24 @@
 # Vaatimusmäärittely CP-SAT Vaihe 1: Asemaoptimointi
 
 ## Tavoite
-Optimoi erien käsittelyaikataulu asemilla huomioiden vain asemavaraukset ja käsittelyajat, ei nostimen rajoitteita.
+Muodostaa kokonaiskestoltaan lyhin tuotantosuunnitelma, joka määrittää erien lähtöaikataulun ja -järjestyksen. Optimointi huomioi vain asemavaraukset ja yksinkertaistetut siirtoajat.
+
+## Perusperiaatteet
+
+### 1. Käsittelyohjelmien noudattaminen
+- Erän vaiheet on suoritettava käsittelyohjelman määräämässä järjestyksessä
+- Jokaisessa vaiheessa käytetään käsittelyohjelman minimiaikaa (MinTime)
+
+### 2. Asemavaraukset
+- Yhdellä asemalla voi olla vain yksi erä kerrallaan
+- Jos käsittelyohjelma sallii rinnakkaiset asemat (MinStat-MaxStat), valitaan vapaa asema
+- Erän siirtyminen asemalta toiselle kestää average_task_time
+- Kahden erän välillä samalla asemalla oltava change_time (2 × average_task_time)
+
+### 3. Optimoinnin tavoite
+- Minimoidaan kokonaistuotantoaika (viimeisen erän viimeisen vaiheen päättymisaika)
+- Yksinkertaistettu malli: käytetään keskimääräisiä siirtoaikoja
+- Luodaan pohja vaiheen 2 nostinoptimoinnille
 
 ## Toimintaperiaate
 
@@ -80,8 +97,8 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 - Huomioitava Group-rajoitteet
 
 ### 3. Käsittelyajat
-- Jokaisen vaiheen käsittelyaika MinTime-MaxTime välillä
-- Vaiheessa 1 voidaan käyttää maksimiaikoja, jotta jää joustoa vaiheeseen 2
+- Käytetään aina käsittelyohjelman minimiaikaa (MinTime)
+- Käsittelyaikaa ei säädetä - jätetään se vaiheen 2 optimoinnille
 
 ## Rajoitteet
 
@@ -110,12 +127,13 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 - Mahdollistaa rinnakkaisten asemien tehokkaan käytön
 
 ### 3. Käsittelyajat
-- Säädettävissä MinTime-MaxTime rajoissa
-- Vaiheessa 1 suositaan pidempiä aikoja jouston mahdollistamiseksi
+- Käytetään aina käsittelyohjelman minimiaikaa (MinTime)
+- Yksinkertaistettu malli: ei käsittelyaikojen optimointia
 
 ## Optimoinnin tavoite
-1. Ensisijainen: Minimoi kokonaisläpimenoaika (makespan)
-2. Toissijainen: Jätä joustoa käsittelyaikoihin vaihetta 2 varten
+1. Minimoi kokonaisläpimenoaika (makespan) käyttäen minimiaikoja
+2. Muodosta toteutuskelpoinen aikataulu huomioiden siirto- ja vaihtoajat
+3. Luo pohja vaiheen 2 nostinoptimoinnille
 
 ## Tulostiedot
 
