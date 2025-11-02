@@ -126,10 +126,16 @@ Optimointi voi hyödyntää seuraavia vapausasteita parhaan ratkaisun löytämis
 ### 1. Erien lähtöjärjestys ja -ajat
 - Erien keskinäinen suoritusjärjestys on täysin vapaasti valittavissa
 - Poikkeus: identtiset erät (sama käsittelyohjelma) käsitellään alkuperäisessä järjestyksessä
-- Stage 0:n ExitTime on keskeinen optimoinnin vapausaste
+
+### 2. Stage 0:n rooli optimoinnissa
+- Stage 0:n ExitTime on optimoinnin keskeinen säätömuuttuja
   - Määrittää kunkin erän todellisen lähtöhetken prosessiin
   - Voidaan valita vapaasti väliltä [0, MAX_TIME]
-  - Erät voivat olla Stage 0:lla päällekkäin, mutta niiden ExitTime-arvot määräävät todellisen prosessiin lähtöjärjestyksen
+  - Säätämällä näitä aikoja voidaan välttää päällekkäisyydet muilla asemilla
+- Stage 0 on virtuaalinen aloitusasema
+  - Erät voivat olla Stage 0:lla päällekkäin
+  - ExitTime-arvot määräävät erien todellisen prosessiin lähtöjärjestyksen
+  - Toimii optimoinnin työkaluna asemavarausten ajoituksessa
 
 ### 2. Rinnakkaisten asemien käyttö
 - Jos käsittelyohjelma sallii useamman aseman (MinStat < MaxStat):
@@ -164,9 +170,20 @@ Optimointi voi hyödyntää seuraavia vapausasteita parhaan ratkaisun löytämis
 4. Identtisten erien järjestys: säilytetään alkuperäinen järjestys
 
 ## Optimoinnin tavoite
-1. Minimoi kokonaisläpimenoaika (makespan) käyttäen minimiaikoja
-2. Muodosta toteutuskelpoinen aikataulu huomioiden siirto- ja vaihtoajat
-3. Luo pohja vaiheen 2 nostinoptimoinnille
+
+Päätavoite on löytää lyhin mahdollinen kokonaistuotantoaika siten, että:
+
+1. Erät eivät ole päällekkäin asemilla (pois lukien Stage 0)
+   - Stage 0:n ExitTime-arvoja säätämällä voidaan välttää päällekkäisyydet muilla asemilla
+   - Jokaisella asemalla voi olla vain yksi erä kerrallaan
+
+2. Käsittelyaikoja ei optimoida vaiheessa 1
+   - Käytetään käsittelyohjelman MinTime-arvoja
+   - Käsittelyaikojen säätö jätetään vaiheen 2 optimoinnille
+
+3. Tulos toimii pohjana vaiheen 2 nostinoptimoinnille
+   - Varmistetaan asemavarausten toteutuskelpoisuus
+   - Huomioidaan siirto- ja vaihtoajat
 
 ## Tulostiedot
 
