@@ -167,9 +167,10 @@ Sarakkeet:
 - EntryTime: Asemalle saapumisaika (sekunteina)
 - ExitTime: Asemalta poistumisaika (sekunteina)
 
-Rivit järjestetään ExitTime-kentän mukaan nousevaan järjestykseen. Tämä on luontevaa, koska:
-1. ExitTime määrittää milloin erä on valmis siirrettäväksi seuraavaan vaiheeseen
-2. Vaiheen 2 nostinoptimointi käyttää ExitTime-aikoja siirtotehtävien aloitusaikoina
+Rivit järjestetään ensisijaisesti Transporter-kentän ja toissijaisesti ExitTime-kentän mukaan nousevaan järjestykseen. Tämä järjestys on optimaalinen koska:
+1. Nostinkohtainen ryhmittely (Transporter) selkeyttää kunkin nostimen työjonoa
+2. Nostimen sisällä ExitTime määrittää milloin erä on valmis siirrettäväksi seuraavaan vaiheeseen
+3. Järjestys tukee vaiheen 2 nostinkohtaista reittioptimointia
 
 Tiedosto toimii lähtötietona vaiheen 2 nostinoptimoinnille.
 
