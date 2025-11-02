@@ -104,7 +104,10 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 
 ### 1. Asemien yksikäyttöisyys ja vaihtoaika
 - Yhdellä asemalla voi olla vain yksi erä kerrallaan
-- Poikkeus: Stage 0 (aloitusasema) sallii päällekkäisyydet
+- Poikkeus: Stage 0 (virtuaalinen aloitusasema)
+  - Sallii erien päällekkäisen läsnäolon
+  - ExitTime määrittää erän todellisen lähtöhetken prosessiin
+  - Toimii optimoinnin työkaluna erien ajoituksen suunnittelussa
 - Peräkkäisten erien välillä oltava vähintään change_time (2 × average_task_time)
 - Rajoite: Jos erä A poistuu asemalta hetkellä t, seuraava erä B voi saapua aikaisintaan hetkellä t + change_time
 
@@ -123,7 +126,10 @@ Optimointi voi hyödyntää seuraavia vapausasteita parhaan ratkaisun löytämis
 ### 1. Erien lähtöjärjestys ja -ajat
 - Erien keskinäinen suoritusjärjestys on täysin vapaasti valittavissa
 - Poikkeus: identtiset erät (sama käsittelyohjelma) käsitellään alkuperäisessä järjestyksessä
-- Jokaisen erän lähtöaika (Stage 0) on vapaasti valittavissa välillä [0, MAX_TIME]
+- Stage 0:n ExitTime on keskeinen optimoinnin vapausaste
+  - Määrittää kunkin erän todellisen lähtöhetken prosessiin
+  - Voidaan valita vapaasti väliltä [0, MAX_TIME]
+  - Erät voivat olla Stage 0:lla päällekkäin, mutta niiden ExitTime-arvot määräävät todellisen prosessiin lähtöjärjestyksen
 
 ### 2. Rinnakkaisten asemien käyttö
 - Jos käsittelyohjelma sallii useamman aseman (MinStat < MaxStat):
