@@ -223,20 +223,26 @@ Päätavoite on löytää lyhin mahdollinen kokonaistuotantoaika siten, että:
 Optimoitu aikataulu tallennetaan samaan kansioon lähtötietojen kanssa.
 
 Sarakkeet:
-- Transporter: Nostimen tunniste
+- Transporter: Nostimen tunniste, joka toi erän tälle asemalle
 - Batch: Erän numero
 - Treatment_program: Käsittelyohjelman numero
-- Stage: Käsittelyohjelman vaihe (0 = aloitusasema)
-- Station: Valittu asema
+- Stage: Käsittelyohjelman vaihe
+- Station: Asema jolle erä tuotiin
 - EntryTime: Asemalle saapumisaika (sekunteina)
-- ExitTime: Asemalta poistumisaika (sekunteina)
+- ExitTime: Asemalta poistumisaika (EntryTime + MinTime kyseisellä asemalla)
 
-Rivit järjestetään ensisijaisesti Transporter-kentän ja toissijaisesti ExitTime-kentän mukaan nousevaan järjestykseen. Tämä järjestys on optimaalinen koska:
-1. Nostinkohtainen ryhmittely (Transporter) selkeyttää kunkin nostimen työjonoa
-2. Nostimen sisällä ExitTime määrittää milloin erä on valmis siirrettäväksi seuraavaan vaiheeseen
-3. Järjestys tukee vaiheen 2 nostinkohtaista reittioptimointia
+Rivien sisältö ja muodostus:
+- Jokainen rivi kuvaa yhden erän tuonnin asemalle
+- Stage 0:sta ei tallenneta rivejä, koska eriä ei tuoda sinne
+- ExitTime on aina EntryTime + kyseisen aseman MinTime
+- Transporter valitaan sen mukaan, minkä nostimen toiminta-alueella sekä nosto- että laskuasema ovat
+  - Stage 0:sta lähteville erille nostin valitaan aloitusaseman (production-tiedostosta) ja ensimmäisen varsinaisen aseman perusteella
 
-Tiedosto toimii lähtötietona vaiheen 2 nostinoptimoinnille.
+Rivien järjestys:
+1. Ensisijainen: Transporter (nostimen mukaan)
+2. Toissijainen: ExitTime (nouseva)
+
+Tiedosto toimii lähtötietona vaiheen 2 nostinoptimoinnille, jossa suunnitellaan nostimien tarkka reititys.
 
 ### Aikamäärittelyt
 - Kaikki ajat ovat sekunteina simulaation alusta (t=0)
