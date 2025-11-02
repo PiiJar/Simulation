@@ -21,8 +21,24 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
    - Sarakkeet: Stage, MinStat, MaxStat, MinTime, MaxTime
 
 4. `cp_sat_transfer_tasks.csv`
-   - Siirtotehtävien tiedot (ei käytetä vaiheessa 1)
-   - Säilytetään vaihetta 2 varten
+   - Käytetään vaihtoajan (batch_change_time) laskentaan
+   - Sarakkeet: From_Station, To_Station, TotalTaskTime, ...
+   - TotalTaskTime-sarakkeesta lasketaan keskimääräinen siirtoaika
+
+### Siirtoaikojen käsittely
+
+1. Keskimääräinen siirtoaika (average_task_time)
+   - Lasketaan `cp_sat_transfer_tasks.csv` tiedoston TotalTaskTime-sarakkeen keskiarvo
+   - Kuvaa yhden siirtotehtävän keskimääräistä kestoa
+
+2. Vaihtoaika (change_time)
+   - change_time = 2 × average_task_time
+   - Huomioi sekä edellisen erän poiston että seuraavan erän tuonnin
+   - Käytetään minimiaikana kahden erän välillä samalla asemalla
+
+3. Käyttö optimoinnissa
+   - Asemavarausten väliin jätettävä vähintään change_time
+   - Varmistaa että nostimella on riittävästi aikaa siirtotehtäville
 
 ## Optimoinnin muuttujat
 
@@ -40,9 +56,11 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 
 ## Rajoitteet
 
-### 1. Asemien yksikäyttöisyys
+### 1. Asemien yksikäyttöisyys ja vaihtoaika
 - Yhdellä asemalla voi olla vain yksi erä kerrallaan
 - Poikkeus: Stage 0 (aloitusasema) sallii päällekkäisyydet
+- Peräkkäisten erien välillä oltava vähintään change_time (2 × average_task_time)
+- Rajoite: Jos erä A poistuu asemalta hetkellä t, seuraava erä B voi saapua aikaisintaan hetkellä t + change_time
 
 ### 2. Erän sisäinen järjestys
 - Erän vaiheet suoritettava määritellyssä järjestyksessä
