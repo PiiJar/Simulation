@@ -3,6 +3,18 @@
 ## Tavoite
 Optimoi erien käsittelyaikataulu asemilla huomioiden vain asemavaraukset ja käsittelyajat, ei nostimen rajoitteita.
 
+## Toimintaperiaate
+
+### 1. Esikäsittely ja symmetrian poisto
+- Tunnistetaan identtiset erät (sama käsittelyohjelma)
+- Lukitaan identtisten erien keskinäinen järjestys
+- Karsitaan symmetriset vaihtoehdot jo ennen optimointia
+
+### 2. Varsinainen optimointi
+- Optimoidaan vain tarvittavat vaihtoehdot
+- Hyödynnetään esikäsittelyn karsimia symmetrioita
+- Nopeuttaa merkittävästi ratkaisun löytymistä
+
 ## Lähtötiedot
 
 ### Tiedostorakenne
@@ -39,6 +51,23 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 3. Käyttö optimoinnissa
    - Asemavarausten väliin jätettävä vähintään change_time
    - Varmistaa että nostimella on riittävästi aikaa siirtotehtäville
+
+## Optimoinnin esikäsittely
+
+### 1. Identtisten erien tunnistaminen
+- Erät ovat identtisiä, jos niillä on täsmälleen sama käsittelyohjelma
+- Vertaillaan kaikki ohjelman parametrit: Stage, MinStat, MaxStat, MinTime, MaxTime
+- Ryhmitellään erät identtisten ohjelmien mukaan
+
+### 2. Symmetrian poisto
+- Identtisten erien keskinäisen järjestyksen vaihtaminen ei vaikuta kokonaisoptimiin
+- Jos erät A ja B ovat identtisiä, niiden järjestyksen vaihtaminen tuottaisi saman tuloksen
+- Karsitaan turhat vaihtoehdot säilyttämällä alkuperäinen järjestys
+
+### 3. Optimoinnin tehostaminen
+- Lisätään rajoite: identtisen ryhmän sisällä erä N aloittaa ennen erää N+1
+- Vähentää merkittävästi tutkittavien vaihtoehtojen määrää
+- Nopeuttaa optimaalisen ratkaisun löytymistä
 
 ## Optimoinnin muuttujat
 
