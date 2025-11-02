@@ -143,6 +143,8 @@ Optimoitu aikataulu tallennetaan samaan kansioon lähtötietojen kanssa.
 Sarakkeet:
 - Transporter: Nostimen tunniste
 - Batch: Erän numero
+- TreatmentProgram: Käsittelyohjelman numero
+- Stage: Käsittelyohjelman vaihe
 - Station: Valittu asema
 - EntryTime: Asemalle saapumisaika (sekunteina)
 - ExitTime: Asemalta poistumisaika (sekunteina)
