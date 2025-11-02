@@ -217,19 +217,38 @@ class CpSatPhase1Optimizer:
                 ).OnlyEnforceIf(can_handle)
                 
     def add_station_constraints(self):
-        """Lisää asemien käyttörajoitteet."""
-        # Stage 0:lla saa olla päällekkäisiä eriä, muilla asemilla ei
+        """Lisää asemien käyttörajoitteet ja siirtoajat täsmälleen vaatimusten mukaan."""
+        # 1. Siirtoajat asemalta toiselle (SAMAN ERÄN sisällä)
+        for _, batch in self.batches.iterrows():
+            batch_id = int(batch['Batch'])
+            if batch_id not in self.treatment_programs:
+                raise KeyError(f"Treatment program not found for batch {batch_id}")
+            program = self.treatment_programs[batch_id]
+            
+            # Käy läpi erän vaiheet järjestyksessä (paitsi Stage 0)
+            stages = program[program['Stage'] > 0].sort_values('Stage')
+            for i in range(len(stages) - 1):
+                curr_stage = stages.iloc[i]['Stage']
+                next_stage = stages.iloc[i + 1]['Stage']
+                
+                # Hae todelliset asemien numerot
+                curr_station = self.station_assignments[(batch_id, curr_stage)]
+                next_station = self.station_assignments[(batch_id, next_stage)]
+                
+                # Vaatimusten mukaan siirtoaika on AINA average_task_time
+                curr_exit = self.exit_times[(batch_id, curr_stage)]
+                next_entry = self.entry_times[(batch_id, next_stage)]
+                self.model.Add(next_entry >= curr_exit + self.average_task_time)
+        
+        # 2. Asemavaraukset ja vaihtoajat (ERI ERIEN välillä)
         for _, batch1 in self.batches.iterrows():
             b1 = int(batch1['Batch'])
-            if b1 not in self.treatment_programs:
-                raise KeyError(f"Treatment program not found for batch {b1}")
             prog1 = self.treatment_programs[b1]
             
             for _, batch2 in self.batches.iterrows():
                 if b1 >= batch2['Batch']:  # Vältä tuplataarkistukset
                     continue
                     
-                b2 = batch2['Batch']
                 b2 = int(batch2['Batch'])
                 prog2 = self.treatment_programs[b2]
                 
@@ -241,44 +260,32 @@ class CpSatPhase1Optimizer:
                         
                     for _, stage2 in prog2.iterrows():
                         s2 = stage2['Stage']
-                        if s2 == 0:  # Stage 0:lla saa olla päällekkäisyyksiä
+                        if s2 == 0:
                             continue
-                            
-                        # Tarkista voivatko vaiheet käyttää samaa asemaa
+                        
+                        # 1. Tarkista käyttävätkö erät samaa asemaa
                         station1 = self.station_assignments[(b1, s1)]
                         station2 = self.station_assignments[(b2, s2)]
-                        
-                        same_station = self.model.NewBoolVar(
-                            f'same_station_{b1}_{s1}_{b2}_{s2}'
-                        )
-                        self.model.Add(
-                            station1 == station2
-                        ).OnlyEnforceIf(same_station)
-                        
-                        # Jos käyttävät samaa asemaa, varmista ettei päällekkäisyyttä
                         exit_b1 = self.exit_times[(b1, s1)]
                         entry_b2 = self.entry_times[(b2, s2)]
                         
-                        # Joko b2 alkaa b1:n jälkeen + vaihtoaika
-                        b2_after_b1 = self.model.NewBoolVar(
-                            f'b2_after_b1_{b1}_{s1}_{b2}_{s2}'
-                        )
+                        # Jos asema on sama, vaaditaan vaihtoaika välissä
+                        same_station = self.model.NewBoolVar(f'same_station_{b1}_{s1}_{b2}_{s2}')
+                        self.model.Add(station1 == station2).OnlyEnforceIf(same_station)
+                        self.model.Add(station1 != station2).OnlyEnforceIf(same_station.Not())
+                        
+                        # Jos asema on sama, erän 2 täytyy odottaa että:
+                        # 1. Erä 1 on poistunut 
+                        # 2. Vaihtoaika on kulunut
                         self.model.Add(
                             entry_b2 >= exit_b1 + self.change_time
-                        ).OnlyEnforceIf([same_station, b2_after_b1])
-                        
-                        # Tai b1 alkaa b2:n jälkeen + vaihtoaika
-                        b1_after_b2 = self.model.NewBoolVar(
-                            f'b1_after_b2_{b1}_{s1}_{b2}_{s2}'
-                        )
-                        self.model.Add(
-                            entry_b2 + self.change_time <= exit_b1
-                        ).OnlyEnforceIf([same_station, b1_after_b2])
-                        
-                        # Pakota valitsemaan toinen järjestys jos sama asema
-                        self.model.Add(
-                            b1_after_b2 + b2_after_b1 == 1
                         ).OnlyEnforceIf(same_station)
+                        
+                        # Jos asema on eri, ei tarvita vaihtoaikaa
+                        # Ainoa rajoite on että erät eivät voi olla samalla asemalla yhtä aikaa
+                        self.model.Add(
+                            entry_b2 >= exit_b1
+                        ).OnlyEnforceIf(same_station.Not())
                             
     def add_sequence_constraints(self):
         """Lisää erien sisäiset järjestysrajoitteet."""
