@@ -128,7 +128,10 @@ Optimointi voi hyödyntää seuraavia vapausasteita parhaan ratkaisun löytämis
 ### 2. Rinnakkaisten asemien käyttö
 - Jos käsittelyohjelma sallii useamman aseman (MinStat < MaxStat):
   - Voidaan valita mikä tahansa asema väliltä MinStat-MaxStat
-  - Valinnan pitää huomioida aseman Group-numero
+  - Valinnan pitää huomioida aseman Group-numero (vain saman ryhmän asemat)
+  - Valinta tehdään yksinkertaisella kierrätyksellä (round-robin)
+    - Valitaan seuraava vapaa asema MinStat-MaxStat väliltä
+    - Jos ryhmässä on asemat 101, 102, 103 ja edellinen käytti 102:ta, seuraava käyttää 103:a jne.
   - Mahdollistaa kuormituksen tasaamisen rinnakkaisten asemien välillä
 
 ### 3. Nostimen valinta
