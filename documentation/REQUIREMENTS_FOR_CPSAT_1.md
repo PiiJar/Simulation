@@ -209,11 +209,13 @@ Päätavoite on löytää lyhin mahdollinen kokonaistuotantoaika siten, että:
    - Jokaisella asemalla voi olla vain yksi erä kerrallaan (pois lukien Stage 0)
    - Erien erilaisten käsittelyohjelmien pituudet huomioidaan lähtöjärjestyksessä
 
-3. Käsittelyaikoja ei optimoida vaiheessa 1:
-   - Käytetään käsittelyohjelman MinTime-arvoja
-   - Käsittelyaikojen säätö jätetään vaiheen 2 optimoinnille
+### 2. Käsittelyajat ja asemavaraukset
+   - Käytetään käsittelyohjelman MinTime-arvoja kaikissa vaiheissa
+   - Jokainen vaihe käsitellään samalla tavalla
+   - Käsittelyaika on aina EntryTime + MinTime kyseisellä asemalla
+   - Tämä koskee myös käsittelyohjelman viimeistä vaihetta
 
-4. Tulos toimii pohjana vaiheen 2 nostinoptimoinnille:
+3. Tulos toimii pohjana vaiheen 2 nostinoptimoinnille:
    - Varmistetaan asemavarausten toteutuskelpoisuus
    - Huomioidaan siirto- ja vaihtoajat
 
