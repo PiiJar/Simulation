@@ -136,6 +136,12 @@ Optimointi voi hyödyntää seuraavia vapausasteita parhaan ratkaisun löytämis
 - Voidaan minimoida asemien tyhjäkäyntiaikaa
 - Voidaan optimoida siirtymät huomioiden average_task_time ja change_time
 
+### 4. Nostimen tehtävien ajoitus
+- Ei tarvitse huomioida nostimen mahdollisia päällekkäisiä tehtäviä
+- Riittää että asemavarausten välissä on change_time
+- Nostimen todellinen reititys ja kapasiteetti ratkaistaan vaiheessa 2
+- Mahdollistaa yksinkertaisemman optimointimallin vaiheessa 1
+
 ### Rajoitetut vapausasteet (ei optimoida vaiheessa 1)
 1. Käsittelyajat: käytetään aina MinTime-arvoja
 2. Erän sisäinen vaihejärjestys: noudatetaan käsittelyohjelmaa
