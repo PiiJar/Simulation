@@ -108,12 +108,19 @@ Optimointi käyttää samoja lähtötietoja kuin nykyinen toteutus:
 
 ### 1. Asemien yksikäyttöisyys ja vaihtoaika
 - Yhdellä asemalla voi olla vain yksi erä kerrallaan
-- Poikkeus: Stage 0 (virtuaalinen aloitusasema)
+- Vaihtoajan käyttö asemilla:
+  - Jos erä B on tulossa asemalle, jolla erä A on:
+    1. Erä A pitää ensin viedä pois asemalta
+    2. Vaihtoajan (change_time) verran aikaa kuluu
+    3. Vasta sitten erä B voi tulla asemalle
+  - Vaihtoaika = 2 × average_task_time
+  - Rajoite: Jos erä A poistuu asemalta hetkellä t, seuraava erä B voi saapua aikaisintaan hetkellä t + change_time
+- Stage 0 on poikkeus:
+  - On virtuaalinen aloitusasema, ei fyysinen asema
   - Sallii erien päällekkäisen läsnäolon
   - ExitTime määrittää erän todellisen lähtöhetken prosessiin
+  - Koska Stage 0:aan ei tulla mistään, siihen ei sovelleta vaihtoaikaa
   - Toimii optimoinnin työkaluna erien ajoituksen suunnittelussa
-- Peräkkäisten erien välillä oltava vähintään change_time (2 × average_task_time)
-- Rajoite: Jos erä A poistuu asemalta hetkellä t, seuraava erä B voi saapua aikaisintaan hetkellä t + change_time
 
 ### 2. Erän sisäinen järjestys
 - Erän vaiheet suoritettava määritellyssä järjestyksessä
