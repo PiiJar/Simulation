@@ -173,15 +173,22 @@ Optimointi voi hyödyntää seuraavia vapausasteita parhaan ratkaisun löytämis
 
 Päätavoite on löytää lyhin mahdollinen kokonaistuotantoaika siten, että:
 
-1. Erät eivät ole päällekkäin asemilla (pois lukien Stage 0)
-   - Stage 0:n ExitTime-arvoja säätämällä voidaan välttää päällekkäisyydet muilla asemilla
-   - Jokaisella asemalla voi olla vain yksi erä kerrallaan
+1. Kokonaistuotantoajan määritelmä:
+   - Alkaa hetkestä 00:00:00 (simulaation alku)
+   - Päättyy kun viimeinen erä on laskettu viimeiselle asemalleen
+   - Huom: Viimeinen valmistuva erä ei välttämättä ole viimeisenä linjaan lähtenyt erä
+   - Jos käsittelyohjelmat ovat erilaisia, aiemmin lähtenyt pitkä ohjelma voi valmistua myöhemmin kuin myöhemmin lähtenyt lyhyt ohjelma
 
-2. Käsittelyaikoja ei optimoida vaiheessa 1
+2. Tuotantojärjestyksen optimointi:
+   - Stage 0:n ExitTime-arvoja säätämällä voidaan välttää päällekkäisyydet muilla asemilla
+   - Jokaisella asemalla voi olla vain yksi erä kerrallaan (pois lukien Stage 0)
+   - Erien erilaisten käsittelyohjelmien pituudet huomioidaan lähtöjärjestyksessä
+
+3. Käsittelyaikoja ei optimoida vaiheessa 1:
    - Käytetään käsittelyohjelman MinTime-arvoja
    - Käsittelyaikojen säätö jätetään vaiheen 2 optimoinnille
 
-3. Tulos toimii pohjana vaiheen 2 nostinoptimoinnille
+4. Tulos toimii pohjana vaiheen 2 nostinoptimoinnille:
    - Varmistetaan asemavarausten toteutuskelpoisuus
    - Huomioidaan siirto- ja vaihtoajat
 
