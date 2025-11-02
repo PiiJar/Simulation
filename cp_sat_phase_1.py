@@ -14,46 +14,63 @@ from ortools.sat.python import cp_model
 
 def load_input_data(output_dir):
     """Lataa kaikki tarvittavat lähtötiedot."""
-    init_dir = os.path.join(output_dir, "initialization")
+    cp_sat_dir = os.path.join(output_dir, "cp_sat")
     
     # Perustiedostot
-    batches = pd.read_csv(os.path.join(init_dir, "cp_sat_batches.csv"))
-    stations = pd.read_csv(os.path.join(init_dir, "cp_sat_stations.csv"))
-    transporters = pd.read_csv(os.path.join(init_dir, "cp_sat_transporters.csv"))
-    transfer_tasks = pd.read_csv(os.path.join(init_dir, "cp_sat_transfer_tasks.csv"))
+    batches = pd.read_csv(os.path.join(cp_sat_dir, "cp_sat_batches.csv"))
+    stations = pd.read_csv(os.path.join(cp_sat_dir, "cp_sat_stations.csv"))
+    transporters = pd.read_csv(os.path.join(cp_sat_dir, "cp_sat_transporters.csv"))
+    transfer_tasks = pd.read_csv(os.path.join(cp_sat_dir, "cp_sat_transfer_tasks.csv"))
     
     # Käsittelyohjelmat
+    print("Ladataan käsittelyohjelmat...")
     treatment_programs = {}
     for _, batch in batches.iterrows():
-        program_file = f"cp_sat_treatment_program_{batch['Treatment_program']}.csv"
-        treatment_programs[batch['Treatment_program']] = pd.read_csv(
-            os.path.join(init_dir, program_file)
-        )
+        batch_num = int(batch['Batch'])
+        print(f"  Käsitellään erää {batch_num}")
+        program_file = f"cp_sat_treatment_program_{batch_num}.csv"
+        file_path = os.path.join(cp_sat_dir, program_file)
+        print(f"    Luetaan tiedostoa: {file_path}")
+        if not os.path.exists(file_path):
+            print(f"    VIRHE: Tiedostoa ei löydy: {file_path}")
+            continue
+        df = pd.read_csv(file_path)
+        # Muunna aikakentät sekunneiksi
+        df['MinTime'] = pd.to_timedelta(df['MinTime']).dt.total_seconds().astype(int)
+        df['MaxTime'] = pd.to_timedelta(df['MaxTime']).dt.total_seconds().astype(int)
+        # Varmista että vaiheet ovat numerojärjestyksessä
+        df = df.sort_values('Stage').reset_index(drop=True)
+        treatment_programs[batch_num] = df
+        print(f"    OK: Ohjelma ladattu ({len(df)} vaihetta)")
+    print(f"Käsittelyohjelmia ladattu: {len(treatment_programs)}")
+    print(f"Saatavilla olevat erät: {list(treatment_programs.keys())}")
     
     return batches, stations, transporters, transfer_tasks, treatment_programs
 
 def calculate_time_parameters(transfer_tasks):
     """Laske average_task_time ja change_time."""
-    average_task_time = transfer_tasks['TotalTaskTime'].mean()
+    # Pyöristetään kokonaisluvuksi CP-SAT-yhteensopivuuden vuoksi
+    average_task_time = round(transfer_tasks['TotalTaskTime'].mean())
     change_time = 2 * average_task_time
     return average_task_time, change_time
 
 def get_parallel_stations(stations):
     """Ryhmittele rinnakkaiset asemat Group-numeron mukaan."""
-    return stations.groupby('Group')['Station'].apply(list).to_dict()
+    return stations.groupby('Group')['Number'].apply(list).to_dict()
 
 def get_station_groups(stations):
     """Luo asema -> Group mappaus."""
-    return stations.set_index('Station')['Group'].to_dict()
+    return stations.set_index('Number')['Group'].to_dict()
 
 def get_transporter_areas(transporters):
     """Määritä kunkin nostimen toiminta-alue."""
     areas = {}
     for _, row in transporters.iterrows():
         transporter_id = int(row['Transporter_id'])
+        # Pyöristetään koordinaatit kokonaisluvuiksi CP-SAT-yhteensopivuuden vuoksi
         areas[transporter_id] = {
-            'min_x': row['Min_x_position'],
-            'max_x': row['Max_x_Position']
+            'min_x': int(round(row['Min_x_position'])),
+            'max_x': int(round(row['Max_x_Position']))
         }
     return areas
 
@@ -81,7 +98,8 @@ class CpSatPhase1Optimizer:
         self.station_groups = get_station_groups(self.stations)
         self.identical_batches = find_identical_batches(self.batches)
         self.transporter_areas = get_transporter_areas(self.transporters)
-        self.station_positions = self.stations.set_index('Number')['X Position'].to_dict()
+        # Pyöristetään X-koordinaatit kokonaisluvuiksi CP-SAT-yhteensopivuuden vuoksi
+        self.station_positions = self.stations.set_index('Number')['X Position'].round().astype(int).to_dict()
         
         # CP-SAT model
         self.model = cp_model.CpModel()
@@ -118,7 +136,7 @@ class CpSatPhase1Optimizer:
                     stage['MaxStat'],
                     f'station_{batch_id}_{stage["Stage"]}'
                 )
-                self.station_assignments[(batch_id, stage['Stage'])] = station_var
+                self.station_assignments[(batch_id, stage['Stage'])] = station_var  # Tallennetaan suoraan muuttuja
                 
                 # Saapumis- ja poistumisajat
                 entry_var = self.model.NewIntVar(
@@ -135,16 +153,25 @@ class CpSatPhase1Optimizer:
                 self.exit_times[(batch_id, stage['Stage'])] = exit_var
                 
                 # Nostinvalinta asemalle
-                transporter_var = self.model.NewIntVar(
-                    1,
-                    len(self.transporters),
-                    f'transporter_{batch_id}_{stage["Stage"]}'
-                )
-                self.transporter_assignments[(batch_id, stage['Stage'])] = transporter_var
+                try:
+                    transporter_var = self.model.NewIntVar(
+                        1,
+                        len(self.transporters),
+                        f'transporter_{batch_id}_{stage["Stage"]}'
+                    )
+                    self.transporter_assignments[(batch_id, stage['Stage'])] = transporter_var
+                except Exception as e:
+                    print(f"    VIRHE: Nostin-muuttujan luonti epäonnistui: {str(e)}")
+                    raise
                 
     def add_transporter_area_constraints(self):
         """Lisää nostimien toiminta-aluerajoitteet."""
         for (batch_id, stage), station_var in self.station_assignments.items():
+            # Haetaan vaiheen tiedot käsittelyohjelmasta
+            program = self.treatment_programs[self.batches[self.batches['Batch'] == batch_id]['Treatment_program'].iloc[0]]
+            stage_row = program[program['Stage'] == stage].iloc[0]
+            if (batch_id, stage) not in self.transporter_assignments:
+                raise KeyError(f"Transporter assignment not found for ({batch_id}, {stage})")
             transporter_var = self.transporter_assignments[(batch_id, stage)]
             
             # Luo boolean-muuttujat jokaiselle mahdolliselle nostimelle
@@ -162,11 +189,24 @@ class CpSatPhase1Optimizer:
                 position = self.model.NewIntVar(
                     0, 100000, f'position_{batch_id}_{stage}'
                 )
-                self.model.AddElement(
-                    station_var.Index(),
-                    [int(self.station_positions[s]) for s in sorted(self.station_positions.keys())],
-                    position
+                
+                # Luo lista asemien numeroista ja niitä vastaavista sijainneista
+                stations_list = sorted(self.station_positions.keys())
+                positions_list = [self.station_positions[s] for s in stations_list]
+                
+                # Luo muuttuja aseman indeksille listassa
+                station_index = self.model.NewIntVar(
+                    0, len(stations_list) - 1, f'station_index_{batch_id}_{stage}'
                 )
+                
+                # Yhdistä station_var oikeaan indeksiin
+                for i, s in enumerate(stations_list):
+                    b = self.model.NewBoolVar(f'is_station_{batch_id}_{stage}_{s}')
+                    self.model.Add(station_var == s).OnlyEnforceIf(b)
+                    self.model.Add(station_index == i).OnlyEnforceIf(b)
+                
+                # Hae position muuttujaan aseman sijainti
+                self.model.AddElement(station_index, positions_list, position)
                 
                 # Jos nostin valittu, aseman pitää olla sen alueella
                 self.model.Add(
@@ -176,29 +216,22 @@ class CpSatPhase1Optimizer:
                     position <= area['max_x']
                 ).OnlyEnforceIf(can_handle)
                 
-                # Vähintään yhden nostimen pitää pystyä käsittelemään asema
-                self.model.Add(sum(
-                    1 if area['min_x'] <= self.station_positions[s] <= area['max_x']
-                    else 0
-                    for s in range(
-                        int(self.stations['Number'].min()),
-                        int(self.stations['Number'].max()) + 1
-                    )
-                ) > 0)
-                
     def add_station_constraints(self):
         """Lisää asemien käyttörajoitteet."""
         # Stage 0:lla saa olla päällekkäisiä eriä, muilla asemilla ei
         for _, batch1 in self.batches.iterrows():
-            b1 = batch1['Batch']
-            prog1 = self.treatment_programs[batch1['Treatment_program']]
+            b1 = int(batch1['Batch'])
+            if b1 not in self.treatment_programs:
+                raise KeyError(f"Treatment program not found for batch {b1}")
+            prog1 = self.treatment_programs[b1]
             
             for _, batch2 in self.batches.iterrows():
                 if b1 >= batch2['Batch']:  # Vältä tuplataarkistukset
                     continue
                     
                 b2 = batch2['Batch']
-                prog2 = self.treatment_programs[batch2['Treatment_program']]
+                b2 = int(batch2['Batch'])
+                prog2 = self.treatment_programs[b2]
                 
                 # Käy läpi kaikki vaiheet molemmista ohjelmista
                 for _, stage1 in prog1.iterrows():
@@ -249,24 +282,28 @@ class CpSatPhase1Optimizer:
                             
     def add_sequence_constraints(self):
         """Lisää erien sisäiset järjestysrajoitteet."""
+        print("Lisätään sekvensointirajoitteita...")
         for _, batch in self.batches.iterrows():
-            batch_id = batch['Batch']
-            program = self.treatment_programs[batch['Treatment_program']]
-            
+            batch_id = int(batch['Batch'])
+            print(f"  Käsitellään erää {batch_id}")
+            if batch_id not in self.treatment_programs:
+                raise KeyError(f"Treatment program not found for batch {batch_id}")
+            program = self.treatment_programs[batch_id]
             prev_exit = self.batch_starts[batch_id]  # Stage 0 ExitTime
             
-            for i in range(len(program)):
-                if program.iloc[i]['Stage'] == 0:
-                    continue
-                    
+            # Käydään läpi vain ne vaiheet jotka eivät ole Stage 0
+            stages_gt_0 = program[program['Stage'] > 0]
+            
+            for _, stage_row in stages_gt_0.iterrows():
+                stage = stage_row['Stage']
                 # Seuraava vaihe voi alkaa vasta kun edellinen on päättynyt
-                curr_entry = self.entry_times[(batch_id, program.iloc[i]['Stage'])]
+                curr_entry = self.entry_times[(batch_id, stage)]
                 self.model.Add(curr_entry >= prev_exit)
                 
                 # ExitTime = EntryTime + MinTime
-                curr_exit = self.exit_times[(batch_id, program.iloc[i]['Stage'])]
+                curr_exit = self.exit_times[(batch_id, stage)]
                 self.model.Add(
-                    curr_exit == curr_entry + program.iloc[i]['MinTime']
+                    curr_exit == curr_entry + stage_row['MinTime']
                 )
                 
                 prev_exit = curr_exit
@@ -314,11 +351,18 @@ class CpSatPhase1Optimizer:
         
     def solve(self):
         """Ratkaise optimointiongelma."""
+        print("Ratkaistaan optimointiongelma...")
+        print("1. Luodaan muuttujat...")
         self.create_variables()
+        print("2. Lisätään asemarajoitteet...")
         self.add_station_constraints()
+        print("3. Lisätään sekvensointirajoitteet...")
         self.add_sequence_constraints()
+        print("4. Lisätään identtisten erien rajoitteet...")
         self.add_identical_batch_constraints()
+        print("5. Lisätään asemaryhmien rajoitteet...")
         self.add_station_group_constraints()
+        print("6. Lisätään nostinalueiden rajoitteet...")
         self.add_transporter_area_constraints()
         self.set_objective()
         
@@ -335,8 +379,8 @@ class CpSatPhase1Optimizer:
         results = []
         
         for _, batch in self.batches.iterrows():
-            batch_id = batch['Batch']
-            program = self.treatment_programs[batch['Treatment_program']]
+            batch_id = int(batch['Batch'])
+            program = self.treatment_programs[batch_id]
             
             # Hae aloitusasema Stage 0 -> Stage 1 siirtoa varten
             start_station = int(batch['Start_station'])
@@ -397,8 +441,9 @@ class CpSatPhase1Optimizer:
         df = pd.DataFrame(results)
         df = df.sort_values(['Transporter', 'ExitTime'])
         
-        # Tallenna tulos
-        result_path = os.path.join(self.output_dir, "cp_sat_batch_schedule.csv")
+        # Tallenna tulos cp_sat-kansioon
+        cp_sat_dir = os.path.join(self.output_dir, "cp_sat")
+        result_path = os.path.join(cp_sat_dir, "cp_sat_batch_schedule.csv")
         df.to_csv(result_path, index=False)
         
         return df
