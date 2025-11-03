@@ -157,6 +157,28 @@ def extract_transporter_tasks(output_dir):
         # Luo DataFrame
         tasks_df = pd.DataFrame(tasks)
         if len(tasks_df) > 0:
+            # Lataa esilasketut siirtoajat (Lift/Transfer/Sink) yhdistelmälle (Transporter, From_Station, To_Station)
+            cp_dir = os.path.join(output_dir, "cp_sat")
+            transfers_path = os.path.join(cp_dir, "cp_sat_transfer_tasks.csv")
+            transfers_map = {}
+            if os.path.exists(transfers_path):
+                transfers_df = pd.read_csv(transfers_path)
+                # Normalisoi tyypit
+                for c in ("Transporter", "From_Station", "To_Station"):
+                    if c in transfers_df.columns:
+                        transfers_df[c] = transfers_df[c].astype(int)
+                for _, r in transfers_df.iterrows():
+                    key = (int(r["Transporter"]), int(r["From_Station"]), int(r["To_Station"]))
+                    transfers_map[key] = {
+                        "LiftTime": int(round(float(r.get("LiftTime", 0)))),
+                        "TransferTime": int(round(float(r.get("TransferTime", 0)))),
+                        "SinkTime": int(round(float(r.get("SinkTime", 0)))),
+                        "TotalTaskTime": int(round(float(r.get("TotalTaskTime", 0))))
+                    }
+            else:
+                # Jos puuttuu, jatketaan fysiikkalaskennalla
+                logger.log('WARN', f"Missing cp_sat_transfer_tasks.csv at {transfers_path}; falling back to physics for phase durations")
+
             # Yhtenäistä sarakeotsikot heti, jotta myöhemmät viittaukset toimivat
             tasks_df = tasks_df.rename(columns={
                 "Lift_Stat": "Lift_stat",
@@ -192,7 +214,7 @@ def extract_transporter_tasks(output_dir):
                 if int(transporter_id) == 3 and int(batch) == 1:
                     pass
 
-                # Hae asematiedot fysiikkalaskentoja varten
+                # Hae asematiedot fysiikkalaskentoja varten (fallback)
                 lift_station_info = stations_df[stations_df['Number'] == lift_station].iloc[0]
                 sink_station_info = stations_df[stations_df['Number'] == sink_station].iloc[0]
                 transporter_info = transporters_df[transporters_df['Transporter_id'] == transporter_id].iloc[0]
@@ -205,44 +227,62 @@ def extract_transporter_tasks(output_dir):
 
                 # Laske fysiikka-ajat
                 try:
-                    # Phase 1: Siirto edellisestä sijainista nostoasemalle
+                    # Phase 1: deadhead prev_sink -> lift OR start_position -> lift (TransferTime)
                     if transporter_id in transporter_last_stop:
-                        # Etsi edellinen tehtävä samalta nostimelta
                         prev_tasks = tasks_df[(tasks_df["Transporter_id"] == transporter_id) & (tasks_df.index < idx)]
-                        debug_print = (int(transporter_id) == 1 and idx < 3)
                         if not prev_tasks.empty:
-                            last_sink = prev_tasks.iloc[-1]["Sink_stat"]
-                            last_sink_info = stations_df[stations_df['Number'] == last_sink].iloc[0]
-                            phase_1_duration = int(round(calculate_physics_transfer_time(last_sink_info, lift_station_info, transporter_info)))
-                            if debug_print:
-                                pass
+                            last_sink = int(prev_tasks.iloc[-1]["Sink_stat"])
+                            dh_pre = transfers_map.get((int(transporter_id), last_sink, int(lift_station)), {}).get("TransferTime", None)
+                            if dh_pre is not None and float(dh_pre) > 0:
+                                phase_1_duration = int(round(float(dh_pre)))
+                            else:
+                                # Fallback fysiikalla
+                                last_sink_info = stations_df[stations_df['Number'] == last_sink].iloc[0]
+                                phase_1_duration = int(round(calculate_physics_transfer_time(last_sink_info, lift_station_info, transporter_info)))
                         else:
-                            # Ensimmäinen tehtävä: alkupaikasta nostoasemalle
-                            start_position = transporter_start_positions[transporter_id]
+                            start_position = int(transporter_start_positions.get(int(transporter_id), int(lift_station)))
+                            dh_pre = transfers_map.get((int(transporter_id), start_position, int(lift_station)), {}).get("TransferTime", None)
+                            if dh_pre is not None and float(dh_pre) > 0:
+                                phase_1_duration = int(round(float(dh_pre)))
+                            else:
+                                start_station_info = stations_df[stations_df['Number'] == start_position].iloc[0]
+                                phase_1_duration = int(round(calculate_physics_transfer_time(start_station_info, lift_station_info, transporter_info)))
+                    else:
+                        start_position = int(transporter_start_positions.get(int(transporter_id), int(lift_station)))
+                        dh_pre = transfers_map.get((int(transporter_id), start_position, int(lift_station)), {}).get("TransferTime", None)
+                        if dh_pre is not None and float(dh_pre) > 0:
+                            phase_1_duration = int(round(float(dh_pre)))
+                        else:
                             start_station_info = stations_df[stations_df['Number'] == start_position].iloc[0]
                             phase_1_duration = int(round(calculate_physics_transfer_time(start_station_info, lift_station_info, transporter_info)))
-                            if debug_print:
-                                pass
+
+                    # Phase 2: Lifting duration from precomputed LiftTime (fallback to physics if missing or <= 0)
+                    lift_pre = transfers_map.get((int(transporter_id), int(lift_station), int(sink_station)), {}).get("LiftTime", None)
+                    if lift_pre is not None and float(lift_pre) > 0:
+                        phase_2_duration = int(round(float(lift_pre)))
                     else:
-                        # Ensimmäinen tehtävä: alkupaikasta nostoasemalle
-                        start_position = transporter_start_positions[transporter_id]
-                        start_station_info = stations_df[stations_df['Number'] == start_position].iloc[0]
-                        phase_1_duration = int(round(calculate_physics_transfer_time(start_station_info, lift_station_info, transporter_info)))
+                        phase_2_duration = int(round(calculate_lift_time(lift_station_info, transporter_info)))
 
-                    # Phase 2: Nostoaika nostoasemalla
-                    phase_2_duration = int(round(calculate_lift_time(lift_station_info, transporter_info)))
+                    # Phase 3: Loaded transfer duration from precomputed TransferTime (fallback if <= 0)
+                    trans_pre = transfers_map.get((int(transporter_id), int(lift_station), int(sink_station)), {}).get("TransferTime", None)
+                    if trans_pre is not None and float(trans_pre) > 0:
+                        phase_3_duration = int(round(float(trans_pre)))
+                    else:
+                        phase_3_duration = int(round(calculate_physics_transfer_time(lift_station_info, sink_station_info, transporter_info)))
 
-                    # Phase 3: Siirtoaika nostoasemalta laskuasemalle (kuormalla)
-                    phase_3_duration = int(round(calculate_physics_transfer_time(lift_station_info, sink_station_info, transporter_info)))
-
-                    # Phase 4: Laskuaika laskuasemalla
-                    phase_4_duration = int(round(calculate_sink_time(sink_station_info, transporter_info)))
+                    # Phase 4: Sinking duration from precomputed SinkTime (fallback if <= 0)
+                    sink_pre = transfers_map.get((int(transporter_id), int(lift_station), int(sink_station)), {}).get("SinkTime", None)
+                    if sink_pre is not None and float(sink_pre) > 0:
+                        phase_4_duration = int(round(float(sink_pre)))
+                    else:
+                        phase_4_duration = int(round(calculate_sink_time(sink_station_info, transporter_info)))
 
                 except Exception as e:
-                    phase_1_duration = 5  # Siirtoaika
-                    phase_2_duration = 5  # Nostoaika
-                    phase_3_duration = 5  # Siirtoaika kuormalla
-                    phase_4_duration = 5  # Laskuaika
+                    # Viimesijaiset fallbackit
+                    phase_1_duration = 5
+                    phase_2_duration = 5
+                    phase_3_duration = 5
+                    phase_4_duration = 5
 
                 # Debug-tulostus vaiheajoista nostin 3, erä 1
                 if int(transporter_id) == 3 and int(batch) == 1:
@@ -354,8 +394,23 @@ def create_detailed_movements(output_dir):
     # Käsittele tehtävät lineaarisesti
     for _, task in tasks_df.iterrows():
         transporter_id = int(task['Transporter_id'])
-        # Phase 1:n lähtöpaikka on nostimen edellinen sijainti
-        phase_1_from_station = transporter_last_location[transporter_id]
+        # Phase 1:n lähtöpaikka on nostimen edellinen sijainti.
+        # Jos alkupaikka puuttuu CSV:stä, käytä fallbackia: ensisijaisesti CSV:n start, muuten tämän tehtävän lift-asema.
+        if transporter_id in transporter_last_location:
+            phase_1_from_station = transporter_last_location[transporter_id]
+        else:
+            # Fallbackit puuttuvaan alkupaikkaan
+            phase_1_from_station = int(
+                transporter_start_positions.get(transporter_id, int(task.get('Lift_stat', task.get('lift_stat', 0))))
+            )
+            # Kirjaa varoitus lokiin, jotta puuttuva alkupaikka voidaan korjata datassa
+            try:
+                logger.log(
+                    'WARN',
+                    f"Missing start position for transporter {transporter_id} – using fallback start at station {phase_1_from_station}"
+                )
+            except Exception:
+                pass
         # Luo täsmälleen 5 liikettä per tehtävä (Phase 0-4)
         # Stop-ajat lasketaan: prev_stop = next_start (paitsi Phase_4_stop)
         movements.extend([
