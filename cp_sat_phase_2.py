@@ -1,10 +1,10 @@
 """
-CP-SAT Optimoinnin vaihe 2: Nostin- ja aikatauluoptimointi
+CP-SAT Optimoinnin vaihe 2: Transporter- ja aikatauluoptimointi
 
 Vaatimusdokumentin REKQUIREMENTS_FOR_CPSAT_2 mukainen toteutusrunko:
 - Syöte: Vaiheen 1 snapshot (cp_sat_batch_schedule.csv) + siirtoajat + alkuperäiset ohjelmat (Min/Max)
-- Päätökset: Hoistin tehtäväjärjestys, Stage 0 -odotus, CalcTime ∈ [MinTime, MaxTime]
-- Rajoitteet: ei päällekkäisiä tehtäviä per nostin (deadhead huomioiden), aseman vaihto (change_time), Stage 1 -järjestys identtisille erille
+- Päätökset: Transporterin tehtäväjärjestys, Stage 0 -odotus, CalcTime ∈ [MinTime, MaxTime]
+- Rajoitteet: ei päällekkäisiä tehtäviä per transporter (deadhead huomioiden), aseman vaihto (change_time), Stage 1 -järjestys identtisille erille
 - Tavoite: Leksikografinen (approx.): makespan → CalcTime venytys; deadhead huomioitu rajoitteena (voi lisätä 2. prioriteetiksi myöhemmin)
 - Tulosteet: cp_sat_hoist_schedule.csv, (infeasible: cp_sat_hoist_conflicts.csv), production.csv Start_optimized, cp_sat/treatment_program_optimized/* CalcTime
 """
@@ -113,12 +113,12 @@ class CpSatPhase2Optimizer:
         self.exit: Dict[Tuple[int, int], cp_model.IntVar] = {}
         self.calc: Dict[Tuple[int, int], cp_model.IntVar] = {}
 
-        # Hoist-tehtävät (siirrot): s>0 varten, myös s=1 (Start_station -> Station_1)
-        self.hoist_starts: Dict[Tuple[int, int], cp_model.IntVar] = {}
-        self.hoist_ends: Dict[Tuple[int, int], cp_model.IntVar] = {}
-        self.hoist_durations: Dict[Tuple[int, int], int] = {}
-        self.hoist_transporter: Dict[Tuple[int, int], int] = {}
-        self.hoist_from_to: Dict[Tuple[int, int], Tuple[int, int]] = {}
+        # Transporter-tehtävät (siirrot): s>0 varten, myös s=1 (Start_station -> Station_1)
+        self.transporter_starts: Dict[Tuple[int, int], cp_model.IntVar] = {}
+        self.transporter_ends: Dict[Tuple[int, int], cp_model.IntVar] = {}
+        self.transporter_durations: Dict[Tuple[int, int], int] = {}
+        self.transporter_by_task: Dict[Tuple[int, int], int] = {}
+        self.transporter_from_to: Dict[Tuple[int, int], Tuple[int, int]] = {}
 
     # --------- Mallin rakentaminen ---------
     def create_variables(self):
@@ -154,7 +154,7 @@ class CpSatPhase2Optimizer:
                 # Exit = Entry + Calc
                 self.model.Add(x == e + c)
 
-        # Luo hoist-tehtävät jokaiselle siirtymälle (s-1 -> s), s >= 1
+    # Luo transporter-tehtävät jokaiselle siirtymälle (s-1 -> s), s >= 1
         # Lue sidotut asemat ja nostimet Vaihe 1 aikataulusta
         # Rakennetaan apumappi: (b,s) -> (transporter, station)
         bs_map: Dict[Tuple[int, int], Tuple[int, int]] = {}
@@ -192,13 +192,13 @@ class CpSatPhase2Optimizer:
                 if dur is None:
                     raise ValueError(f"Siirtoaika puuttuu: T={t_id}, {from_station}->{to_station}")
 
-                # Luo hoist-interval: start var, end var, fixed duration
-                h_end = self.model.NewIntVar(0, MAX_T, f"hoist_end_{b}_{s}")
-                self.hoist_starts[(b, s)] = h_start
-                self.hoist_ends[(b, s)] = h_end
-                self.hoist_durations[(b, s)] = int(dur)
-                self.hoist_transporter[(b, s)] = int(t_id)
-                self.hoist_from_to[(b, s)] = (int(from_station), int(to_station))
+                # Luo transporter-interval: start var, end var, fixed duration
+                h_end = self.model.NewIntVar(0, MAX_T, f"transporter_end_{b}_{s}")
+                self.transporter_starts[(b, s)] = h_start
+                self.transporter_ends[(b, s)] = h_end
+                self.transporter_durations[(b, s)] = int(dur)
+                self.transporter_by_task[(b, s)] = int(t_id)
+                self.transporter_from_to[(b, s)] = (int(from_station), int(to_station))
 
                 # End = Start + Duration
                 self.model.Add(h_end == h_start + int(dur))
@@ -237,27 +237,27 @@ class CpSatPhase2Optimizer:
                     # b2 ennen b1
                     self.model.Add(e1 >= x2 + self.change_time).OnlyEnforceIf(b1_before.Not())
 
-    def add_hoist_no_overlap_with_deadhead(self):
-        """Ei päällekkäisiä tehtäviä per nostin ja deadhead (TransferTime-only) väli peräkkäisten välillä.
+    def add_transporter_no_overlap_with_deadhead(self):
+        """Ei päällekkäisiä tehtäviä per transporter ja deadhead (TransferTime-only) väli peräkkäisten välillä.
         Toteutus: pairwise-disjunktio big-M:llä (yksinkertainen, mutta toimiva pieneen N:ään).
         """
         M = 10**7
-        # Ryhmittele tehtävät nostimittain
+        # Ryhmittele tehtävät transportereittain
         by_t: Dict[int, List[Tuple[int, int]]] = {}
-        for (b, s), t_id in self.hoist_transporter.items():
+        for (b, s), t_id in self.transporter_by_task.items():
             by_t.setdefault(int(t_id), []).append((b, s))
 
         for t_id, tasks in by_t.items():
             for i in range(len(tasks)):
                 b1, s1 = tasks[i]
-                start1 = self.hoist_starts[(b1, s1)]
-                end1 = self.hoist_ends[(b1, s1)]
-                (_, to1) = self.hoist_from_to[(b1, s1)]
+                start1 = self.transporter_starts[(b1, s1)]
+                end1 = self.transporter_ends[(b1, s1)]
+                (_, to1) = self.transporter_from_to[(b1, s1)]
                 for j in range(i + 1, len(tasks)):
                     b2, s2 = tasks[j]
-                    start2 = self.hoist_starts[(b2, s2)]
-                    end2 = self.hoist_ends[(b2, s2)]
-                    (from2, _) = self.hoist_from_to[(b2, s2)]
+                    start2 = self.transporter_starts[(b2, s2)]
+                    end2 = self.transporter_ends[(b2, s2)]
+                    (from2, _) = self.transporter_from_to[(b2, s2)]
 
                     # deadhead time i->j
                     _, dh_ij = self.transfers_map.get((int(t_id), int(to1), int(from2)), (0, 0))
@@ -273,8 +273,8 @@ class CpSatPhase2Optimizer:
         """Palauta (TotalTaskTime, TransferTime) deadheadille task_from → task_to (tyhjänä)."""
         b_from, s_from = task_from
         b_to, s_to = task_to
-        _, to_station = self.hoist_from_to[(b_from, s_from)]
-        from_station, _ = self.hoist_from_to[(b_to, s_to)]
+        _, to_station = self.transporter_from_to[(b_from, s_from)]
+        from_station, _ = self.transporter_from_to[(b_to, s_to)]
         return self.transfers_map.get((int(t_id), int(to_station), int(from_station)), (0, 0))
 
     def add_stage1_anchor_for_identical_programs(self):
@@ -335,7 +335,7 @@ class CpSatPhase2Optimizer:
         print(" - Muuttujat luotu")
         self.add_station_change_constraints()
         print(" - Asemien change_time -rajoitteet lisätty")
-        self.add_hoist_no_overlap_with_deadhead()
+        self.add_transporter_no_overlap_with_deadhead()
         print(" - Nostinkohtaiset ei-päällekkäisyydet + deadhead lisätty")
         self.add_stage1_anchor_for_identical_programs()
         print(" - Stage 1 -ankkuri identtisille ohjelmille lisätty")
@@ -354,7 +354,7 @@ class CpSatPhase2Optimizer:
 
         print("CP-SAT Vaihe 2: ratkaisu löytyi")
         # Luo snapshot ja pysyvät päivitykset
-        self._write_hoist_schedule_snapshot()
+        self._write_transporter_schedule_snapshot()
         self._update_production_start_optimized()
         self._write_treatment_programs_optimized()
 
@@ -372,17 +372,17 @@ class CpSatPhase2Optimizer:
         df.to_csv(path, index=False)
         print(f"Tallennettu konfliktiraportti: {path}")
 
-    def _write_hoist_schedule_snapshot(self):
+    def _write_transporter_schedule_snapshot(self):
         cp_dir = os.path.join(self.output_dir, "cp_sat")
         _ensure_dirs(cp_dir)
         rows = []
-        # Kulje kaikki hoist-tehtävät (b,s)
-        for (b, s), start_var in self.hoist_starts.items():
-            t_id = self.hoist_transporter[(b, s)]
-            from_station, to_station = self.hoist_from_to[(b, s)]
+        # Kulje kaikki transporter-tehtävät (b,s)
+        for (b, s), start_var in self.transporter_starts.items():
+            t_id = self.transporter_by_task[(b, s)]
+            from_station, to_station = self.transporter_from_to[(b, s)]
             start_val = int(self.solver.Value(start_var))
-            end_val = int(self.solver.Value(self.hoist_ends[(b, s)]))
-            duration = int(self.hoist_durations[(b, s)])
+            end_val = int(self.solver.Value(self.transporter_ends[(b, s)]))
+            duration = int(self.transporter_durations[(b, s)])
             entry_to = int(self.solver.Value(self.entry[(b, s)]))
             rows.append({
                 "Transporter": int(t_id),

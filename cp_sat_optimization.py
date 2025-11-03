@@ -99,8 +99,8 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
     # VAIHE 4: Yksinkertainen nostimen siirto (ilman deadhead-kompleksisuutta)
     print("🔧 Lisätään yksinkertaiset siirtoajat...")
     
-    # Luo lista kaikista nostimen tehtävistä (erän sisäiset siirrot)
-    hoist_tasks = []
+    # Luo lista kaikista transporter-tehtävistä (erän sisäiset siirrot)
+    transporter_tasks = []
     
     for batch in batches["Batch"]:
         batch_int = int(batch)
@@ -130,7 +130,7 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
                 # Seuraava vaihe alkaa vasta siirron jälkeen
                 model.Add(task_end >= task_start + transfer_time)
                 
-                hoist_tasks.append({
+                transporter_tasks.append({
                     'batch': batch_int,
                     'from_stage': prev_stage,
                     'to_stage': this_stage,
@@ -150,8 +150,8 @@ def cp_sat_optimization(output_dir, hard_order_constraint=False):
     print("🔧 Lisätään nostimen globaali järjestys...")
     
     # Luo järjestymuuttujat kaikille tehtäväpareille
-    for i, task1 in enumerate(hoist_tasks):
-        for j, task2 in enumerate(hoist_tasks):
+    for i, task1 in enumerate(transporter_tasks):
+        for j, task2 in enumerate(transporter_tasks):
             if i >= j:  # Vältä duplikaatit ja itse-viittaukset
                 continue
                 

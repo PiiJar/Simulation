@@ -11,13 +11,13 @@ Tämä projekti on tuotantolinjan simulointiputki, joka koostuu seuraavista vaih
 1. `generate_matrix.py`  
    → Luo alkuperäisen line-matriisin (Station–Stage)
 
-2. `generate_hoist_tasks.py`  
-   → Luo nostintehtävät
+2. `generate_transporter_tasks.py`  
+   → Luo transporter-tehtävät
 
 3. `resolve_station_conflicts.py`  
    → Korjaa asema- ja ajoitusristiriidat
 
-4. `stretch_hoist_tasks.py`  
+4. `stretch_transporter_tasks.py`  
    → Venyttää tehtäviä siirtovälin mukaan  
    → Huomioi myös saman erän myöhemmät vaiheet
 
@@ -55,7 +55,7 @@ Copilotin tulee noudattaa seuraavia käytäntöjä:
 ## 🧩 Erityispiirteet
 
 - Tehtävien järjestys on tärkeä — älä järjestä `df.sort_values()` ellei erikseen pyydetä
-- `stretch_hoist_tasks.py` toimii kumulatiivisesti: jokainen siirto vaikuttaa seuraaviin
+- `stretch_transporter_tasks.py` toimii kumulatiivisesti: jokainen siirto vaikuttaa seuraaviin
 - `main.py` ajaa koko putken yhdellä komennolla
 - Kaikki CSV-tiedostot tallennetaan snapshot-kansioon
 

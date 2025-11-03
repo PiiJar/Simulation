@@ -34,7 +34,7 @@ Tämä dokumentti määrittelee Vaiheen 2 niin, että tavoitteet ja toivotut tul
 Huom: Vaihe 2 on ensisijaisesti “reschedule realistisilla siirroilla” –malli. Erillinen “pelkkä verifiointi ilman ajansiirtoja” voidaan toteuttaa laajennuksena (ks. Liite A), mutta ei ole oletusmoodi.
 
 ## 2) Toivotut tulokset (deliverables)
-- Tulosteet on koottu lukuun 9 (Tulosteet). Tämä luku kuvaa vain lyhyesti, mitä tuotetaan: hoist-aikataulu, mahdolliset konfliktit, visualisointi ja loki sekä pysyvät päivitykset. Yksityiskohdat (tiedostonimet ja polut): ks. luku 9.
+- Tulosteet on koottu lukuun 9 (Tulosteet). Tämä luku kuvaa vain lyhyesti, mitä tuotetaan: transporter-aikataulu, mahdolliset konfliktit, visualisointi ja loki sekä pysyvät päivitykset. Yksityiskohdat (tiedostonimet ja polut): ks. luku 9.
 
 Kaikki välitulokset talletetaan ajon snapshot-kansioon `output/{timestamp}/cp_sat/` projektikäytännön mukaisesti; pysyvät päivitykset tehdään tämän jälkeen (ks. luku 9).
 
@@ -86,7 +86,7 @@ Muuttujat:
 - CalcTime(b,s) ∈ [MinTime, MaxTime]
 
 Rajoitteet:
-- Hoist-kapasiteetti: tehtävät eivät mene päällekkäin samalla nostimella; peräkkäisten väliin deadhead(Prev.To, Next.From)
+- Transporter-kapasiteetti: tehtävät eivät mene päällekkäin samalla transporterilla; peräkkäisten väliin deadhead(Prev.To, Next.From)
 - Toiminta-alue: min_x ≤ X(From), X(To) ≤ max_x valitulla nostimella
 - Sekvenssi: EntryTime_2(b,s+1) = TaskEnd(b, s→s+1)
 - Asema (sama asema): disjunktio, jossa varausvälin väli ≥ change_time (kuten Vaihe 1)

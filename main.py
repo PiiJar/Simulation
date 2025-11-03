@@ -39,7 +39,7 @@ def main():
         logger.log('ERROR', error_msg)
         return
 
-    # --- 4. Optimization Phase 2: Hoist + Final schedule ---
+    # --- 4. Optimization Phase 2: Transporter + Final schedule ---
     logger.log('STEP', 'CP-SAT Phase 2 optimization started')
     try:
         ok = optimize_phase_2(output_dir)
