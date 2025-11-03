@@ -55,22 +55,49 @@ def preprocess_for_cpsat(output_dir):
     from transporter_physics import calculate_physics_transfer_time, calculate_lift_time, calculate_sink_time
     transfer_tasks_path = os.path.join(cp_sat_dir, "cp_sat_transfer_tasks.csv")
     rows = []
-    # Jokaiselle nostimelle kaikki mahdolliset siirrot sen toiminta-alueella
+    # Jokaiselle nostimelle kaikki mahdolliset siirrot sen nosto- ja laskualueiden perusteella
     for _, transporter_row in transporters.iterrows():
         transporter_id = int(transporter_row["Transporter_id"])
-        min_x = transporter_row["Min_x_position"]
-        max_x = transporter_row["Max_x_Position"]
-        stations_in_area = stations[(stations["X Position"] >= min_x) & (stations["X Position"] <= max_x)]
-        station_numbers = stations_in_area["Number"].unique()
-        for from_station in station_numbers:
-            for to_station in station_numbers:
-                lift_time = round(float(calculate_lift_time(stations[stations["Number"] == from_station].iloc[0], transporter_row)), 1)
-                sink_time = round(float(calculate_sink_time(stations[stations["Number"] == to_station].iloc[0], transporter_row)), 1)
+        # Lue asemavälit: nostolle (lift) ja laskulle (sink)
+        min_lift = int(transporter_row.get("Min_Lift_Station", transporter_row.get("Min_lift_station", transporter_row.get("MinLiftStation", 0))))
+        max_lift = int(transporter_row.get("Max_Lift_Station", transporter_row.get("Max_lift_station", transporter_row.get("MaxLiftStation", 0))))
+        min_sink = int(transporter_row.get("Min_Sink_Station", transporter_row.get("Min_sink_station", transporter_row.get("MinSinkStation", 0))))
+        max_sink = int(transporter_row.get("Max_Sink_Station", transporter_row.get("Max_sink_station", transporter_row.get("MaxSinkStation", 0))))
+
+        # Sallitut asemat, jotka oikeasti löytyvät stations.csv:stä
+        lift_candidates = [s for s in range(min_lift, max_lift + 1) if s in set(stations["Number"])]
+        sink_candidates = [s for s in range(min_sink, max_sink + 1) if s in set(stations["Number"])]
+
+        # Lasketaan siirtoajat kaikille sallituilla (from,to) pareille
+        for from_station in lift_candidates:
+            from_row = stations[stations["Number"] == from_station]
+            if from_row.empty:
+                continue
+            from_info = from_row.iloc[0]
+            # "Pienemmästä minimistä suurempaan maksimiin" tulkitaan kattamaan koko sallitun välin
+            for to_station in sink_candidates:
+                to_row = stations[stations["Number"] == to_station]
+                if to_row.empty:
+                    continue
+                to_info = to_row.iloc[0]
+                # Laske nosto- ja laskuajat; salli NaN -> 0.0 fallback
+                try:
+                    lift_time = round(float(calculate_lift_time(from_info, transporter_row)), 1)
+                except Exception:
+                    lift_time = 0.0
+                if pd.isna(lift_time):
+                    lift_time = 0.0
+                try:
+                    sink_time = round(float(calculate_sink_time(to_info, transporter_row)), 1)
+                except Exception:
+                    sink_time = 0.0
+                if pd.isna(sink_time):
+                    sink_time = 0.0
                 if from_station == to_station:
                     transfer_time = 0.0
                 else:
-                    transfer_time = round(float(calculate_physics_transfer_time(stations[stations["Number"] == from_station].iloc[0], stations[stations["Number"] == to_station].iloc[0], transporter_row)), 1)
-                total_task_time = round(lift_time + transfer_time + sink_time, 1)
+                    transfer_time = round(float(calculate_physics_transfer_time(from_info, to_info, transporter_row)), 1)
+                total_task_time = round(float(lift_time) + float(transfer_time) + float(sink_time), 1)
                 rows.append({
                     "Transporter": transporter_id,
                     "From_Station": from_station,

@@ -12,6 +12,13 @@ import os
 import pandas as pd
 from ortools.sat.python import cp_model
 
+# Valinnainen logger, jos käytettävissä
+try:
+    from simulation_logger import get_logger
+except Exception:
+    def get_logger():
+        return None
+
 # Visualisointi: käytetään olemassa olevaa skriptiä jos saatavilla
 try:
     import visualize_schedule  # provides plot_schedule(df, output_dir, filename)
@@ -69,14 +76,22 @@ def get_station_groups(stations):
     return stations.set_index('Number')['Group'].to_dict()
 
 def get_transporter_areas(transporters):
-    """Määritä kunkin nostimen toiminta-alue."""
+    """Määritä kunkin nostimen toiminta-alue asemaväleinä (lift/sink)."""
     areas = {}
+    def _as_int(val, default=0):
+        try:
+            if pd.isna(val):
+                return int(default)
+            return int(val)
+        except Exception:
+            return int(default)
     for _, row in transporters.iterrows():
-        transporter_id = int(row['Transporter_id'])
-        # Pyöristetään koordinaatit kokonaisluvuiksi CP-SAT-yhteensopivuuden vuoksi
+        transporter_id = _as_int(row.get('Transporter_id'))
         areas[transporter_id] = {
-            'min_x': int(round(row['Min_x_position'])),
-            'max_x': int(round(row['Max_x_Position']))
+            'min_lift': _as_int(row.get('Min_Lift_Station', row.get('Min_lift_station', row.get('MinLiftStation', 0))), 0),
+            'max_lift': _as_int(row.get('Max_Lift_Station', row.get('Max_lift_station', row.get('MaxLiftStation', 0))), 0),
+            'min_sink': _as_int(row.get('Min_Sink_Station', row.get('Min_sink_station', row.get('MinSinkStation', 0))), 0),
+            'max_sink': _as_int(row.get('Max_Sink_Station', row.get('Max_sink_station', row.get('MaxSinkStation', 0))), 0)
         }
     return areas
 
@@ -104,8 +119,10 @@ class CpSatPhase1Optimizer:
         self.station_groups = get_station_groups(self.stations)
         self.identical_batches = find_identical_batches(self.batches)
         self.transporter_areas = get_transporter_areas(self.transporters)
-        # Pyöristetään X-koordinaatit kokonaisluvuiksi CP-SAT-yhteensopivuuden vuoksi
-        self.station_positions = self.stations.set_index('Number')['X Position'].round().astype(int).to_dict()
+        # Asemien paikkatietoja hyödynnetään fysiikkalaskentoihin, ei enää nostimen aluevalintaan
+        # Salli puuttuvat arvot → 0
+        xpos = pd.to_numeric(self.stations['X Position'], errors='coerce').fillna(0).round().astype(int)
+        self.station_positions = dict(zip(self.stations['Number'].astype(int), xpos))
         
         # CP-SAT model
         self.model = cp_model.CpModel()
@@ -193,35 +210,12 @@ class CpSatPhase1Optimizer:
                     transporter_var == transporter_id
                 ).OnlyEnforceIf(can_handle)
                 
-                # Aseman X-position pitää olla nostimen alueella
-                position = self.model.NewIntVar(
-                    0, 100000, f'position_{batch_id}_{stage}'
-                )
-                
-                # Luo lista asemien numeroista ja niitä vastaavista sijainneista
-                stations_list = sorted(self.station_positions.keys())
-                positions_list = [self.station_positions[s] for s in stations_list]
-                
-                # Luo muuttuja aseman indeksille listassa
-                station_index = self.model.NewIntVar(
-                    0, len(stations_list) - 1, f'station_index_{batch_id}_{stage}'
-                )
-                
-                # Yhdistä station_var oikeaan indeksiin
-                for i, s in enumerate(stations_list):
-                    b = self.model.NewBoolVar(f'is_station_{batch_id}_{stage}_{s}')
-                    self.model.Add(station_var == s).OnlyEnforceIf(b)
-                    self.model.Add(station_index == i).OnlyEnforceIf(b)
-                
-                # Hae position muuttujaan aseman sijainti
-                self.model.AddElement(station_index, positions_list, position)
-                
-                # Jos nostin valittu, aseman pitää olla sen alueella
+                # Jos nostin valittu, aseman (sink) pitää olla nostimen sallimalla laskualueella
                 self.model.Add(
-                    position >= area['min_x']
+                    station_var >= area['min_sink']
                 ).OnlyEnforceIf(can_handle)
                 self.model.Add(
-                    position <= area['max_x']
+                    station_var <= area['max_sink']
                 ).OnlyEnforceIf(can_handle)
                 
     def add_station_constraints(self):
@@ -448,19 +442,25 @@ class CpSatPhase1Optimizer:
                         self.station_assignments[(batch_id, stage_num - 1)]
                     )
                 
-                # Etsi sopiva nostin, joka kattaa molemmat asemat
+                # Etsi sopiva nostin, joka kattaa molemmat asemat (lift ja sink -väleinä)
                 transporter = None
                 for t_id, area in self.transporter_areas.items():
-                    from_x = self.station_positions[from_station]
-                    to_x = self.station_positions[station]
-                    if (area['min_x'] <= from_x <= area['max_x'] and 
-                        area['min_x'] <= to_x <= area['max_x']):
+                    if (area['min_lift'] <= from_station <= area['max_lift'] and 
+                        area['min_sink'] <= station <= area['max_sink']):
                         transporter = t_id
                         break
                 
                 if transporter is None:
+                    # Kirjaa virhe lokiin ja nosta poikkeus
+                    logger = get_logger()
+                    if logger:
+                        logger.log(
+                            'ERROR',
+                            f"No capable transporter for batch={batch_id}, tp={int(batch['Treatment_program'])}, "
+                            f"stage={stage_num}, from={from_station}, to={station}"
+                        )
                     raise ValueError(
-                        f"Sopivaa nostinta ei löydy siirrolle {from_station}->{station}"
+                        f"Sopivaa nostinta ei löydy siirrolle {from_station}->{station} (batch {batch_id}, stage {stage_num})"
                     )
                 
                 results.append({

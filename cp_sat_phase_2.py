@@ -269,6 +269,69 @@ class CpSatPhase2Optimizer:
                     # j ennen i: start1 >= end2 + deadhead(j->i)
                     self.model.Add(start1 >= end2 + int(dh_ji)).OnlyEnforceIf(i_before.Not())
 
+    def add_cross_transporter_avoid_constraints(self):
+        """
+        Vältä kahden eri nostimen samanaikainen toiminta liian lähekkäin.
+
+        Sääntö: jos kahden tehtävän (eri transportereilla) päätepisteiden pienin etäisyys
+        asemakoordinaateissa (X Position) on alle avoid_pair = max(Avoid_i, Avoid_j),
+        niiden aikavälit eivät saa mennä päällekkäin.
+
+        Huom: konservatiivinen approksimaatio – tarkistetaan vain from/to päätepisteiden
+        etäisyydet, ei koko liikeradan lähentymistä.
+        """
+        # Kerää Avoid-arvot
+        avoid_by_t: Dict[int, int] = {}
+        if "Transporter_id" in self.transporters_df.columns:
+            for _, r in self.transporters_df.iterrows():
+                t = int(r.get("Transporter_id"))
+                avoid_val = int(pd.to_numeric(r.get("Avoid", 0), errors="coerce") if "Avoid" in r else 0)
+                avoid_by_t[t] = max(0, avoid_val)
+
+        # Apufunktio asemien X-koordinaatille
+        def x(station: int) -> int:
+            return int(self.station_positions.get(int(station), 0))
+
+        # Listaa kaikki tehtävät
+        tasks: List[Tuple[int, int, int, int, cp_model.IntVar, cp_model.IntVar]] = []
+        # (t_id, b, s, from_station, start_var, end_var) + to_station via map
+        for (b, s), t_id in self.transporter_by_task.items():
+            tasks.append((int(t_id), int(b), int(s), int(self.transporter_from_to[(b, s)][0]), self.transporter_starts[(b, s)], self.transporter_ends[(b, s)]))
+
+        # Pari-parilta eri transportereiden välillä
+        n = len(tasks)
+        for i in range(n):
+            t1, b1, s1, from1, start1, end1 = tasks[i]
+            to1 = int(self.transporter_from_to[(b1, s1)][1])
+            x_from1, x_to1 = x(from1), x(to1)
+            for j in range(i + 1, n):
+                t2, b2, s2, from2, start2, end2 = tasks[j]
+                if t1 == t2:
+                    continue  # sama transporter käsitellään toisaalla
+                to2 = int(self.transporter_from_to[(b2, s2)][1])
+                x_from2, x_to2 = x(from2), x(to2)
+
+                # Lähimmän päätepisteparin etäisyys
+                d_candidates = [
+                    abs(x_from1 - x_from2),
+                    abs(x_from1 - x_to2),
+                    abs(x_to1 - x_from2),
+                    abs(x_to1 - x_to2),
+                ]
+                d_min = min(d_candidates)
+
+                avoid_limit = max(avoid_by_t.get(t1, 0), avoid_by_t.get(t2, 0))
+                if avoid_limit <= 0:
+                    continue
+
+                if d_min < avoid_limit:
+                    # Pakota ei-päällekkäisyys
+                    i_before = self.model.NewBoolVar(f"avoid_t{t1}_b{b1}s{s1}_vs_t{t2}_b{b2}s{s2}")
+                    # i ennen j
+                    self.model.Add(start2 >= end1).OnlyEnforceIf(i_before)
+                    # j ennen i
+                    self.model.Add(start1 >= end2).OnlyEnforceIf(i_before.Not())
+
     def _deadhead_between_tasks(self, t_id: int, task_from: Tuple[int, int], task_to: Tuple[int, int]) -> Tuple[int, int]:
         """Palauta (TotalTaskTime, TransferTime) deadheadille task_from → task_to (tyhjänä)."""
         b_from, s_from = task_from
@@ -337,6 +400,8 @@ class CpSatPhase2Optimizer:
         print(" - Asemien change_time -rajoitteet lisätty")
         self.add_transporter_no_overlap_with_deadhead()
         print(" - Nostinkohtaiset ei-päällekkäisyydet + deadhead lisätty")
+        self.add_cross_transporter_avoid_constraints()
+        print(" - Ristikkäisten nostimien Avoid-rajoitteet lisätty")
         self.add_stage1_anchor_for_identical_programs()
         print(" - Stage 1 -ankkuri identtisille ohjelmille lisätty")
         self.set_objective()

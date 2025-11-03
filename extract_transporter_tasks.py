@@ -16,21 +16,19 @@ def select_capable_transporter(lift_station, sink_station, stations_df, transpor
     Returns:
         pd.Series: Valittu nostin tai None jos mikään ei pysty
     """
-    # Hae asemien x-koordinaatit
-    lift_x = stations_df[stations_df['Number'] == lift_station]['X Position'].iloc[0]
-    sink_x = stations_df[stations_df['Number'] == sink_station]['X Position'].iloc[0]
-    
-    # Käy läpi nostimet järjestyksessä
+    # Käy läpi nostimet järjestyksessä ja tarkista asemavälit (lift/sink)
     for _, transporter in transporters_df.iterrows():
-        min_x = transporter['Min_x_position']
-        max_x = transporter['Max_x_Position']
-        # Tarkista että molemmat asemat ovat nostimen alueella
-        if min_x <= lift_x <= max_x and min_x <= sink_x <= max_x:
+        min_lift = int(transporter.get('Min_Lift_Station', transporter.get('Min_lift_station', transporter.get('MinLiftStation', 0))))
+        max_lift = int(transporter.get('Max_Lift_Station', transporter.get('Max_lift_station', transporter.get('MaxLiftStation', 0))))
+        min_sink = int(transporter.get('Min_Sink_Station', transporter.get('Min_sink_station', transporter.get('MinSinkStation', 0))))
+        max_sink = int(transporter.get('Max_Sink_Station', transporter.get('Max_sink_station', transporter.get('MaxSinkStation', 0))))
+
+        if (min_lift <= lift_station <= max_lift) and (min_sink <= sink_station <= max_sink):
             return transporter
 
     # Jos mikään nostin ei pysty, tulosta virheilmoitus ja keskeytä simulaatio
-    print(f"[ERROR] Nostintehtävälle ei löytynyt sopivaa nostinta! Nostoasema: {lift_station}, laskuasema: {sink_station}, nostoasema X: {lift_x}, laskuasema X: {sink_x}")
-    raise RuntimeError(f"Nostintehtävälle ei löytynyt sopivaa nostinta! Nostoasema: {lift_station}, laskuasema: {sink_station}, nostoasema X: {lift_x}, laskuasema X: {sink_x}")
+    print(f"[ERROR] Nostintehtävälle ei löytynyt sopivaa nostinta! Nostoasema: {lift_station}, laskuasema: {sink_station}")
+    raise RuntimeError(f"Nostintehtävälle ei löytynyt sopivaa nostinta! Nostoasema: {lift_station}, laskuasema: {sink_station}")
 
 def extract_transporter_tasks(output_dir):
     """
