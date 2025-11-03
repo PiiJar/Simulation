@@ -161,64 +161,75 @@ def generate_simulation_report(output_dir):
         pdf.set_font('Arial', 'B', 14)
         pdf.cell(0, 10, 'Stations', ln=1, align='L')
         pdf.set_font('Arial', '', 10)
-        original_colnames = list(df_st.columns)
-        # Muuta sarakkeiden nimiä näyttöä varten
-        name_mapping = {
-            'Dropping_Time': 'Dropping (s)',
-            'Device_delay': 'Device delay (s)'
-        }
-        display_colnames = [name_mapping.get(c, c) for c in original_colnames]
-        # Laske sarakkeiden leveydet sekä nimien että datan perusteella käyttäen alkuperäisiä nimiä
-        colwidths = []
-        for c in original_colnames:
-            name_width = pdf.get_string_width(str(display_colnames[original_colnames.index(c)])) + 6
-            data_widths = []
-            for _, row in df_st.iterrows():
-                if c == 'Dropping_Time':
-                    val_str = f"{row[c]:.1f}"
-                else:
-                    val_str = str(row[c])
-                data_widths.append(pdf.get_string_width(val_str) + 6)
-            max_data_width = max(data_widths) if data_widths else 0
-            colwidths.append(max(name_width, max_data_width))
-        # Aseta Dropping (s) ja Device delay (s) saman levyisiksi
-        dropping_idx = display_colnames.index('Dropping (s)')
-        device_idx = display_colnames.index('Device delay (s)')
-        max_width = max(colwidths[dropping_idx], colwidths[device_idx])
-        colwidths[dropping_idx] = max_width
-        colwidths[device_idx] = max_width
-        # Määritä asemoinnit: Group, X Position, Dropping (s), Device delay (s) oikeaan
-        aligns = ['L'] * len(display_colnames)
-        right_align_cols = ['Group', 'X Position', 'Dropping (s)', 'Device delay (s)']
-        center_align_cols = ['Number', 'Group']
-        for i, c in enumerate(display_colnames):
-            if c in right_align_cols:
-                aligns[i] = 'R'
-            elif c in center_align_cols:
-                aligns[i] = 'C'
-        # Sarakkeiden nimet keskelle ja lihavoitu, vaalea harmaa tausta
-        pdf.set_fill_color(220, 220, 220)  # Vaalea harmaa
-        pdf.set_font('Arial', 'B', 10)
-        for i, (c, w) in enumerate(zip(display_colnames, colwidths)):
-            pdf.cell(w, 8, str(c), border=1, align='C', fill=True)
-        pdf.ln()
-        pdf.set_font('Arial', '', 10)
-        # Data rivit zebra stripes
-        for row_idx, (_, row) in enumerate(df_st.iterrows()):
-            if row_idx % 2 == 0:
-                pdf.set_fill_color(245, 245, 245)  # Hyvin vaalea harmaa
-                fill = True
+        # Add English explanation below the Stations heading
+        stations_expl = (
+            "The Stations table lists all surface treatment line stations and their key properties. "
+            "Columns show the station number, group, name, x-coordinate, draining and device delays, and hoist/lift restrictions. "
+            "Device delay combines all possible equipment delays affecting lift and sink times, such as covers or transfer devices.\n\n"
+            "The Transporter column indicates which hoists (L = lift, S = sink) can operate at each station. "
+            "For example, '1L-1S / 2L' means the station can be both lifted and sunk by hoist 1, and lifted by hoist 2. "
+            "The column uses the format '<hoist>L-<hoist>S / <hoist>L...', where L = lift and S = sink permission for each hoist."
+        )
+    pdf.multi_cell(0, 7, stations_expl)
+    pdf.ln(8)  # Add vertical space before the table
+    original_colnames = list(df_st.columns)
+    # Muuta sarakkeiden nimiä näyttöä varten
+    name_mapping = {
+        'Dropping_Time': 'Dropping (s)',
+        'Device_delay': 'Device delay (s)'
+    }
+    display_colnames = [name_mapping.get(c, c) for c in original_colnames]
+    # Laske sarakkeiden leveydet sekä nimien että datan perusteella käyttäen alkuperäisiä nimiä
+    colwidths = []
+    for c in original_colnames:
+        name_width = pdf.get_string_width(str(display_colnames[original_colnames.index(c)])) + 6
+        data_widths = []
+        for _, row in df_st.iterrows():
+            if c == 'Dropping_Time':
+                val_str = f"{row[c]:.1f}"
             else:
-                fill = False
-            for i, (c, w) in enumerate(zip(original_colnames, colwidths)):
-                if c == 'Dropping_Time':
-                    val_str = f"{row[c]:.1f}"
-                elif c == 'Device_delay':
-                    val_str = f"{row[c]:.1f}"
-                else:
-                    val_str = str(row[c])
-                pdf.cell(w, 8, val_str, border=1, align=aligns[i], fill=fill)
-            pdf.ln()
+                val_str = str(row[c])
+            data_widths.append(pdf.get_string_width(val_str) + 6)
+        max_data_width = max(data_widths) if data_widths else 0
+        colwidths.append(max(name_width, max_data_width))
+    # Aseta Dropping (s) ja Device delay (s) saman levyisiksi
+    dropping_idx = display_colnames.index('Dropping (s)')
+    device_idx = display_colnames.index('Device delay (s)')
+    max_width = max(colwidths[dropping_idx], colwidths[device_idx])
+    colwidths[dropping_idx] = max_width
+    colwidths[device_idx] = max_width
+    # Määritä asemoinnit: Group, X Position, Dropping (s), Device delay (s) oikeaan
+    aligns = ['L'] * len(display_colnames)
+    right_align_cols = ['Group', 'X Position', 'Dropping (s)', 'Device delay (s)']
+    center_align_cols = ['Number', 'Group']
+    for i, c in enumerate(display_colnames):
+        if c in right_align_cols:
+            aligns[i] = 'R'
+        elif c in center_align_cols:
+            aligns[i] = 'C'
+    # Sarakkeiden nimet keskelle ja lihavoitu, vaalea harmaa tausta
+    pdf.set_fill_color(220, 220, 220)  # Vaalea harmaa
+    pdf.set_font('Arial', 'B', 10)
+    for i, (c, w) in enumerate(zip(display_colnames, colwidths)):
+        pdf.cell(w, 8, str(c), border=1, align='C', fill=True)
+    pdf.ln()
+    pdf.set_font('Arial', '', 10)
+    # Data rivit zebra stripes
+    for row_idx, (_, row) in enumerate(df_st.iterrows()):
+        if row_idx % 2 == 0:
+            pdf.set_fill_color(245, 245, 245)  # Hyvin vaalea harmaa
+            fill = True
+        else:
+            fill = False
+        for i, (c, w) in enumerate(zip(original_colnames, colwidths)):
+            if c == 'Dropping_Time':
+                val_str = f"{row[c]:.1f}"
+            elif c == 'Device_delay':
+                val_str = f"{row[c]:.1f}"
+            else:
+                val_str = str(row[c])
+            pdf.cell(w, 8, val_str, border=1, align=aligns[i], fill=fill)
+        pdf.ln()
         pdf.ln(5)
     # Uusi sivu Treatment Programs -taulukolle
     pdf.add_page()
