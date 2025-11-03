@@ -311,20 +311,26 @@ class CpSatPhase2Optimizer:
                 to2 = int(self.transporter_from_to[(b2, s2)][1])
                 x_from2, x_to2 = x(from2), x(to2)
 
-                # Lähimmän päätepisteparin etäisyys
-                d_candidates = [
-                    abs(x_from1 - x_from2),
-                    abs(x_from1 - x_to2),
-                    abs(x_to1 - x_from2),
-                    abs(x_to1 - x_to2),
-                ]
-                d_min = min(d_candidates)
-
                 avoid_limit = max(avoid_by_t.get(t1, 0), avoid_by_t.get(t2, 0))
                 if avoid_limit <= 0:
                     continue
 
-                if d_min < avoid_limit:
+                # Lasketaan reittien välinen minimietäisyys koko siirron ajalta
+                # Oletetaan lineaarinen liike from -> to
+                # Tarkistetaan, leikkaavatko reitit avoid_limitin sisällä
+                # Jos reitit menevät päällekkäin avoid-alueella, estetään päällekkäisyys
+                # (Tämä on konservatiivinen, mutta kattaa kaikki risteävät tapaukset)
+                def segments_overlap(a1, a2, b1, b2, limit):
+                    # Palauttaa True jos segmentit [a1,a2] ja [b1,b2] ovat limitin sisällä jollain välillä
+                    # Eli jos niiden välinen etäisyys käy < limit jossain kohtaa
+                    # Ratkaistaan yhtälö: |(a1 + t*(a2-a1)) - (b1 + t*(b2-b1))| < limit jollekin t∈[0,1]
+                    # Tämä on tosi jos segmentit leikkaavat tai menevät läheltä toisiaan
+                    # Yksinkertaistetaan: jos segmenttien väli [min(a1,a2),max(a1,a2)] ja [min(b1,b2),max(b1,b2)] menevät limitin sisään
+                    min1, max1 = min(a1, a2), max(a1, a2)
+                    min2, max2 = min(b1, b2), max(b1, b2)
+                    return not (max1 + limit <= min2 or max2 + limit <= min1)
+
+                if segments_overlap(x_from1, x_to1, x_from2, x_to2, avoid_limit):
                     # Pakota ei-päällekkäisyys
                     i_before = self.model.NewBoolVar(f"avoid_t{t1}_b{b1}s{s1}_vs_t{t2}_b{b2}s{s2}")
                     # i ennen j

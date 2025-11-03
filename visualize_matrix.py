@@ -65,21 +65,40 @@ def visualize_matrix(output_dir):
             for col in ["Transporter", "Batch", "Phase", "Start_Time", "End_Time", "From_Station", "To_Station"]:
                 if col in move_df.columns:
                     move_df[col] = move_df[col].astype(int)
-            move_df_page = move_df[(move_df['Start_Time'] < page_end) & (move_df['End_Time'] > page_start)]
+            # Suodata sivulle kuuluvat liikkeet
+            move_df_page = move_df[(move_df['Start_Time'] < page_end) & (move_df['End_Time'] > page_start)].copy()
+            # Järjestä varmuudeksi: per nostin, ajan mukaan; jos sama Start_Time, näytä Avoid ennen Idleä
+            def _order_value(desc, phase):
+                try:
+                    return -1 if isinstance(desc, str) and desc.lower().startswith('avoid') else int(phase)
+                except Exception:
+                    return int(phase)
+            move_df_page['__order'] = move_df_page.apply(lambda r: _order_value(r.get('Description', ''), r['Phase']), axis=1)
+            move_df_page = move_df_page.sort_values(['Transporter', 'Start_Time', '__order', 'Phase', 'End_Time']).reset_index(drop=True)
+            # Piirretään liikkeet
             for _, move in move_df_page.iterrows():
                 start_time = int(move['Start_Time'])
                 end_time = int(move['End_Time'])
                 from_station = int(move['From_Station'])
                 to_station = int(move['To_Station'])
                 phase = int(move['Phase'])
+                desc = str(move.get('Description', '')).lower()
                 transporter_id = int(move['Transporter'])
                 transporter_color = transporter_colors.get(transporter_id, '#888888')
-                ax.plot([start_time, end_time], [from_station, to_station], color=transporter_color, linestyle=':', linewidth=1, alpha=0.5, zorder=5)
+                # Tyyli: väistö (Avoid) piirtyy TÄSMÄLLEEN kuten muutkin siirtymät
+                if phase == 0:  # Idle
+                    ls, lw, a, z = ':', 1.0, 0.35, 4
+                else:
+                    ls, lw, a, z = ':', 1.2, 0.6, 6
+                ax.plot([start_time, end_time], [from_station, to_station], color=transporter_color, linestyle=ls, linewidth=lw, alpha=a, zorder=z)
                 if phase == 2 and start_time < end_time:
                     mid_time = (start_time + end_time) / 2
                     ax.scatter(mid_time, from_station + 0.08, marker='^', color=transporter_color, s=32, zorder=8)
                 elif phase == 4:
                     ax.scatter(start_time, from_station - 0.08, marker='v', color=transporter_color, s=32, zorder=8)
+            # Siivoa apusarake
+            if '__order' in move_df_page.columns:
+                del move_df_page['__order']
 
         df_page = df[(df["EntryTime"] < page_end) & (df["ExitTime"] > page_start)]
         batches = sorted(df_page['Batch'].unique())
@@ -176,7 +195,7 @@ def visualize_matrix(output_dir):
         ax.set_yticklabels([f"{num}: {station_names.get(num, 'Unknown')}" for num in all_stations], fontsize=8)
         ax.set_xlabel('Time (seconds)', fontsize=12)
         ax.set_ylabel('Stations', fontsize=12)
-        ax.set_title(f'Stretched Matrix: Batch Timeline (Page {page+1}/{n_pages})', fontsize=14, fontweight='bold')
+        # Title removed per request
         ax.grid(True, alpha=0.3, axis='both')
 
         # Lisää 5 minuutin (300s) välein pystysuorat apuviivat - KIINTEÄ 5400s SKAALAUS

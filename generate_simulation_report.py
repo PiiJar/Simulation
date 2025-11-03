@@ -31,12 +31,48 @@ def generate_simulation_report(output_dir):
     pdf = FPDF()
     pdf.set_auto_page_break(False)
     pdf.add_page()
+    # Lisää ylimääräistä tyhjää tilaa ennen otsikkoa, visuaalisen tasapainon parantamiseksi
+    pdf.set_y(20)  # oletus ~10mm, nostetaan n. 20mm alas sivun yläreunasta
     pdf.set_font('Arial', 'B', 18)
     pdf.cell(0, 12, 'Simulation Report', ln=1, align='C')
     pdf.set_font('Arial', '', 12)
     pdf.cell(0, 10, asiakas, ln=1, align='C')
     pdf.cell(0, 10, laitos, ln=1, align='C')
     pdf.cell(0, 10, date_str, ln=1, align='C')
+
+    # Lisää kanteen ensimmäinen visualisointikuva otsikon alle ja skaalaa sivun leveyteen
+    # Kuva syntyy visualisoinnissa nimellä matrix_timeline_page_1.png
+    first_page_img = os.path.join(reports_dir, 'matrix_timeline_page_1.png')
+    if os.path.exists(first_page_img):
+        try:
+            # Yritä muuntaa PNG → JPEG (poistaa mahdollisen alfa-kanavan, nopeampi upotus)
+            try:
+                from PIL import Image  # type: ignore
+                jpg_path = os.path.join(reports_dir, 'matrix_timeline_page_1.jpg')
+                with Image.open(first_page_img) as im:
+                    if im.mode in ('RGBA', 'LA'):
+                        # Valkoinen tausta alfalle
+                        bg = Image.new('RGB', im.size, (255, 255, 255))
+                        bg.paste(im, mask=im.split()[-1])
+                        im_to_save = bg
+                    else:
+                        im_to_save = im.convert('RGB')
+                    im_to_save.save(jpg_path, format='JPEG', quality=85)
+                cover_image_path = jpg_path
+            except Exception:
+                # Jos Pillow puuttuu tai muunto epäonnistuu, käytä PNG:tä suoraan
+                cover_image_path = first_page_img
+
+            left_margin = 10  # FPDF oletusmarginaali
+            x = left_margin
+            # Lisää hieman enemmän tyhjää tilaa otsikon ja kuvan väliin
+            y = pdf.get_y() + 12
+            w = pdf.w - 2 * left_margin
+            # Korkeutta ei anneta → FPDF säilyttää kuvasuhteen
+            pdf.image(cover_image_path, x=x, y=y, w=w)
+        except Exception as e:
+            # Älä jumita raporttia kuvan takia – jatka ilman kantakuvaa
+            print(f"[WARN] Cover image insert failed: {e}")
 
     # Sijoitetaan hakemiston nimi etusivun alalaitaan (A4 korkeus 297mm, marginaali 10mm)
     pdf.set_y(297-10-10)  # 10mm marginaali ylhäällä ja alhaalla
