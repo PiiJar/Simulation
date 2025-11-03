@@ -68,6 +68,10 @@ def generate_matrix_pure(output_dir):
         raise FileNotFoundError(f"Transfer times file not found: {transfers_path}")
     transfers_df = pd.read_csv(transfers_path)
     transfers_df["Transporter"] = transfers_df["Transporter"].astype(int)
+    
+    # Lue transporters tiedot fysiikka-laskuja varten
+    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
+    transporters_df = pd.read_csv(transporters_file)
     transfers_df["From_Station"] = transfers_df["From_Station"].astype(int)
     transfers_df["To_Station"] = transfers_df["To_Station"].astype(int)
     
@@ -111,16 +115,15 @@ def generate_matrix_pure(output_dir):
             min_time = int(stage_row["MinTime"]) if "MinTime" in stage_row else calc_time_seconds
             max_time = int(stage_row["MaxTime"]) if "MaxTime" in stage_row else calc_time_seconds
             
-            # Hae siirtoaika edellisestä asemasta
-            match = transfers_df[(transfers_df["Transporter"] == transporter_id) & 
-                                (transfers_df["From_Station"] == previous_station) & 
-                                (transfers_df["To_Station"] == station)]
-            
+            # Hae siirtoaika edellisestä asemasta CP-SAT transfer -taulukosta
+            match = transfers_df[(transfers_df["Transporter"] == transporter_id) &
+                                 (transfers_df["From_Station"] == previous_station) &
+                                 (transfers_df["To_Station"] == station)]
+
             if not match.empty:
                 transport_time = float(match.iloc[0]["TotalTaskTime"])
             else:
-                transport_time = 0  # Fallback
-                print(f"⚠️ Siirtoaikaa ei löydy: Transporter={transporter_id}, {previous_station}→{station}")
+                transport_time = 0  # Fallback: ei siirtoa
             
             # Yksinkertainen aikajana: edellinen loppu + siirtoaika + käsittelyaika
             entry_time = int(current_time + transport_time)

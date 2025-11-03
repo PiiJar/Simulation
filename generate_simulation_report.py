@@ -112,23 +112,117 @@ def generate_simulation_report(output_dir):
     pdf.add_page()
     pdf.ln(10)
     # Syötetaulukot (stationit ja käsittelyohjelmat)
-    stations_path = os.path.join(output_dir, 'stations.csv')
-    programs_path = os.path.join(output_dir, 'treatment_programs.csv')
+    stations_path = os.path.join(output_dir, 'initialization', 'stations.csv')
+    programs_path = os.path.join(output_dir, 'initialization', 'treatment_programs.csv')
+    
+    # Luo treatment_programs.csv yhdistämällä kaikki treatment_program_*.csv
+    init_dir = os.path.join(output_dir, 'initialization')
+    treatment_files = [f for f in os.listdir(init_dir) if f.startswith('treatment_program_') and f.endswith('.csv') and not f.startswith('treatment_program_originals')]
+    if treatment_files:
+        dfs = []
+        for f in treatment_files:
+            df = pd.read_csv(os.path.join(init_dir, f))
+            dfs.append(df)
+        combined_df = pd.concat(dfs, ignore_index=True)
+        combined_df.to_csv(programs_path, index=False)
+    
     if os.path.exists(stations_path):
         df_st = pd.read_csv(stations_path)
+        # Poista Type-sarake
+        df_st = df_st.drop(columns=['Station_type'])
+        # Lisää Transporter-sarake
+        transporters_path = os.path.join(output_dir, 'initialization', 'transporters.csv')
+        if os.path.exists(transporters_path):
+            df_trans = pd.read_csv(transporters_path)
+            transporter_list = []
+            for _, row in df_st.iterrows():
+                number = row['Number']
+                lifts = []
+                sinks = []
+                for _, t_row in df_trans.iterrows():
+                    tid = int(t_row['Transporter_id'])
+                    if t_row['Min_Lift_Station'] <= number <= t_row['Max_Lift_Station']:
+                        lifts.append(tid)
+                    if t_row['Min_Sink_Station'] <= number <= t_row['Max_Sink_Station']:
+                        sinks.append(tid)
+                parts = []
+                for tid in sorted(set(lifts + sinks)):
+                    has_lift = tid in lifts
+                    has_sink = tid in sinks
+                    if has_lift and has_sink:
+                        parts.append(f"{tid}L-{tid}S")
+                    elif has_lift:
+                        parts.append(f"{tid}L")
+                    elif has_sink:
+                        parts.append(f"{tid}S")
+                transporter_str = " / ".join(parts)
+                transporter_list.append(transporter_str)
+            df_st.insert(df_st.columns.get_loc('Name'), 'Transporter', transporter_list)
         pdf.set_font('Arial', 'B', 14)
-        pdf.cell(0, 10, 'Stations', ln=1)
+        pdf.cell(0, 10, 'Stations', ln=1, align='L')
         pdf.set_font('Arial', '', 10)
-        colnames = list(df_st.columns)
-        colwidths = [pdf.get_string_width(str(c))+6 for c in colnames]
-        for c, w in zip(colnames, colwidths):
-            pdf.cell(w, 8, str(c), border=1)
+        original_colnames = list(df_st.columns)
+        # Muuta sarakkeiden nimiä näyttöä varten
+        name_mapping = {
+            'Dropping_Time': 'Dropping (s)',
+            'Device_delay': 'Device delay (s)'
+        }
+        display_colnames = [name_mapping.get(c, c) for c in original_colnames]
+        # Laske sarakkeiden leveydet sekä nimien että datan perusteella käyttäen alkuperäisiä nimiä
+        colwidths = []
+        for c in original_colnames:
+            name_width = pdf.get_string_width(str(display_colnames[original_colnames.index(c)])) + 6
+            data_widths = []
+            for _, row in df_st.iterrows():
+                if c == 'Dropping_Time':
+                    val_str = f"{row[c]:.1f}"
+                else:
+                    val_str = str(row[c])
+                data_widths.append(pdf.get_string_width(val_str) + 6)
+            max_data_width = max(data_widths) if data_widths else 0
+            colwidths.append(max(name_width, max_data_width))
+        # Aseta Dropping (s) ja Device delay (s) saman levyisiksi
+        dropping_idx = display_colnames.index('Dropping (s)')
+        device_idx = display_colnames.index('Device delay (s)')
+        max_width = max(colwidths[dropping_idx], colwidths[device_idx])
+        colwidths[dropping_idx] = max_width
+        colwidths[device_idx] = max_width
+        # Määritä asemoinnit: Group, X Position, Dropping (s), Device delay (s) oikeaan
+        aligns = ['L'] * len(display_colnames)
+        right_align_cols = ['Group', 'X Position', 'Dropping (s)', 'Device delay (s)']
+        center_align_cols = ['Number', 'Group']
+        for i, c in enumerate(display_colnames):
+            if c in right_align_cols:
+                aligns[i] = 'R'
+            elif c in center_align_cols:
+                aligns[i] = 'C'
+        # Sarakkeiden nimet keskelle ja lihavoitu, vaalea harmaa tausta
+        pdf.set_fill_color(220, 220, 220)  # Vaalea harmaa
+        pdf.set_font('Arial', 'B', 10)
+        for i, (c, w) in enumerate(zip(display_colnames, colwidths)):
+            pdf.cell(w, 8, str(c), border=1, align='C', fill=True)
         pdf.ln()
-        for _, row in df_st.iterrows():
-            for c, w in zip(colnames, colwidths):
-                pdf.cell(w, 8, str(row[c]), border=1)
+        pdf.set_font('Arial', '', 10)
+        # Data rivit zebra stripes
+        for row_idx, (_, row) in enumerate(df_st.iterrows()):
+            if row_idx % 2 == 0:
+                pdf.set_fill_color(245, 245, 245)  # Hyvin vaalea harmaa
+                fill = True
+            else:
+                fill = False
+            for i, (c, w) in enumerate(zip(original_colnames, colwidths)):
+                if c == 'Dropping_Time':
+                    val_str = f"{row[c]:.1f}"
+                elif c == 'Device_delay':
+                    val_str = f"{row[c]:.1f}"
+                else:
+                    val_str = str(row[c])
+                pdf.cell(w, 8, val_str, border=1, align=aligns[i], fill=fill)
             pdf.ln()
         pdf.ln(5)
+    # Uusi sivu Treatment Programs -taulukolle
+    pdf.add_page()
+    pdf.ln(10)
     if os.path.exists(programs_path):
         df_prog = pd.read_csv(programs_path)
         cols = ['Stage', 'MinStat', 'MaxStat', 'MinTime', 'MaxTime']
@@ -137,7 +231,13 @@ def generate_simulation_report(output_dir):
         pdf.cell(0, 10, 'Treatment Programs', ln=1)
         pdf.set_font('Arial', '', 10)
         colnames = cols
-        colwidths = [pdf.get_string_width(str(c))+6 for c in colnames]
+        # Laske sarakkeiden leveydet sekä nimien että datan perusteella
+        colwidths = []
+        for c in colnames:
+            name_width = pdf.get_string_width(str(c)) + 6
+            data_widths = [pdf.get_string_width(str(row[c])) + 6 for _, row in df_prog_unique.iterrows()]
+            max_data_width = max(data_widths) if data_widths else 0
+            colwidths.append(max(name_width, max_data_width))
         for c, w in zip(colnames, colwidths):
             pdf.cell(w, 8, str(c), border=1)
         pdf.ln()

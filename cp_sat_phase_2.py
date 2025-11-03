@@ -79,10 +79,20 @@ def _load_phase1_snapshot(output_dir: str):
     for _, r in transfers.iterrows():
         tt = int(round(float(r.get("TotalTaskTime", 0))))
         dh = int(round(float(r.get("TransferTime", 0))))
-        transfers_map[(int(r["Transporter"]), int(r["From_Station"]), int(r["To_Station"]))] = (tt, dh)
+        t = int(r["Transporter"])
+        a = int(r["From_Station"])  # lift station
+        b = int(r["To_Station"])    # sink station
+        # Etukäteis-siirto (kuorman kanssa): a -> b
+        transfers_map[(t, a, b)] = (tt, dh)
+        # Deadhead (tyhjänä) tarvitsee myös b -> a siirtoajan; käytä samaa vaakasuoran siirron kestoa
+        # Huom: (TotalTaskTime) ei ole merkityksellinen deadheadille, mutta säilytetään tt sellaisenaan,
+        # sillä validointilogiikka käyttää vain dh-osaa.
+        if (t, b, a) not in transfers_map:
+            transfers_map[(t, b, a)] = (tt, dh)
 
     # Luo apumappi asemien X-koordinaateille (tarvittaessa)
-    stations_pos = stations.set_index("Number")["X Position"].round().astype(int).to_dict()
+    # Käytä kelluvia arvoja ilman karkeaa pyöristystä, jotta lähiarviot ovat täsmällisempiä
+    stations_pos = stations.set_index("Number")["X Position"].astype(float).to_dict()
 
     return batch_sched, transfers, transfers_map, batches, treatment_programs, stations_pos, transporters
 
@@ -338,6 +348,103 @@ class CpSatPhase2Optimizer:
                     # j ennen i
                     self.model.Add(start1 >= end2).OnlyEnforceIf(i_before.Not())
 
+    def _validate_transporter_no_overlap(self) -> List[Dict[str, int]]:
+        """Validate after solving that no two tasks of the same transporter overlap,
+        and that required deadhead time between consecutive tasks is respected.
+
+        Returns a list of violations (empty if none)."""
+        violations: List[Dict[str, int]] = []
+        # Group tasks by transporter
+        by_t: Dict[int, List[Tuple[int, int]]] = {}
+        for (b, s), t_id in self.transporter_by_task.items():
+            by_t.setdefault(int(t_id), []).append((int(b), int(s)))
+
+        for t_id, tasks in by_t.items():
+            # sort by realized start times
+            tasks_sorted = sorted(
+                tasks,
+                key=lambda bs: int(self.solver.Value(self.transporter_starts[(bs[0], bs[1])]))
+            )
+            for i in range(len(tasks_sorted) - 1):
+                b1, s1 = tasks_sorted[i]
+                b2, s2 = tasks_sorted[i + 1]
+                start1 = int(self.solver.Value(self.transporter_starts[(b1, s1)]))
+                end1 = int(self.solver.Value(self.transporter_ends[(b1, s1)]))
+                start2 = int(self.solver.Value(self.transporter_starts[(b2, s2)]))
+                end2 = int(self.solver.Value(self.transporter_ends[(b2, s2)]))
+                (_, to1) = self.transporter_from_to[(b1, s1)]
+                (from2, _) = self.transporter_from_to[(b2, s2)]
+                _, dh_ij = self.transfers_map.get((int(t_id), int(to1), int(from2)), (0, 0))
+                # Check basic non-overlap and deadhead compliance
+                if start2 < end1 + int(dh_ij):
+                    violations.append({
+                        "Transporter": int(t_id),
+                        "b1": int(b1),
+                        "s1": int(s1),
+                        "end1": int(end1),
+                        "b2": int(b2),
+                        "s2": int(s2),
+                        "start2": int(start2),
+                        "required_gap": int(dh_ij),
+                    })
+        return violations
+
+    def _validate_cross_transporter_collisions(self) -> List[Dict[str, int]]:
+        """Validate after solving that different transporters do not operate too close simultaneously.
+
+        Uses the same conservative segment overlap heuristic as in the model: if the X-intervals of
+        the two tasks overlap within avoid_limit and the time intervals overlap, it's a violation.
+
+        Returns a list of violations (empty if none)."""
+        def x(station: int) -> float:
+            return float(self.station_positions.get(int(station), 0.0))
+
+        # Avoid distances per transporter (fallback 0)
+        avoid_by_t: Dict[int, int] = {}
+        if "Transporter_id" in self.transporters_df.columns:
+            for _, r in self.transporters_df.iterrows():
+                t = int(r.get("Transporter_id"))
+                avoid_val = int(pd.to_numeric(r.get("Avoid", 0), errors="coerce") if "Avoid" in r else 0)
+                avoid_by_t[t] = max(0, avoid_val)
+
+        # Collect realized tasks
+        tasks: List[Tuple[int, int, int, int, int, float, float]] = []
+        # (t_id, b, s, start, end, x_from, x_to)
+        for (b, s), t_id in self.transporter_by_task.items():
+            start = int(self.solver.Value(self.transporter_starts[(b, s)]))
+            end = int(self.solver.Value(self.transporter_ends[(b, s)]))
+            f, t = self.transporter_from_to[(b, s)]
+            tasks.append((int(t_id), int(b), int(s), start, end, x(int(f)), x(int(t))))
+
+        def segments_overlap(a1: float, a2: float, b1: float, b2: float, limit: float) -> bool:
+            min1, max1 = (a1, a2) if a1 <= a2 else (a2, a1)
+            min2, max2 = (b1, b2) if b1 <= b2 else (b2, b1)
+            return not (max1 + limit <= min2 or max2 + limit <= min1)
+
+        violations: List[Dict[str, int]] = []
+        n = len(tasks)
+        for i in range(n):
+            t1, b1, s1, s_start, s_end, x1_from, x1_to = tasks[i]
+            for j in range(i + 1, n):
+                t2, b2, s2, t_start, t_end, x2_from, x2_to = tasks[j]
+                if t1 == t2:
+                    continue
+                avoid_limit = float(max(avoid_by_t.get(t1, 0), avoid_by_t.get(t2, 0)))
+                if avoid_limit <= 0:
+                    continue
+                time_overlap = (s_start < t_end) and (t_start < s_end)
+                if not time_overlap:
+                    continue
+                if segments_overlap(x1_from, x1_to, x2_from, x2_to, avoid_limit):
+                    violations.append({
+                        "T1": int(t1), "B1": int(b1), "S1": int(s1),
+                        "Start1": int(s_start), "End1": int(s_end),
+                        "T2": int(t2), "B2": int(b2), "S2": int(s2),
+                        "Start2": int(t_start), "End2": int(t_end),
+                        "Avoid_Limit": int(avoid_limit)
+                    })
+        return violations
+
     def _deadhead_between_tasks(self, t_id: int, task_from: Tuple[int, int], task_to: Tuple[int, int]) -> Tuple[int, int]:
         """Palauta (TotalTaskTime, TransferTime) deadheadille task_from → task_to (tyhjänä)."""
         b_from, s_from = task_from
@@ -424,6 +531,30 @@ class CpSatPhase2Optimizer:
             return None
 
         print("CP-SAT Vaihe 2: ratkaisu löytyi")
+
+        # Post-validate that there are no overlaps per transporter
+        violations = self._validate_transporter_no_overlap()
+        if violations:
+            print("[ERROR] Validointi epäonnistui: transportereilla päällekkäisiä tehtäviä tai deadhead-väliä ei kunnioiteta.")
+            # Kirjoita konfliktiraportti ja keskeytä
+            cp_dir = os.path.join(self.output_dir, "cp_sat")
+            _ensure_dirs(cp_dir)
+            path = os.path.join(cp_dir, "cp_sat_hoist_conflicts.csv")
+            vdf = pd.DataFrame(violations)
+            vdf.to_csv(path, index=False)
+            print(f"Tallennettu konfliktiraportti: {path}")
+            return None
+
+        # Post-validate that there are no cross-transporter collisions in space-time
+        x_violations = self._validate_cross_transporter_collisions()
+        if x_violations:
+            print("[ERROR] Validointi epäonnistui: eri nostimien liikkeet liian lähellä samanaikaisesti (törmäysriski).")
+            cp_dir = os.path.join(self.output_dir, "cp_sat")
+            _ensure_dirs(cp_dir)
+            path = os.path.join(cp_dir, "cp_sat_cross_conflicts.csv")
+            pd.DataFrame(x_violations).to_csv(path, index=False)
+            print(f"Tallennettu ristikäisten nostimien konfliktiraportti: {path}")
+            return None
         # Luo snapshot ja pysyvät päivitykset
         self._write_transporter_schedule_snapshot()
         self._update_production_start_optimized()

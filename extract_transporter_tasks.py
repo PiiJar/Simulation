@@ -371,12 +371,18 @@ def create_detailed_movements(output_dir):
     
     movements = []
 
+    # Seuranta: tehtäväjärjestys per nostin (diagnostiikkaa ja analyysiä varten)
+    from collections import defaultdict
+    task_seq_counter = defaultdict(int)  # transporter_id -> seq
+
     # Seuraa nostimien edellistä sijaintia (Phase 1:n lähtöpaikka)
     transporter_last_location = transporter_start_positions.copy()
 
     # Tuota perus 5-vaiheiset liikkeet kaikille tehtäville (ilman väistöä)
     for _, task in tasks_df.sort_values(["Transporter_id", "Phase_0_start"]).iterrows():
         transporter_id = int(task['Transporter_id'])
+        task_seq_counter[transporter_id] += 1
+        task_seq = task_seq_counter[transporter_id]
         phase_1_from_station = int(transporter_last_location.get(transporter_id, task.get('lift_stat', task.get('Lift_stat', 0))))
         movements.extend([
             {
@@ -387,7 +393,8 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_1_start']),
                 'From_Station': phase_1_from_station,
                 'To_Station': phase_1_from_station,
-                'Description': 'Idle'
+                'Description': 'Idle',
+                'Task_Seq': int(task_seq)
             },
             {
                 'Transporter': transporter_id,
@@ -397,7 +404,8 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_2_start']),
                 'From_Station': phase_1_from_station,
                 'To_Station': int(task['Lift_stat']),
-                'Description': 'Move to lifting station'
+                'Description': 'Move to lifting station',
+                'Task_Seq': int(task_seq)
             },
             {
                 'Transporter': transporter_id,
@@ -407,7 +415,8 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_3_start']),
                 'From_Station': int(task['Lift_stat']),
                 'To_Station': int(task['Lift_stat']),
-                'Description': 'Lifting'
+                'Description': 'Lifting',
+                'Task_Seq': int(task_seq)
             },
             {
                 'Transporter': transporter_id,
@@ -417,7 +426,8 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_4_start']),
                 'From_Station': int(task['Lift_stat']),
                 'To_Station': int(task['Sink_stat']),
-                'Description': 'Move to sinking station'
+                'Description': 'Move to sinking station',
+                'Task_Seq': int(task_seq)
             },
             {
                 'Transporter': transporter_id,
@@ -427,7 +437,8 @@ def create_detailed_movements(output_dir):
                 'End_Time': int(task['Phase_4_stop']),
                 'From_Station': int(task['Sink_stat']),
                 'To_Station': int(task['Sink_stat']),
-                'Description': 'Sinking'
+                'Description': 'Sinking',
+                'Task_Seq': int(task_seq)
             }
         ])
         transporter_last_location[transporter_id] = int(task['Sink_stat'])
@@ -510,7 +521,8 @@ def create_detailed_movements(output_dir):
                     'End_Time': return_end_time,
                     'From_Station': current_location,
                     'To_Station': start_position,
-                    'Description': 'Move to lifting station'
+                    'Description': 'Move to lifting station',
+                    'Task_Seq': 0
                 })
                 # Lisää Phase 0: Odotus alkupaikassa simuloinnin loppuun
                 movements.append({
@@ -521,7 +533,8 @@ def create_detailed_movements(output_dir):
                     'End_Time': max(global_final_time, return_end_time),  # Varmista ettei mene negatiiviseksi
                     'From_Station': start_position,
                     'To_Station': start_position,
-                    'Description': 'Idle'
+                    'Description': 'Idle',
+                    'Task_Seq': 0
                 })
             else:
                 # Nostin on jo alkupaikassa, lisää vain Phase 0 odotus
@@ -533,7 +546,8 @@ def create_detailed_movements(output_dir):
                     'End_Time': max(global_final_time, transporter_final_times[transporter_id]),  # Varmista ettei mene negatiiviseksi
                     'From_Station': start_position,
                     'To_Station': start_position,
-                    'Description': 'Idle'
+                    'Description': 'Idle',
+                    'Task_Seq': 0
                 })
     
     # Tallenna DataFrame (lisätään väistö selkeästi määritellyin ehdoin)
@@ -549,11 +563,11 @@ def create_detailed_movements(output_dir):
     #            sitten uusi Idle alkaa Avoidin lopusta ja päättyy alkuperäisen idlen loppuun.
     # - Päivitä seuraavan siirron lähtöasema kohdeasemaksi, jos se alkaa heti idlen jälkeen.
 
-    # Selvitä yhteisalue rajat transporters.csv:stä
+    # Selvitä yhteisalue rajat transporters.csv:stä (sink-alueiden leikkaus)
     t1_row = transporters_df[transporters_df['Transporter_id'] == 1].iloc[0]
     t2_row = transporters_df[transporters_df['Transporter_id'] == 2].iloc[0]
-    common_min = int(t2_row['Min_Lift_Station'])
-    common_max = int(t1_row['Max_Sink_Station'])
+    common_min = max(int(t1_row['Min_Sink_Station']), int(t2_row['Min_Sink_Station']))
+    common_max = min(int(t1_row['Max_Sink_Station']), int(t2_row['Max_Sink_Station']))
 
     # Lista kaikista asemista – haetaan robustisti seuraava kelvollinen asema oman alueen puolelta
     station_numbers = sorted(stations_df['Number'].astype(int).unique().tolist())
@@ -584,12 +598,14 @@ def create_detailed_movements(output_dir):
             if int(transporter_id) == 1:
                 # T1 menee vasemmalle (pienempään kuin common_min)
                 candidates = [s for s in station_numbers if s < common_min]
-                target_station = max(candidates) if candidates else int(t1_row['Min_Lift_Station'])
+                target_station = max(candidates) if candidates else None
             else:
                 # T2 menee oikealle (suurempaan kuin common_max)
                 candidates = [s for s in station_numbers if s > common_max]
-                t2_fallback = int(t2_row['Max_Sink_Station']) if 'Max_Sink_Station' in t2_row else max(station_numbers)
-                target_station = min(candidates) if candidates else t2_fallback
+                target_station = min(candidates) if candidates else None
+
+            if target_station is None:
+                continue  # Ei väistökohdetta, ohita
 
             # Laske väistön kesto fysiikalla
             cur_info = stations_df[stations_df['Number'] == idle_station].iloc[0]
@@ -617,7 +633,8 @@ def create_detailed_movements(output_dir):
                 'End_Time': avoid_end,
                 'From_Station': idle_station,
                 'To_Station': target_station,
-                'Description': 'Avoid'
+                'Description': 'Avoid',
+                'Task_Seq': int(r.get('Task_Seq', 0))
             })
 
             # Päivitä seuraavan liikkeen lähtöasema, jos se alkaa heti idlen perään (alkuperäinen idle_end)
@@ -699,13 +716,13 @@ def create_detailed_movements(output_dir):
                     'Transporter': int(t_id), 'Batch': 0, 'Phase': 1,
                     'Start_Time': ret_start, 'End_Time': ret_end,
                     'From_Station': current_location, 'To_Station': start_position,
-                    'Description': 'Move to lifting station'
+                    'Description': 'Move to lifting station', 'Task_Seq': 0
                 },
                 {
                     'Transporter': int(t_id), 'Batch': 0, 'Phase': 0,
                     'Start_Time': ret_end, 'End_Time': max(global_final_time, ret_end),
                     'From_Station': start_position, 'To_Station': start_position,
-                    'Description': 'Idle'
+                    'Description': 'Idle', 'Task_Seq': 0
                 }
             ])
 
@@ -718,8 +735,42 @@ def create_detailed_movements(output_dir):
     movements_df = movements_df.drop(columns=['__order'])
     movements_df['Movement_ID'] = range(1, len(movements_df) + 1)
 
+    # Kirjoita pääliiketiedosto
     output_file = os.path.join(logs_dir, "transporters_movement.csv")
     movements_df.to_csv(output_file, index=False)
+
+    # Kirjoita diagnostiikka-analyysi: varmista vaiheiden järjestys per nostin ja tehtävä
+    try:
+        diag_rows = []
+        for t_id, g in movements_df.groupby('Transporter'):
+            gg = g[g['Task_Seq'].notna()]
+            for task_seq, tg in gg.groupby('Task_Seq'):
+                if int(task_seq) == 0:
+                    continue  # ohita palautusliikkeet
+                phases = sorted(tg['Phase'].astype(int).unique().tolist())
+                first_start = int(tg['Start_Time'].min()) if not tg.empty else None
+                last_end = int(tg['End_Time'].max()) if not tg.empty else None
+                # odotettu vaihejoukko on {0,1,2,3,4} (Idle voi olla 0 pituinen ja puuttua, hyväksytään)
+                expected = {1,2,3,4}
+                present = set([p for p in phases if p in expected])
+                missing = sorted(list(expected - present))
+                monotonic_ok = (tg.sort_values(['Start_Time', 'Phase'])['End_Time'].astype(int).is_monotonic_increasing)
+                diag_rows.append({
+                    'Transporter': int(t_id),
+                    'Task_Seq': int(task_seq),
+                    'Phases_Present': ",".join(map(str, phases)),
+                    'Missing_Phases_1_4': ",".join(map(str, missing)) if missing else "",
+                    'First_Start': first_start,
+                    'Last_End': last_end,
+                    'NonDecreasing_Times': bool(monotonic_ok)
+                })
+        if diag_rows:
+            pd.DataFrame(diag_rows).sort_values(['Transporter', 'Task_Seq']).to_csv(
+                os.path.join(logs_dir, 'movement_diagnostics.csv'), index=False
+            )
+    except Exception as diag_ex:
+        # Diagnoosin epäonnistuminen ei saa kaataa putkea
+        logger.log("WARN", f"Liikediagnostiikan kirjoitus epäonnistui: {diag_ex}")
 
     logger.log("STEP", "STEP 8.7 COMPLETED: CREATE DETAILED TRANSPORTER MOVEMENTS")
 
