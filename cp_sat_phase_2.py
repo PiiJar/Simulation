@@ -521,7 +521,13 @@ class CpSatPhase2Optimizer:
         self.set_objective()
         print(" - Tavoite asetettu")
 
-        self.solver.parameters.max_time_in_seconds = 60.0  # voi säätää
+        # Aikaraja: luettavissa ympäristömuuttujasta CPSAT_PHASE2_MAX_TIME (sekunteina), oletus 300 s
+        try:
+            _time_limit = float(os.getenv("CPSAT_PHASE2_MAX_TIME", "300"))
+        except Exception:
+            _time_limit = 300.0
+        self.solver.parameters.max_time_in_seconds = _time_limit
+        print(f" - Aikaraja asetettu: {int(_time_limit)} s")
         status = self.solver.Solve(self.model)
 
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -624,6 +630,11 @@ class CpSatPhase2Optimizer:
             tt, _ = self.transfers_map.get((t_id, start_station, to_station), (0, 0))
             stage0_exit = max(0, entry1 - int(tt))
             df.loc[df["Batch"] == b, "Start_optimized"] = _hms(stage0_exit)
+        # Järjestä rivejä Start_optimized-ajan mukaan nousevasti (puuttuvat viimeiseksi)
+        if "Start_optimized" in df.columns:
+            secs = pd.to_timedelta(df["Start_optimized"], errors="coerce").dt.total_seconds()
+            df["__start_opt_sec"] = secs
+            df = df.sort_values(["__start_opt_sec", "Batch"], na_position="last").drop(columns=["__start_opt_sec"]).reset_index(drop=True)
         df.to_csv(prod_path, index=False)
         print(f"Päivitetty production.csv: {prod_path}")
 

@@ -7,6 +7,24 @@ def generate_simulation_report(output_dir):
     """
     Luo yksinkertainen Simulation Report PDF-muodossa ja tallentaa sen reports-kansioon.
     """
+    # Lenient CSV reader for possibly malformed stations.csv
+    def _read_csv_lenient(path: str):
+        import csv
+        rows = []
+        with open(path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            cols = [h.strip() for h in header]
+            for parts in reader:
+                if parts is None:
+                    continue
+                vals = (parts + [None]*len(cols))[:len(cols)]
+                rows.append(dict(zip(cols, vals)))
+        df = pd.DataFrame(rows)
+        for c in ['Number','X Position','Dropping_Time','Device_delay']:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+        return df
     # Otsikko ja metadata
     now = datetime.now()
     date_str = now.strftime('%Y-%m-%d %H:%M:%S')
@@ -127,11 +145,13 @@ def generate_simulation_report(output_dir):
         combined_df.to_csv(programs_path, index=False)
     
     if os.path.exists(stations_path):
-        df_st = pd.read_csv(stations_path)
-        # Poista Type-sarake
-        df_st = df_st.drop(columns=['Station_type'])
+        df_st = _read_csv_lenient(stations_path)
+        # Poista Type-sarake jos löytyy
+        if 'Station_type' in df_st.columns:
+            df_st = df_st.drop(columns=['Station_type'])
         # Lisää Transporter-sarake
-        transporters_path = os.path.join(output_dir, 'initialization', 'transporters.csv')
+        # Käytä cp_sat-esi-prosessoituja transporter-alueita legacy-tiedoston sijaan
+        transporters_path = os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv')
         if os.path.exists(transporters_path):
             df_trans = pd.read_csv(transporters_path)
             transporter_list = []
@@ -141,9 +161,9 @@ def generate_simulation_report(output_dir):
                 sinks = []
                 for _, t_row in df_trans.iterrows():
                     tid = int(t_row['Transporter_id'])
-                    if t_row['Min_Lift_Station'] <= number <= t_row['Max_Lift_Station']:
+                    if int(t_row['Min_Lift_Station']) <= number <= int(t_row['Max_Lift_Station']):
                         lifts.append(tid)
-                    if t_row['Min_Sink_Station'] <= number <= t_row['Max_Sink_Station']:
+                    if int(t_row['Min_Sink_Station']) <= number <= int(t_row['Max_Sink_Station']):
                         sinks.append(tid)
                 parts = []
                 for tid in sorted(set(lifts + sinks)):

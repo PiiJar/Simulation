@@ -8,6 +8,27 @@ def visualize_matrix(output_dir):
     if logger is None:
         raise RuntimeError("Logger is not initialized. Please initialize logger in main pipeline before calling this function.")
     logger.log_data("Stretched matrix visualization started")
+    # Visualization toggles
+    SHOW_STAGE_MARKERS = False          # If True, draw a dot at stage entry
+    SHOW_ENTRY_EXIT_MARKERS = False     # If True, draw small markers at entry/exit
+    # Lenient CSV reader for possibly malformed stations.csv
+    def _read_csv_lenient(path: str):
+        import csv
+        rows = []
+        with open(path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            cols = [h.strip() for h in header]
+            for parts in reader:
+                if parts is None:
+                    continue
+                vals = (parts + [None]*len(cols))[:len(cols)]
+                rows.append(dict(zip(cols, vals)))
+        df = pd.DataFrame(rows)
+        for c in ['Number','X Position','Dropping_Time','Device_delay']:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+        return df
     logs_dir = os.path.join(output_dir, "logs")
     reports_dir = os.path.join(output_dir, "reports")
     os.makedirs(reports_dir, exist_ok=True)
@@ -32,7 +53,7 @@ def visualize_matrix(output_dir):
         for time_col in ["EntryTime", "ExitTime"]:
             if time_col in df.columns:
                 df[time_col] = df[time_col] - min_time
-    stations_df = pd.read_csv(stations_file)
+    stations_df = _read_csv_lenient(stations_file)
     if 'Number' in stations_df.columns:
         stations_df['Number'] = stations_df['Number'].astype(int)
     logger.log_data(f"Loaded stretched matrix: {len(df)} stages, {len(stations_df)} stations")
@@ -43,8 +64,29 @@ def visualize_matrix(output_dir):
 
     PAGE_SECONDS = 5400
     n_pages = int(max_time // PAGE_SECONDS) + 1 if max_time > 0 else 1
-    all_stations = sorted(stations_df['Number'].tolist())
-    station_names = {int(row['Number']): row['Name'] for _, row in stations_df.iterrows()}
+    # Limittäinen asemajärjestys: 101,201,102,202,103,203,...
+    station_numbers = sorted(set(stations_df['Number'].dropna().astype(int).tolist()))
+    ones = [s for s in station_numbers if 100 <= s < 200]
+    twos = set([s for s in station_numbers if 200 <= s < 300])
+    interleaved_numbers = []
+    placed = set()
+    for s in sorted(ones):
+        if s in placed:
+            continue
+        interleaved_numbers.append(s)
+        placed.add(s)
+        pair = s + 100
+        if pair in twos:
+            interleaved_numbers.append(pair)
+            placed.add(pair)
+    # Lisää mahdolliset parittomat tai muut sarjat loppuun
+    remaining = [s for s in station_numbers if s not in placed]
+    interleaved_numbers.extend(sorted(remaining))
+    # Map asema → y-koordinaatti (1..N)
+    station_to_y = {num: i+1 for i, num in enumerate(interleaved_numbers)}
+    # Y-tikit ja -nimet
+    all_stations = [station_to_y[num] for num in interleaved_numbers]
+    station_names = {int(row['Number']): row.get('Name', '') for _, row in stations_df.iterrows()}
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
     all_batches = sorted(df['Batch'].unique())
     batch_color_map = {batch: colors[i % len(colors)] for i, batch in enumerate(all_batches)}
@@ -68,19 +110,22 @@ def visualize_matrix(output_dir):
             # Suodata sivulle kuuluvat liikkeet
             move_df_page = move_df[(move_df['Start_Time'] < page_end) & (move_df['End_Time'] > page_start)].copy()
             # Järjestä varmuudeksi: per nostin, ajan mukaan; jos sama Start_Time, näytä Avoid ennen Idleä
-            def _order_value(desc, phase):
-                try:
-                    return -1 if isinstance(desc, str) and desc.lower().startswith('avoid') else int(phase)
-                except Exception:
-                    return int(phase)
-            move_df_page['__order'] = move_df_page.apply(lambda r: _order_value(r.get('Description', ''), r['Phase']), axis=1)
+            # Järjestys: Avoid ennen Idleä samassa ajanhetkessä; käytä vektoroitua laskentaa
+            import numpy as np
+            desc_lower = move_df_page.get('Description', pd.Series('', index=move_df_page.index)).astype(str).str.lower()
+            phase_int = pd.to_numeric(move_df_page.get('Phase', 0), errors='coerce').fillna(0).astype(int)
+            move_df_page['__order'] = np.where(desc_lower.str.startswith('avoid'), -1, phase_int)
             move_df_page = move_df_page.sort_values(['Transporter', 'Start_Time', '__order', 'Phase', 'End_Time']).reset_index(drop=True)
             # Piirretään liikkeet
             for _, move in move_df_page.iterrows():
                 start_time = int(move['Start_Time'])
                 end_time = int(move['End_Time'])
-                from_station = int(move['From_Station'])
-                to_station = int(move['To_Station'])
+                from_num = int(move['From_Station'])
+                to_num = int(move['To_Station'])
+                if from_num not in station_to_y or to_num not in station_to_y:
+                    continue
+                from_station = station_to_y[from_num]
+                to_station = station_to_y[to_num]
                 phase = int(move['Phase'])
                 desc = str(move.get('Description', '')).lower()
                 transporter_id = int(move['Transporter'])
@@ -106,13 +151,16 @@ def visualize_matrix(output_dir):
             batch_data = df_page[df_page['Batch'] == batch].sort_values('Stage')
             color = batch_color_map.get(batch, '#1f77b4')
             if not batch_data.empty:
-                start_station = int(batch_data.iloc[0]['Station'])
+                start_station_num = int(batch_data.iloc[0]['Station'])
             else:
-                start_station = None
-            prev_station = start_station
+                start_station_num = None
+            prev_station = start_station_num
             prev_exit_time = 0
             for i, row in batch_data.iterrows():
-                station = int(row['Station'])
+                station_num = int(row['Station'])
+                if station_num not in station_to_y:
+                    continue
+                station = station_to_y[station_num]
                 entry_time = int(round(row['EntryTime']))
                 exit_time = int(round(row['ExitTime']))
                 calc_time = int(round(row['CalcTime']))
@@ -121,7 +169,8 @@ def visualize_matrix(output_dir):
                 stage_int = int(row['Stage']) if 'Stage' in row else 0
                 y = station
                 if calc_time == 0 and stage_int == 0:
-                    ax.plot(entry_time, y, 'o', color=color, markersize=6, alpha=0.8)
+                    if SHOW_STAGE_MARKERS:
+                        ax.plot(entry_time, y, 'o', color=color, markersize=6, alpha=0.8)
                     continue
                 if calc_time > 0:
                     total_time_at_station = exit_time - entry_time
@@ -184,15 +233,24 @@ def visualize_matrix(output_dir):
                     else:
                         logger.log_data(f"NO ANNOTATION: stage {stage_int} at station {y} - min:{min_time_prog} calc:{calc_time_prog} max:{max_time_prog}")
                     # (poistettu duplikaatti annotaatio)
-                ax.plot(entry_time, y, 'o', color=color, markersize=6, alpha=0.8)
-                if calc_time > 0:
+                if SHOW_STAGE_MARKERS:
+                    ax.plot(entry_time, y, 'o', color=color, markersize=6, alpha=0.8)
+                if SHOW_ENTRY_EXIT_MARKERS and calc_time > 0:
                     ax.plot(entry_time, y, 'o', color=color, markersize=3, alpha=0.6)
                     ax.plot(exit_time, y, 's', color=color, markersize=3, alpha=0.6)
                 prev_station = station
                 prev_exit_time = exit_time
         # Set up axes - PIENENNETTY Y-AKSELIN FONTTI
         ax.set_yticks(all_stations)
-        ax.set_yticklabels([f"{num}: {station_names.get(num, 'Unknown')}" for num in all_stations], fontsize=8)
+        labels = [f"{num}: {station_names.get(num, 'Unknown')}" for num in interleaved_numbers]
+        texts = ax.set_yticklabels(labels, fontsize=8)
+        # Lihavoi 200-sarjan asemat
+        try:
+            for text, num in zip(texts, interleaved_numbers):
+                if 200 <= int(num) < 300:
+                    text.set_fontweight('bold')
+        except Exception:
+            pass
         ax.set_xlabel('Time (seconds)', fontsize=12)
         ax.set_ylabel('Stations', fontsize=12)
         # Title removed per request

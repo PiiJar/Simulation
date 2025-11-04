@@ -384,7 +384,7 @@ def solve_and_save_simple(model, task_vars, treatment_programs, output_dir):
         
         # Lataa nostin- ja asematiedot
         stations_df = pd.read_csv(os.path.join(output_dir, "initialization", "stations.csv"))
-        transporters_df = pd.read_csv(os.path.join(output_dir, "initialization", "transporters.csv"))
+        transporters_df = pd.read_csv(os.path.join(output_dir, "cp_sat", "cp_sat_transporters.csv"))
         
         # Luo optimoitu käsittelyohjelma (ilman stage 0)
         optimized_program = []

@@ -1,0 +1,2 @@
+Transporter_id,Acceleration_time (s),Deceleration_time (s),Max_speed (mm/s),Z_total_distance (mm),Z_slow_distance_dry (mm),Z_slow_distance_wet (mm),Z_slow_end_distance (mm),Z_slow_speed (mm/s),Z_fast_speed (mm/s)
+1,2.0,2.0,300,4000,300,1000,50,100,200

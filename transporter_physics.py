@@ -48,26 +48,49 @@ def calculate_physics_transfer_time(from_station_row, to_station_row, transporte
         return round(t_accel + t_const + t_decel, 1)
 
 def calculate_lift_time(station_row, transporter_row):
+    """Nostoajan arviointi.
+    Periaate:
+    - Käytä kuivaa hidasta matkaa nostossa (dry), märkä hidastettu vaikuttaa uppoamiseen.
+    - Rajaa osamatkat [0, z_total] väliin ja varmista, ettei nopean vaiheen matka mene negatiiviseksi.
+    - Laitteen viive (Device_delay) ja mahdollinen Dropping_Time vaikuttavat nostoon prosessin määrittelyn mukaisesti.
+    """
     device_delay = _num(station_row.get('Device_delay'), 0.0)
     dropping_time = _num(station_row.get('Dropping_Time'), 0.0)
     z_total = _num(transporter_row.get('Z_total_distance (mm)'), 0.0)
-    z_slow = _num(transporter_row.get('Z_slow_distance_wet (mm)'), 0.0)
+    z_slow_dry = _num(transporter_row.get('Z_slow_distance_dry (mm)'), 0.0)
     z_slow_end = _num(transporter_row.get('Z_slow_end_distance (mm)'), 0.0)
     z_slow_speed = _num(transporter_row.get('Z_slow_speed (mm/s)'), 1.0)
     z_fast_speed = _num(transporter_row.get('Z_fast_speed (mm/s)'), 1.0)
-    slow_up_1 = z_slow / z_slow_speed
-    fast_up = (z_total - z_slow - z_slow_end) / z_fast_speed
-    slow_up_2 = z_slow_end / z_slow_speed
+
+    # Clamp distances to physical limits
+    z_slow_dry = max(0.0, min(z_slow_dry, z_total))
+    z_slow_end = max(0.0, min(z_slow_end, z_total))
+    fast_dist = max(0.0, z_total - z_slow_dry - z_slow_end)
+
+    slow_up_1 = z_slow_dry / max(z_slow_speed, 1e-6)
+    fast_up = fast_dist / max(z_fast_speed, 1e-6)
+    slow_up_2 = z_slow_end / max(z_slow_speed, 1e-6)
     lift_time = device_delay + slow_up_1 + fast_up + slow_up_2 + dropping_time
     return round(lift_time, 1)
 
 def calculate_sink_time(station_row, transporter_row):
+    """Uppoamisajan arviointi.
+    Periaate:
+    - Käytä märkää hidasta matkaa upotuksessa (wet).
+    - Rajaa osamatkat [0, z_total] väliin ja varmista, ettei nopean vaiheen matka mene negatiiviseksi.
+    - Laitteen viive (Device_delay) vaikuttaa myös upotukseen.
+    """
     device_delay = _num(station_row.get('Device_delay'), 0.0)
     z_total = _num(transporter_row.get('Z_total_distance (mm)'), 0.0)
-    z_slow = _num(transporter_row.get('Z_slow_distance_wet (mm)'), 0.0)
+    z_slow_wet = _num(transporter_row.get('Z_slow_distance_wet (mm)'), 0.0)
     z_slow_speed = _num(transporter_row.get('Z_slow_speed (mm/s)'), 1.0)
     z_fast_speed = _num(transporter_row.get('Z_fast_speed (mm/s)'), 1.0)
-    fast_down = (z_total - z_slow) / z_fast_speed
-    slow_down = z_slow / z_slow_speed
+
+    # Clamp
+    z_slow_wet = max(0.0, min(z_slow_wet, z_total))
+    fast_dist = max(0.0, z_total - z_slow_wet)
+
+    fast_down = fast_dist / max(z_fast_speed, 1e-6)
+    slow_down = z_slow_wet / max(z_slow_speed, 1e-6)
     sink_time = device_delay + fast_down + slow_down
     return round(sink_time, 1)

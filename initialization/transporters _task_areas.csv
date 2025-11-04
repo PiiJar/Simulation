@@ -1,0 +1,2 @@
+Transporter_id,Model,Min_Lift_Station_100,Max_Lift_Station_100,Min_Sink_Station_100,Max_Sink_Station_100,Min_Lift_Station_200,Max_Lift_Station_200,Min_Sink_Station_200,Max_Sink_Station_200,Avoid
+1,3D,101,110,101,110,201,212,201,212

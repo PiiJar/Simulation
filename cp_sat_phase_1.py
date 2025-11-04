@@ -12,6 +12,14 @@ import os
 import pandas as pd
 from ortools.sat.python import cp_model
 
+# Group-constraint toggles
+# If True, try to enforce same group across adjacent stages when feasible
+ENFORCE_SAME_GROUP_ADJACENT = False
+# Optional explicit pairs to enforce: list of (stage_i, stage_j) tuples (applied to all batches)
+SAME_GROUP_STAGE_PAIRS = []
+# Force 200-line counterpart mapping: for listed (i,j), require station_j == station_i + 100 when feasible
+FORCE_200_COUNTERPART_STAGE_PAIRS = []
+
 # Valinnainen logger, jos käytettävissä
 try:
     from simulation_logger import get_logger
@@ -154,12 +162,30 @@ class CpSatPhase1Optimizer:
                 if stage['Stage'] == 0:
                     continue
                     
-                # Asemavalinta MinStat-MaxStat väliltä
-                station_var = self.model.NewIntVar(
-                    stage['MinStat'],
-                    stage['MaxStat'],
-                    f'station_{batch_id}_{stage["Stage"]}'
-                )
+                # Asemavalinta: rajaa arvo olemassa oleviin asemiin MinStat-MaxStat -väliltä
+                min_stat, max_stat = int(stage['MinStat']), int(stage['MaxStat'])
+                stage_idx = int(stage['Stage'])
+                station_var = self.model.NewIntVar(min_stat, max_stat, f'station_{batch_id}_{stage_idx}')
+                # Sallitut asemat: vain olemassa olevat annetulta väliltä
+                allowed_all = sorted([int(n) for n in self.stations['Number'] if min_stat <= int(n) <= max_stat])
+                if not allowed_all:
+                    raise ValueError(f"No existing stations in range [{min_stat},{max_stat}] for batch {batch_id} stage {stage_idx}")
+                # Määritä ryhmä MinStatin mukaan: hae MinStatin ryhmä; jos MinStat ei ole asema, käytä ensimmäisen sallitun aseman ryhmää
+                if min_stat in self.station_groups:
+                    group_min = int(self.station_groups[min_stat])
+                else:
+                    first_exist = next((s for s in allowed_all if s in self.station_groups), None)
+                    group_min = int(self.station_groups[first_exist]) if first_exist is not None else None
+                # Suodata sallitut vain MinStatin ryhmään kuuluviksi, jos ryhmä saatiin selville
+                if group_min is not None:
+                    allowed = [s for s in allowed_all if int(self.station_groups.get(int(s), -1)) == group_min]
+                    # Jos suodatus tuotti tyhjän, kaatuilematta palataan allowed_all:iin
+                    if not allowed:
+                        allowed = allowed_all
+                else:
+                    allowed = allowed_all
+                # Rajoita domain joukkoon sallittuja arvoja
+                self.model.AddAllowedAssignments([station_var], [[v] for v in allowed])
                 self.station_assignments[(batch_id, stage['Stage'])] = station_var  # Tallennetaan suoraan muuttuja
                 
                 # Saapumis- ja poistumisajat
@@ -350,23 +376,76 @@ class CpSatPhase1Optimizer:
                 )
                 
     def add_station_group_constraints(self):
-        """Varmista että asemavalinta kunnioittaa Group-rajoitteita."""
-        for (batch_id, stage), station_var in self.station_assignments.items():
-            # Hae valitun aseman ryhmä
-            selected_group = self.model.NewIntVar(1, max(self.station_groups.values()), f'group_{batch_id}_{stage}')
-            
-            # Yhdistä asema ja ryhmä
-            for station, group in self.station_groups.items():
-                is_this_station = self.model.NewBoolVar(f'is_station_{station}_{batch_id}_{stage}')
-                self.model.Add(station_var == station).OnlyEnforceIf(is_this_station)
-                self.model.Add(selected_group == group).OnlyEnforceIf(is_this_station)
-                
-            # Varmista että asema on sallitulla välillä stage-kohtaisesti
-            # Käytä batch-kohtaista ohjelmaa myös tässä
+        """Pidä peräkkäisten vaiheiden asemat samassa Groupissa silloin kun se on mahdollista.
+
+        Käytännössä lisätään taulukkorajoite (station_i, station_j), jossa sallitaan vain parit,
+        joiden group on sama. Jos päällekkäistä groupia ei ole (tyhjä leikkaus), ohitetaan pari,
+        jotta malli pysyy ratkaistavana.
+        """
+        if not self.station_groups:
+            return
+
+        stations_list = [int(n) for n in self.stations['Number']]
+        station_set = set(stations_list)
+
+        for _, batch in self.batches.iterrows():
+            batch_id = int(batch['Batch'])
             program = self.treatment_programs[batch_id]
-            stage_row = program[program['Stage'] == stage].iloc[0]
-            self.model.Add(station_var >= stage_row['MinStat'])
-            self.model.Add(station_var <= stage_row['MaxStat'])
+            stages = program[program['Stage'] > 0].sort_values('Stage')['Stage'].astype(int).tolist()
+            if len(stages) < 2:
+                continue
+
+            # Esilasketaan kunkin vaiheen sallitut asemat ja niiden ryhmät
+            allowed_by_stage = {}
+            for stage in stages:
+                stage_row = program[program['Stage'] == stage].iloc[0]
+                min_stat = int(stage_row['MinStat'])
+                max_stat = int(stage_row['MaxStat'])
+                allowed = [s for s in stations_list if min_stat <= int(s) <= max_stat]
+                allowed_by_stage[stage] = allowed
+
+            # Lisää parikohtainen ryhmäyhtäsuuruus silloin kun löytyy yhteinen group
+            for i in range(len(stages) - 1):
+                s_cur = stages[i]
+                s_nxt = stages[i+1]
+                var_cur = self.station_assignments[(batch_id, s_cur)]
+                var_nxt = self.station_assignments[(batch_id, s_nxt)]
+
+                # If forcing 200-counterpart mapping for this pair, add only (a, a+100) pairs that are valid
+                if (s_cur, s_nxt) in FORCE_200_COUNTERPART_STAGE_PAIRS:
+                    allowed_cur = allowed_by_stage[s_cur]
+                    allowed_nxt = set(allowed_by_stage[s_nxt])
+                    pairs_counterpart = []
+                    for a in allowed_cur:
+                        b = int(a) + 100
+                        if b in allowed_nxt:
+                            pairs_counterpart.append([int(a), int(b)])
+                    if pairs_counterpart:
+                        self.model.AddAllowedAssignments([var_cur, var_nxt], pairs_counterpart)
+                        continue  # Skip same-group pairing if counterpart enforced
+
+                # Apply only when globally enabled or explicitly requested for this stage pair
+                if not ENFORCE_SAME_GROUP_ADJACENT and (s_cur, s_nxt) not in SAME_GROUP_STAGE_PAIRS:
+                    continue
+
+                allowed_cur = allowed_by_stage[s_cur]
+                allowed_nxt = allowed_by_stage[s_nxt]
+
+                pairs = []
+                for a in allowed_cur:
+                    ga = self.station_groups.get(int(a))
+                    if ga is None:
+                        continue
+                    for b in allowed_nxt:
+                        gb = self.station_groups.get(int(b))
+                        if gb is None:
+                            continue
+                        if ga == gb:
+                            pairs.append([int(a), int(b)])
+
+                if pairs:
+                    # Vain samassa groupissa olevat asemaparit sallitaan peräkkäisille vaiheille
+                    self.model.AddAllowedAssignments([var_cur, var_nxt], pairs)
             
     def set_objective(self):
         """Aseta optimointitavoite: minimoi max(ExitTime)."""

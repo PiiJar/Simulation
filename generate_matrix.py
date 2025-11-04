@@ -69,9 +69,8 @@ def generate_matrix_pure(output_dir):
     transfers_df = pd.read_csv(transfers_path)
     transfers_df["Transporter"] = transfers_df["Transporter"].astype(int)
     
-    # Lue transporters tiedot fysiikka-laskuja varten
-    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
-    transporters_df = pd.read_csv(transporters_file)
+    # Transporter-tietoja ei enää lueta initialization/transporters.csv:stä; 
+    # siirtoajat tulevat suoraan cp_sat_transfer_tasks.csv:stä.
     transfers_df["From_Station"] = transfers_df["From_Station"].astype(int)
     transfers_df["To_Station"] = transfers_df["To_Station"].astype(int)
     

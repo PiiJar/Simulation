@@ -3,6 +3,25 @@ import os
 from simulation_logger import get_logger
 from transporter_physics import calculate_physics_transfer_time, calculate_lift_time, calculate_sink_time
 
+# Lenient CSV reader: truncate/pad rows to header length and coerce common numeric columns
+def _read_csv_lenient(path: str):
+    import csv
+    with open(path, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        cols = [h.strip() for h in header]
+        rows = []
+        for parts in reader:
+            if parts is None:
+                continue
+            vals = (parts + [None]*len(cols))[:len(cols)]
+            rows.append(dict(zip(cols, vals)))
+    df = pd.DataFrame(rows)
+    for c in ['Number','X Position','Dropping_Time','Device_delay']:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors='coerce')
+    return df
+
 def select_capable_transporter(lift_station, sink_station, stations_df, transporters_df):
     """
     Valitsee ensimmäisen nostimen joka pystyy suorittamaan tehtävän.
@@ -52,20 +71,21 @@ def extract_transporter_tasks(output_dir):
     
     # Lataa asema- ja nostintiedot nostinvalintaa varten
     stations_file = os.path.join(output_dir, "initialization", "stations.csv")
-    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
+    # Käytetään CP-SAT esiprosessoituja nostimia legacy-tiedoston sijaan
+    transporters_file = os.path.join(output_dir, "cp_sat", "cp_sat_transporters.csv")
     production_file = os.path.join(output_dir, "initialization", "production.csv")
     start_positions_file = os.path.join(output_dir, "initialization", "transporters_start_positions.csv")
     
     if not os.path.exists(stations_file):
         raise FileNotFoundError(f"stations.csv ei löydy: {stations_file}")
     if not os.path.exists(transporters_file):
-        raise FileNotFoundError(f"Transporters.csv ei löydy: {transporters_file}")
+        raise FileNotFoundError(f"cp_sat_transporters.csv ei löydy: {transporters_file}")
     if not os.path.exists(production_file):
         raise FileNotFoundError(f"Production.csv ei löydy: {production_file}")
     if not os.path.exists(start_positions_file):
         raise FileNotFoundError(f"Transporters_start_positions.csv ei löydy: {start_positions_file}")
 
-    stations_df = pd.read_csv(stations_file)
+    stations_df = _read_csv_lenient(stations_file)
     transporters_df = pd.read_csv(transporters_file)
     production_df = pd.read_csv(production_file)
     start_positions_df = pd.read_csv(start_positions_file)
@@ -86,6 +106,24 @@ def extract_transporter_tasks(output_dir):
         # Use correct column names from CSV: 'Transporter' and 'Start_station'
         transporter_start_positions[int(row['Transporter'])] = int(row['Start_station'])
     
+    # Aputyökalut: turvalliset hakijat
+    def _get_station_info(num: int):
+        sub = stations_df[stations_df['Number'] == num]
+        if sub.empty:
+            if logger:
+                logger.log('WARN', f"Station {num} not found in stations.csv; using defaults")
+            return pd.Series({'Number': int(num), 'X Position': 0, 'Dropping_Time': 0, 'Device_delay': 0})
+        return sub.iloc[0]
+
+    def _get_transporter_info(tid: int):
+        sub = transporters_df[transporters_df['Transporter_id'] == tid]
+        if sub.empty:
+            if logger:
+                logger.log('WARN', f"Transporter {tid} not found in cp_sat_transporters.csv; using defaults")
+            # Palauta tyhjä fysiikka → nollia, jolloin fallback-ajat eivät romahda
+            return pd.Series({'Transporter_id': int(tid)})
+        return sub.iloc[0]
+
     try:
         # Lue venytetty matriisi
         df = pd.read_csv(matrix_file)
@@ -214,9 +252,9 @@ def extract_transporter_tasks(output_dir):
                 arrival_time = row["Lift_time"]  # Tämä on erän ExitTime nostoasemalta
 
                 # Hae asematiedot fysiikkalaskentoja varten (fallback)
-                lift_station_info = stations_df[stations_df['Number'] == lift_station].iloc[0]
-                sink_station_info = stations_df[stations_df['Number'] == sink_station].iloc[0]
-                transporter_info = transporters_df[transporters_df['Transporter_id'] == transporter_id].iloc[0]
+                lift_station_info = _get_station_info(lift_station)
+                sink_station_info = _get_station_info(sink_station)
+                transporter_info = _get_transporter_info(transporter_id)
 
                 # Laske fysiikka-ajat
                 try:
@@ -229,7 +267,7 @@ def extract_transporter_tasks(output_dir):
                             if dh_pre is not None and float(dh_pre) > 0:
                                 phase_1_duration = int(round(float(dh_pre)))
                             else:
-                                last_sink_info = stations_df[stations_df['Number'] == last_sink].iloc[0]
+                                last_sink_info = _get_station_info(last_sink)
                                 phase_1_duration = int(round(calculate_physics_transfer_time(last_sink_info, lift_station_info, transporter_info)))
                         else:
                             start_position = int(transporter_start_positions.get(int(transporter_id), int(lift_station)))
@@ -237,7 +275,7 @@ def extract_transporter_tasks(output_dir):
                             if dh_pre is not None and float(dh_pre) > 0:
                                 phase_1_duration = int(round(float(dh_pre)))
                             else:
-                                start_station_info = stations_df[stations_df['Number'] == start_position].iloc[0]
+                                start_station_info = _get_station_info(start_position)
                                 phase_1_duration = int(round(calculate_physics_transfer_time(start_station_info, lift_station_info, transporter_info)))
                     else:
                         start_position = int(transporter_start_positions.get(int(transporter_id), int(lift_station)))
@@ -245,7 +283,7 @@ def extract_transporter_tasks(output_dir):
                         if dh_pre is not None and float(dh_pre) > 0:
                             phase_1_duration = int(round(float(dh_pre)))
                         else:
-                            start_station_info = stations_df[stations_df['Number'] == start_position].iloc[0]
+                            start_station_info = _get_station_info(start_position)
                             phase_1_duration = int(round(calculate_physics_transfer_time(start_station_info, lift_station_info, transporter_info)))
 
                     # Phase 2: Lifting duration from precomputed LiftTime (fallback to physics if missing or <= 0)
@@ -275,19 +313,39 @@ def extract_transporter_tasks(output_dir):
                     phase_3_duration = 5
                     phase_4_duration = 5
 
-                phase_2_start = arrival_time
-                # Phase_0_start: Edellisen tehtävän loppu tai alustettu arvo
+                # Ankkurit:
+                # - Vaihe 2 alkaa täsmälleen lift-aseman ExitTime:stä (Phase_2_start = Lift_time)
+                # - Vaihe 4 loppuu täsmälleen sink-aseman EntryTime:hen (Phase_4_stop = Sink_time)
+                lift_time_anchor = int(round(float(row.get("Lift_time", 0))))
+                sink_time_anchor = int(round(float(row.get("Sink_time", 0))))
+
+                # Peruskestot (sekunteina)
+                d1 = int(round(phase_1_duration))  # deadhead → lift
+                d2 = int(round(phase_2_duration))  # lifting
+                d3 = int(round(phase_3_duration))  # loaded transfer
+                d4 = int(round(phase_4_duration))  # sinking
+
+                # Aseta ankkurit
+                phase_2_start = lift_time_anchor
+                # Lasketaan ehdokasloppu ilman tasausta
+                candidate_4_stop = phase_2_start + d2 + d3 + d4
+                # Tasoita pienet poikkeamat vaiheessa 3 (transfer)
+                delta = sink_time_anchor - candidate_4_stop
+                # Salli myös isompi tasaus: ankkurit ovat ensisijaiset, joten vaihe 3 saa joustaa
+                d3_adjusted = max(0, d3 + int(delta))
+
+                # Johda vaiheiden alut/loput
+                phase_3_start = phase_2_start + d2
+                phase_4_start = phase_3_start + d3_adjusted
+                phase_4_stop = sink_time_anchor
+                phase_1_start = phase_2_start - d1
+
+                # Phase_0_start: edellisen tehtävän loppu tai 0
                 if transporter_id in transporter_last_stop:
                     phase_0_start = transporter_last_stop[transporter_id]
+                    # HUOM: emme siirrä ankkureita; jos overlap havaitaan, logi voidaan lisätä myöhemmin diagnostiikkaan
                 else:
                     phase_0_start = 0
-
-
-                # Phase 1: Siirto edellisestä sijainista nostamisasemalle
-                phase_1_start = phase_2_start - phase_1_duration
-                phase_3_start = phase_2_start + phase_2_duration
-                phase_4_start = phase_3_start + phase_3_duration
-                phase_4_stop = phase_4_start + phase_4_duration
 
                 # Tallenna arvot kokonaislukuina
                 tasks_df.at[idx, "Phase_0_start"] = int(round(phase_0_start))
@@ -349,13 +407,13 @@ def create_detailed_movements(output_dir):
         "Lift_Time": "Lift_time"
     })
     
-    # Lataa nostintiedot alkupaikkojen määrittämiseksi
-    transporters_file = os.path.join(output_dir, "initialization", "transporters.csv")
+    # Lataa nostintiedot alkupaikkojen määrittämiseksi (CP-SAT esiprosessoidut)
+    transporters_file = os.path.join(output_dir, "cp_sat", "cp_sat_transporters.csv")
     stations_file = os.path.join(output_dir, "initialization", "stations.csv")
     production_file = os.path.join(output_dir, "initialization", "production.csv")
     
     transporters_df = pd.read_csv(transporters_file)
-    stations_df = pd.read_csv(stations_file)
+    stations_df = _read_csv_lenient(stations_file)
     production_df = pd.read_csv(production_file)
     
     # Laske nostimien alkupaikat tiedostosta (dynaaminen, ei kovakoodauksia)
@@ -365,6 +423,23 @@ def create_detailed_movements(output_dir):
     transporter_start_positions = {}
     for _, row in start_positions_df.iterrows():
         transporter_start_positions[int(row['Transporter'])] = int(row['Start_station'])
+
+    # Paikalliset turvalliset hakijat tälle funktiolle
+    def _get_station_info(num: int):
+        sub = stations_df[stations_df['Number'] == num]
+        if sub.empty:
+            if logger:
+                logger.log('WARN', f"Station {num} not found in stations.csv; using defaults")
+            return pd.Series({'Number': int(num), 'X Position': 0, 'Dropping_Time': 0, 'Device_delay': 0})
+        return sub.iloc[0]
+
+    def _get_transporter_info(tid: int):
+        sub = transporters_df[transporters_df['Transporter_id'] == tid]
+        if sub.empty:
+            if logger:
+                logger.log('WARN', f"Transporter {tid} not found in cp_sat_transporters.csv; using defaults")
+            return pd.Series({'Transporter_id': int(tid)})
+        return sub.iloc[0]
     
     # PAKOTETUT ALOITUSPAIKAT: (POISTETTU, käytä vain CSV-tiedostoa)
     # Ei yhtään kovakoodattua nostimen alkupaikkaa – kaikki luetaan CSV:stä
@@ -563,11 +638,25 @@ def create_detailed_movements(output_dir):
     #            sitten uusi Idle alkaa Avoidin lopusta ja päättyy alkuperäisen idlen loppuun.
     # - Päivitä seuraavan siirron lähtöasema kohdeasemaksi, jos se alkaa heti idlen jälkeen.
 
-    # Selvitä yhteisalue rajat transporters.csv:stä (sink-alueiden leikkaus)
-    t1_row = transporters_df[transporters_df['Transporter_id'] == 1].iloc[0]
-    t2_row = transporters_df[transporters_df['Transporter_id'] == 2].iloc[0]
-    common_min = max(int(t1_row['Min_Sink_Station']), int(t2_row['Min_Sink_Station']))
-    common_max = min(int(t1_row['Max_Sink_Station']), int(t2_row['Max_Sink_Station']))
+    # Selvitä yhteisalue rajat cp_sat_transporters.csv:stä (sink-alueiden leikkaus)
+    # Jos molempia (1 ja 2) ei ole, kytke väistö pois päältä
+    avoid_enabled = False
+    common_min = None
+    common_max = None
+    try:
+        ids = set(transporters_df['Transporter_id'].astype(int).unique().tolist())
+        if 1 in ids and 2 in ids:
+            t1_row_df = transporters_df[transporters_df['Transporter_id'] == 1]
+            t2_row_df = transporters_df[transporters_df['Transporter_id'] == 2]
+            if not t1_row_df.empty and not t2_row_df.empty:
+                t1_row = t1_row_df.iloc[0]
+                t2_row = t2_row_df.iloc[0]
+                common_min = max(int(t1_row['Min_Sink_Station']), int(t2_row['Min_Sink_Station']))
+                common_max = min(int(t1_row['Max_Sink_Station']), int(t2_row['Max_Sink_Station']))
+                if common_min <= common_max:
+                    avoid_enabled = True
+    except Exception:
+        avoid_enabled = False
 
     # Lista kaikista asemista – haetaan robustisti seuraava kelvollinen asema oman alueen puolelta
     station_numbers = sorted(stations_df['Number'].astype(int).unique().tolist())
@@ -575,76 +664,77 @@ def create_detailed_movements(output_dir):
     MIN_IDLE_FOR_AVOID = 65  # sekuntia
     avoid_inserts = []
     updates = []  # (index, new_start, new_from_to)
-    # Ryhmittele per nostin ja käy Idle-rivit
-    for transporter_id, g in movements_df.sort_values(['Transporter', 'Start_Time', 'Phase']).groupby('Transporter'):
-        g = g.reset_index()
-        for i, r in g.iterrows():
-            if r['Description'] != 'Idle':
-                continue
-            idle_start = int(r['Start_Time'])
-            idle_end = int(r['End_Time'])
-            if idle_end <= idle_start:
-                continue
-            idle_station = int(r['From_Station'])
-            idle_duration = idle_end - idle_start
-            # Lisäehto: alkuperäisen idlen pituus > 65s
-            if idle_duration <= MIN_IDLE_FOR_AVOID:
-                continue
-            # Ehto: onko idlen asema yhteisalueella
-            if not (common_min <= idle_station <= common_max):
-                continue
+    if avoid_enabled:
+        # Ryhmittele per nostin ja käy Idle-rivit
+        for transporter_id, g in movements_df.sort_values(['Transporter', 'Start_Time', 'Phase']).groupby('Transporter'):
+            g = g.reset_index()
+            for i, r in g.iterrows():
+                if r['Description'] != 'Idle':
+                    continue
+                idle_start = int(r['Start_Time'])
+                idle_end = int(r['End_Time'])
+                if idle_end <= idle_start:
+                    continue
+                idle_station = int(r['From_Station'])
+                idle_duration = idle_end - idle_start
+                # Lisäehto: alkuperäisen idlen pituus > 65s
+                if idle_duration <= MIN_IDLE_FOR_AVOID:
+                    continue
+                # Ehto: onko idlen asema yhteisalueella
+                if not (common_min <= idle_station <= common_max):
+                    continue
 
-            # Valitse väistökohde oman puolen lähimpään asemaan yhteisalueen ulkopuolelle
-            if int(transporter_id) == 1:
-                # T1 menee vasemmalle (pienempään kuin common_min)
-                candidates = [s for s in station_numbers if s < common_min]
-                target_station = max(candidates) if candidates else None
-            else:
-                # T2 menee oikealle (suurempaan kuin common_max)
-                candidates = [s for s in station_numbers if s > common_max]
-                target_station = min(candidates) if candidates else None
+                # Valitse väistökohde oman puolen lähimpään asemaan yhteisalueen ulkopuolelle
+                if int(transporter_id) == 1:
+                    # T1 menee vasemmalle (pienempään kuin common_min)
+                    candidates = [s for s in station_numbers if s < common_min]
+                    target_station = max(candidates) if candidates else None
+                else:
+                    # T2 menee oikealle (suurempaan kuin common_max)
+                    candidates = [s for s in station_numbers if s > common_max]
+                    target_station = min(candidates) if candidates else None
 
-            if target_station is None:
-                continue  # Ei väistökohdetta, ohita
+                if target_station is None:
+                    continue  # Ei väistökohdetta, ohita
 
-            # Laske väistön kesto fysiikalla
-            cur_info = stations_df[stations_df['Number'] == idle_station].iloc[0]
-            tgt_info = stations_df[stations_df['Number'] == target_station].iloc[0]
-            transp_info = transporters_df[transporters_df['Transporter_id'] == int(transporter_id)].iloc[0]
-            try:
-                avoid_dur = int(round(calculate_physics_transfer_time(cur_info, tgt_info, transp_info)))
-            except Exception:
-                avoid_dur = abs(target_station - idle_station)
-            avoid_dur = max(1, avoid_dur)
-            avoid_start = idle_start
-            avoid_end = min(idle_end, avoid_start + avoid_dur)
-            if avoid_end <= avoid_start:
-                continue
+                # Laske väistön kesto fysiikalla (turvalliset haut)
+                cur_info = _get_station_info(idle_station)
+                tgt_info = _get_station_info(target_station)
+                transp_info = _get_transporter_info(int(transporter_id))
+                try:
+                    avoid_dur = int(round(calculate_physics_transfer_time(cur_info, tgt_info, transp_info)))
+                except Exception:
+                    avoid_dur = abs(target_station - idle_station)
+                avoid_dur = max(1, avoid_dur)
+                avoid_start = idle_start
+                avoid_end = min(idle_end, avoid_start + avoid_dur)
+                if avoid_end <= avoid_start:
+                    continue
 
-            # Päivitä alkuperäinen idle alkamaan väistön lopusta ja jäämään kohdeasemalle
-            updates.append((r['index'], avoid_end, target_station))
+                # Päivitä alkuperäinen idle alkamaan väistön lopusta ja jäämään kohdeasemalle
+                updates.append((r['index'], avoid_end, target_station))
 
-            # Luo väistörivi (phase 1)
-            avoid_inserts.append({
-                'Transporter': int(transporter_id),
-                'Batch': int(r['Batch']),
-                'Phase': 1,
-                'Start_Time': avoid_start,
-                'End_Time': avoid_end,
-                'From_Station': idle_station,
-                'To_Station': target_station,
-                'Description': 'Avoid',
-                'Task_Seq': int(r.get('Task_Seq', 0))
-            })
+                # Luo väistörivi (phase 1)
+                avoid_inserts.append({
+                    'Transporter': int(transporter_id),
+                    'Batch': int(r['Batch']),
+                    'Phase': 1,
+                    'Start_Time': avoid_start,
+                    'End_Time': avoid_end,
+                    'From_Station': idle_station,
+                    'To_Station': target_station,
+                    'Description': 'Avoid',
+                    'Task_Seq': int(r.get('Task_Seq', 0))
+                })
 
-            # Päivitä seuraavan liikkeen lähtöasema, jos se alkaa heti idlen perään (alkuperäinen idle_end)
-            # Etsitään rivit, joilla Start_Time == idle_end ja sama Transporter
-            mask_next = (movements_df['Transporter'] == transporter_id) & (movements_df['Start_Time'] == idle_end)
-            if mask_next.any():
-                idxs = movements_df[mask_next].index
-                for j in idxs:
-                    if movements_df.at[j, 'Description'] == 'Move to lifting station':
-                        movements_df.at[j, 'From_Station'] = target_station
+                # Päivitä seuraavan liikkeen lähtöasema, jos se alkaa heti idlen perään (alkuperäinen idle_end)
+                # Etsitään rivit, joilla Start_Time == idle_end ja sama Transporter
+                mask_next = (movements_df['Transporter'] == transporter_id) & (movements_df['Start_Time'] == idle_end)
+                if mask_next.any():
+                    idxs = movements_df[mask_next].index
+                    for j in idxs:
+                        if movements_df.at[j, 'Description'] == 'Move to lifting station':
+                            movements_df.at[j, 'From_Station'] = target_station
 
     # Kirjoita idle-päivitykset
     for idx, new_start, new_station in updates:
@@ -656,13 +746,11 @@ def create_detailed_movements(output_dir):
     if avoid_inserts:
         movements_df = pd.concat([movements_df, pd.DataFrame(avoid_inserts)], ignore_index=True)
 
-    # Järjestys: samassa ajassa piirrä Avoid ennen Idleä
-    def order_value(desc, phase):
-        if isinstance(desc, str) and str(desc).lower().startswith('avoid'):
-            return -1
-        return int(phase)
-
-    movements_df['__order'] = movements_df.apply(lambda r: order_value(r['Description'], r['Phase']), axis=1)
+    # Järjestys: samassa ajassa piirrä Avoid ennen Idleä (vektoroitu laskenta)
+    import numpy as np
+    desc_lower = movements_df.get('Description', pd.Series('', index=movements_df.index)).astype(str).str.lower()
+    phase_int = pd.to_numeric(movements_df.get('Phase', 0), errors='coerce').fillna(0).astype(int)
+    movements_df['__order'] = np.where(desc_lower.str.startswith('avoid'), -1, phase_int)
     movements_df = movements_df.sort_values(['Transporter', 'Start_Time', '__order', 'Phase']).reset_index(drop=True)
 
     # Puhdista päällekkäisyydet per nostin varmuuden vuoksi
@@ -702,9 +790,9 @@ def create_detailed_movements(output_dir):
             })
         else:
             # Siirto alkupaikkaan + odotus
-            cur_info = stations_df[stations_df['Number'] == current_location].iloc[0]
-            start_info = stations_df[stations_df['Number'] == start_position].iloc[0]
-            transp_info = transporters_df[transporters_df['Transporter_id'] == int(t_id)].iloc[0]
+            cur_info = _get_station_info(current_location)
+            start_info = _get_station_info(start_position)
+            transp_info = _get_transporter_info(int(t_id))
             try:
                 back_dur = int(round(calculate_physics_transfer_time(cur_info, start_info, transp_info)))
             except Exception:
@@ -730,7 +818,9 @@ def create_detailed_movements(output_dir):
         movements_df = pd.concat([movements_df, pd.DataFrame(final_moves)], ignore_index=True)
 
     # Lopullinen järjestys ja Movement_ID:t
-    movements_df['__order'] = movements_df.apply(lambda r: order_value(r['Description'], r['Phase']), axis=1)
+    desc_lower = movements_df.get('Description', pd.Series('', index=movements_df.index)).astype(str).str.lower()
+    phase_int = pd.to_numeric(movements_df.get('Phase', 0), errors='coerce').fillna(0).astype(int)
+    movements_df['__order'] = np.where(desc_lower.str.startswith('avoid'), -1, phase_int)
     movements_df = movements_df.sort_values(['Transporter', 'Start_Time', '__order', 'Phase']).reset_index(drop=True)
     movements_df = movements_df.drop(columns=['__order'])
     movements_df['Movement_ID'] = range(1, len(movements_df) + 1)
