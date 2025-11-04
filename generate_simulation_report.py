@@ -29,6 +29,7 @@ def generate_simulation_report(output_dir):
     pdf_path = os.path.join(reports_dir, f'simulation_report_{kansio_nimi}.pdf')
 
     pdf = FPDF()
+    pdf.set_margins(20, 10, 10)  # Vasen marginaali 20mm, ylä ja oikea 10mm
     pdf.set_auto_page_break(False)
     pdf.add_page()
     # Lisää ylimääräistä tyhjää tilaa ennen otsikkoa, visuaalisen tasapainon parantamiseksi
@@ -64,10 +65,9 @@ def generate_simulation_report(output_dir):
             except Exception:
                 cover_image_path = first_page_img
 
-            left_margin = 10  # FPDF oletusmarginaali
-            x = left_margin
+            x = pdf.l_margin
             y = pdf.get_y() + 12
-            w = pdf.w - 2 * left_margin
+            w = pdf.w - pdf.l_margin - pdf.r_margin
             # Korkeutta ei anneta → FPDF säilyttää kuvasuhteen
             pdf.image(cover_image_path, x=x, y=y, w=w)
             # Päivitetään y-koordinaatti kuvan jälkeen
@@ -98,7 +98,7 @@ def generate_simulation_report(output_dir):
     )
     for paragraph in [desc, '', disclaimer]:
         if paragraph:
-            pdf.multi_cell(0, 8, paragraph, align='L')
+            pdf.multi_cell(0, 7, paragraph, align='L')
         else:
             pdf.ln(2)
 
@@ -170,7 +170,7 @@ def generate_simulation_report(output_dir):
             "For example, '1L-1S / 2L' means the station can be both lifted and sunk by hoist 1, and lifted by hoist 2. "
             "The column uses the format '<hoist>L-<hoist>S / <hoist>L...', where L = lift and S = sink permission for each hoist."
         )
-    pdf.multi_cell(0, 7, stations_expl)
+    pdf.multi_cell(0, 6, stations_expl)
     pdf.ln(8)  # Add vertical space before the table
     original_colnames = list(df_st.columns)
     # Muuta sarakkeiden nimiä näyttöä varten
@@ -230,7 +230,6 @@ def generate_simulation_report(output_dir):
                 val_str = str(row[c])
             pdf.cell(w, 8, val_str, border=1, align=aligns[i], fill=fill)
         pdf.ln()
-        pdf.ln(5)
     # Uusi sivu Treatment Programs -taulukolle
     pdf.add_page()
     pdf.ln(10)

@@ -341,12 +341,13 @@ class CpSatPhase2Optimizer:
                     return not (max1 + limit <= min2 or max2 + limit <= min1)
 
                 if segments_overlap(x_from1, x_to1, x_from2, x_to2, avoid_limit):
-                    # Pakota ei-päällekkäisyys
+                    # Pakota ei-päällekkäisyys marginaalilla (1 sekunti)
+                    margin = 1  # sekuntia
                     i_before = self.model.NewBoolVar(f"avoid_t{t1}_b{b1}s{s1}_vs_t{t2}_b{b2}s{s2}")
-                    # i ennen j
-                    self.model.Add(start2 >= end1).OnlyEnforceIf(i_before)
-                    # j ennen i
-                    self.model.Add(start1 >= end2).OnlyEnforceIf(i_before.Not())
+                    # i ennen j, marginaalilla
+                    self.model.Add(start2 >= end1 + margin).OnlyEnforceIf(i_before)
+                    # j ennen i, marginaalilla
+                    self.model.Add(start1 >= end2 + margin).OnlyEnforceIf(i_before.Not())
 
     def _validate_transporter_no_overlap(self) -> List[Dict[str, int]]:
         """Validate after solving that no two tasks of the same transporter overlap,

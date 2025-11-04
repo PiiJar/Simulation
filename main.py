@@ -10,6 +10,7 @@ from cp_sat_phase_1 import optimize_phase_1
 from cp_sat_phase_2 import optimize_phase_2
 from generate_matrix import generate_matrix
 from extract_transporter_tasks import extract_transporter_tasks, create_detailed_movements
+from repair_report_data import repair_report_data
 from visualize_matrix import visualize_matrix
 from simulation_logger import init_logger
 
@@ -59,6 +60,7 @@ def main():
         generate_matrix(output_dir)
         extract_transporter_tasks(output_dir)
         create_detailed_movements(output_dir)
+        repair_report_data(output_dir)
         logger.log('STEP', 'Result collection ready')
     except Exception as e:
         error_msg = f'Result collection failed: {str(e)}'
