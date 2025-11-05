@@ -146,6 +146,34 @@ def visualize_matrix(output_dir):
                 del move_df_page['__order']
 
         df_page = df[(df["EntryTime"] < page_end) & (df["ExitTime"] > page_start)]
+
+        # Draw batch start markers (Stage 0) with program number below
+        # Use inclusive time filtering so earliest start at page_start (e.g., t==0 on page 1) is included
+        try:
+            stage0_all = df[df.get('Stage', 0) == 0].copy()
+            if not stage0_all.empty:
+                for c in ['Batch', 'Treatment_program', 'Station', 'EntryTime']:
+                    if c in stage0_all.columns:
+                        stage0_all[c] = pd.to_numeric(stage0_all[c], errors='coerce')
+                stage0 = stage0_all[(stage0_all['EntryTime'] >= page_start) & (stage0_all['EntryTime'] <= page_end)].copy()
+                for _, srow in stage0.iterrows():
+                    b = int(srow.get('Batch', -1))
+                    prog = int(srow.get('Treatment_program', -1)) if pd.notna(srow.get('Treatment_program', None)) else None
+                    st = int(srow.get('Station', -1))
+                    t = float(srow.get('EntryTime', page_start))
+                    if st in station_to_y and not pd.isna(t):
+                        y = station_to_y[st]
+                        color = batch_color_map.get(b, '#1f77b4')
+                        # Small circle marker at start
+                        ax.scatter([t], [y], s=28, c=[color], edgecolors='black', linewidths=0.6, zorder=10)
+                        # Program label just below
+                        if prog is not None:
+                            ax.text(t, y - 0.18, f"{prog}", ha='center', va='top', fontsize=7,
+                                    color='black', zorder=11,
+                                    bbox=dict(boxstyle='round,pad=0.12', fc='white', ec='none', alpha=0.7))
+        except Exception:
+            pass
+
         batches = sorted(df_page['Batch'].unique())
         for batch in batches:
             batch_data = df_page[df_page['Batch'] == batch].sort_values('Stage')
@@ -260,8 +288,10 @@ def visualize_matrix(output_dir):
         ax.set_xticks(range(int(page_start), int(page_start + PAGE_SECONDS) + 1, 300))
         ax.tick_params(axis='x', which='major', length=8)
 
-        # KIINTEÄ 5400 sekunnin x-akseli kaikille sivuille
-        ax.set_xlim(page_start, page_start + PAGE_SECONDS)
+        # KIINTEÄ 5400 sekunnin x-akseli kaikille sivuille, mutta jätä pieni vasen marginaali,
+        # jotta nollakohta (page_start) ei ole aivan y-akselin vieressä
+        LEFT_X_PADDING = 60  # sekuntia
+        ax.set_xlim(page_start - LEFT_X_PADDING, page_start + PAGE_SECONDS)
         if all_stations:
             station_margin = (max(all_stations) - min(all_stations)) * 0.05
             ax.set_ylim(min(all_stations) - station_margin, max(all_stations) + station_margin)

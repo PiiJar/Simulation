@@ -113,6 +113,9 @@ class CpSatPhase2Optimizer:
         ) = _load_phase1_snapshot(output_dir)
 
         self.change_time = _calculate_change_time(self.transfers_df)
+        # Lataa maksimiaikaikkunat ja johda eräkohtaiset ikkunat (vaihe 1 entryjen pohjalta)
+        self.max_window_by_prog = self._load_max_windows()
+        self.batch_windows = self._compute_batch_windows()
 
         self.model = cp_model.CpModel()
         self.solver = cp_model.CpSolver()
@@ -129,6 +132,62 @@ class CpSatPhase2Optimizer:
         self.transporter_durations: Dict[Tuple[int, int], int] = {}
         self.transporter_by_task: Dict[Tuple[int, int], int] = {}
         self.transporter_from_to: Dict[Tuple[int, int], Tuple[int, int]] = {}
+
+    def _load_max_windows(self) -> Dict[int, int]:
+        """Lue cp_sat_maximum_process_time.csv ja palauta mappi: Treatment_program -> TotalMaxWindow (sek)."""
+        cp_dir = os.path.join(self.output_dir, "cp_sat")
+        path = os.path.join(cp_dir, "cp_sat_maximum_process_time.csv")
+        res: Dict[int, int] = {}
+        try:
+            if os.path.exists(path):
+                df = pd.read_csv(path)
+                # Ota maksimi per ohjelma siltä varalta, että rivejä on useampi
+                for prog, grp in df.groupby("Treatment_program"):
+                    try:
+                        p = int(prog)
+                        mx = int(pd.to_numeric(grp["TotalMaxWindow"], errors="coerce").fillna(0).max())
+                        if mx > 0:
+                            res[p] = mx
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return res
+
+    def _compute_batch_windows(self) -> Dict[int, Tuple[int, int]]:
+        """Palauta eräkohtaiset aikaikkunat käyttäen Vaihe 1 entryjä (Stage 1) alkuhetkenä.
+
+        Ikkuna: [Stage1_EntryTime (vaihe 1 snapshot), Stage1_EntryTime + TotalMaxWindow(program)].
+        Jos ohjelmakohtainen maksimi puuttuu, käytä 48h fallbackia.
+        """
+        windows: Dict[int, Tuple[int, int]] = {}
+        # Etsi Stage 1 EntryTime per erä Vaihe 1 snapshotista
+        stage1 = self.batch_sched[self.batch_sched["Stage"] == 1].copy()
+        s1_map: Dict[int, int] = {}
+        if not stage1.empty and "EntryTime" in stage1.columns:
+            for _, r in stage1.iterrows():
+                try:
+                    s1_map[int(r["Batch"]) ] = int(r["EntryTime"]) 
+                except Exception:
+                    continue
+        # Luo ikkunat
+        for _, b in self.batches_df.iterrows():
+            b_id = int(b["Batch"]) 
+            prog = int(b["Treatment_program"]) if "Treatment_program" in b else None
+            start = int(s1_map.get(b_id, 0))
+            total = int(self.max_window_by_prog.get(prog, 48*3600))
+            windows[b_id] = (start, start + total)
+        return windows
+
+    def _windows_overlap(self, b1: int, b2: int) -> bool:
+        """Tarkista erien aikaikkunoiden leikkaus (perustuu Vaihe 1 entryihin + max windowiin)."""
+        w1 = self.batch_windows.get(int(b1))
+        w2 = self.batch_windows.get(int(b2))
+        if not w1 or not w2:
+            return True  # varmuuden vuoksi älä karsi jos puuttuu
+        a1, b1e = w1
+        a2, b2e = w2
+        return (a1 < b2e) and (a2 < b1e)
 
     # --------- Mallin rakentaminen ---------
     def create_variables(self):
@@ -239,6 +298,9 @@ class CpSatPhase2Optimizer:
                     b2, s2 = pairs[j]
                     if b1 == b2:
                         continue
+                    # Aikaikkunakarsinta: jos erien ikkunat eivät leikkaa, ohita
+                    if not self._windows_overlap(b1, b2):
+                        continue
                     e1, x1 = self.entry[(b1, s1)], self.exit[(b1, s1)]
                     e2, x2 = self.entry[(b2, s2)], self.exit[(b2, s2)]
                     b1_before = self.model.NewBoolVar(f"st{station}_b{b1}s{s1}_before_b{b2}s{s2}")
@@ -265,6 +327,9 @@ class CpSatPhase2Optimizer:
                 (_, to1) = self.transporter_from_to[(b1, s1)]
                 for j in range(i + 1, len(tasks)):
                     b2, s2 = tasks[j]
+                    # Aikaikkunakarsinta: jos erien ikkunat eivät leikkaa, ohita
+                    if not self._windows_overlap(b1, b2):
+                        continue
                     start2 = self.transporter_starts[(b2, s2)]
                     end2 = self.transporter_ends[(b2, s2)]
                     (from2, _) = self.transporter_from_to[(b2, s2)]
@@ -318,6 +383,9 @@ class CpSatPhase2Optimizer:
                 t2, b2, s2, from2, start2, end2 = tasks[j]
                 if t1 == t2:
                     continue  # sama transporter käsitellään toisaalla
+                # Aikaikkunakarsinta: jos erien ikkunat eivät leikkaa, ohita
+                if not self._windows_overlap(b1, b2):
+                    continue
                 to2 = int(self.transporter_from_to[(b2, s2)][1])
                 x_from2, x_to2 = x(from2), x(to2)
 

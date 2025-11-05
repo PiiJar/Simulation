@@ -347,18 +347,24 @@ def preprocess_for_cpsat(output_dir):
                     # TransferTime = max(X, Y)
                     transfer_time = max(x_time, y_time)
 
-                # TotalTaskTime: 2D = lift + transfer + sink, 3D = 2*lift + transfer + 2*sink
+                # OUTPUT CONTRACT CHANGE:
+                # - For 3D, store doubled Lift/Sink directly in columns LiftTime/SinkTime
+                # - For 2D, store as-is
+                # - TotalTaskTime is always computed uniformly as LiftTime + TransferTime + SinkTime
                 if model == '3D':
-                    total_task_time = round(2*float(lift_time) + float(transfer_time) + 2*float(sink_time), 1)
+                    lift_out = round(2*float(lift_time), 1)
+                    sink_out = round(2*float(sink_time), 1)
                 else:
-                    total_task_time = round(float(lift_time) + float(transfer_time) + float(sink_time), 1)
+                    lift_out = round(float(lift_time), 1)
+                    sink_out = round(float(sink_time), 1)
+                total_task_time = round(float(lift_out) + float(transfer_time) + float(sink_out), 1)
                 rows.append({
                     "Transporter": transporter_id,
                     "From_Station": from_station,
                     "To_Station": to_station,
-                    "LiftTime": lift_time,
+                    "LiftTime": lift_out,
                     "TransferTime": transfer_time,
-                    "SinkTime": sink_time,
+                    "SinkTime": sink_out,
                     "TotalTaskTime": total_task_time
                 })
     transfer_tasks = pd.DataFrame(rows)
@@ -382,3 +388,93 @@ def preprocess_for_cpsat(output_dir):
             phys_df_out.to_csv(phys_out_path, index=False, encoding="utf-8")
     except Exception:
         pass
+
+    # --- Precompute maximum process-time window across used programs ---
+    try:
+        print("Esilaskenta: maksimi prosessiaikaikkuna (cp_sat_maximum_process_time.csv)")
+        batches_path = os.path.join(cp_sat_dir, "cp_sat_batches.csv")
+        transfers_path = os.path.join(cp_sat_dir, "cp_sat_transfer_tasks.csv")
+        if not os.path.exists(batches_path) or not os.path.exists(transfers_path):
+            print("  VAROITUS: Ei voitu laskea maksimi-ikkunaa (puuttuu cp_sat_batches.csv tai cp_sat_transfer_tasks.csv)")
+            return
+        batches_df = pd.read_csv(batches_path)
+        transfers_df = pd.read_csv(transfers_path)
+
+        # Laske keskimääräinen siirtoaika (vain oikeat siirrot TransferTime > 0)
+        transfers_df["TransferTime"] = pd.to_numeric(transfers_df["TransferTime"], errors="coerce").fillna(0.0)
+        nonzero = transfers_df[transfers_df["TransferTime"] > 0]
+        avg_transfer = float(nonzero["TransferTime"].mean()) if not nonzero.empty else 0.0
+
+        # Käytössä olevat ohjelmat
+        used_programs = sorted(set(pd.to_numeric(batches_df["Treatment_program"], errors="coerce").dropna().astype(int).tolist()))
+        rows = []
+        for prog in used_programs:
+            # Etsi mikä tahansa erä, joka käyttää tätä ohjelmaa, ja lue sen ohjelmatiedosto
+            cand_batches = batches_df[batches_df["Treatment_program"] == prog]["Batch"].astype(int).tolist()
+            if not cand_batches:
+                continue
+            b = int(cand_batches[0])
+            prog_path = os.path.join(cp_sat_dir, f"cp_sat_treatment_program_{b}.csv")
+            if os.path.exists(prog_path):
+                prog_df = pd.read_csv(prog_path)
+            else:
+                # Varavaihtoehto: initialization/treatment_program_XXX.csv
+                init_prog_path = os.path.join(init_dir, f"treatment_program_{int(prog):03d}.csv")
+                if not os.path.exists(init_prog_path):
+                    print(f"  VAROITUS: Ohjelmatiedosto puuttuu: {prog_path} ja {init_prog_path}")
+                    continue
+                prog_df = pd.read_csv(init_prog_path)
+
+            # Stage > 0 rivit
+            if "Stage" not in prog_df.columns:
+                print(f"  VAROITUS: Ohjelmatiedosto ilman Stage-saraketta: {prog_path}")
+                continue
+            stage_df = prog_df[prog_df["Stage"] > 0].copy()
+            if stage_df.empty:
+                stages_count = 0
+                max_proc = 0
+            else:
+                # Muunna MaxTime sekunneiksi; tue sekä hh:mm:ss että sekuntimuotoa
+                try:
+                    max_secs = pd.to_timedelta(stage_df["MaxTime"]).dt.total_seconds().fillna(0).astype(int)
+                except Exception:
+                    max_secs = pd.to_numeric(stage_df["MaxTime"], errors="coerce").fillna(0).astype(int)
+                max_proc = int(max_secs.sum())
+                stages_count = int(stage_df.shape[0])
+
+            transfer_moves = stages_count  # s=1: start->st1, + väliin siirrot
+            transfer_total_avg = int(round(transfer_moves * avg_transfer))
+            total_window = int(max_proc + transfer_total_avg)
+
+            rows.append({
+                "Treatment_program": int(prog),
+                "Stages": stages_count,
+                "MaxProcessTime_sum": int(max_proc),
+                "AvgTransferTime": float(round(avg_transfer, 3)),
+                "TransferMoves": int(transfer_moves),
+                "TransferAvgTotal": int(transfer_total_avg),
+                "TotalMaxWindow": int(total_window),
+            })
+
+        out_df = pd.DataFrame(rows).sort_values(["TotalMaxWindow", "Treatment_program"], ascending=[False, True]).reset_index(drop=True)
+        if out_df.empty:
+            print("  VAROITUS: Ei voitu laskea maksimi-ikkunaa (ei ohjelmia)")
+            return
+        sel = out_df.iloc[0].to_dict()
+        sel_row = {
+            "Treatment_program": int(sel["Treatment_program"]),
+            "Stages": int(sel["Stages"]),
+            "MaxProcessTime_sum": int(sel["MaxProcessTime_sum"]),
+            "AvgTransferTime": float(sel["AvgTransferTime"]),
+            "TransferMoves": int(sel["TransferMoves"]),
+            "TransferAvgTotal": int(sel["TransferAvgTotal"]),
+            "TotalMaxWindow": int(sel["TotalMaxWindow"]),
+            "SELECTED": True,
+        }
+        out_df["SELECTED"] = False
+        result_df = pd.concat([out_df, pd.DataFrame([sel_row])], ignore_index=True)
+        out_path = os.path.join(cp_sat_dir, "cp_sat_maximum_process_time.csv")
+        result_df.to_csv(out_path, index=False)
+        print(f"  Maksimi-ikkuna laskettu ja tallennettu: {out_path}")
+    except Exception as e:
+        print(f"  VAROITUS: Maksimi-ikkunan esilaskenta epäonnistui: {e}")

@@ -9,6 +9,7 @@ Tämä moduuli toteuttaa tuotantolinjan optimoinnin ensimmäisen vaiheen:
 """
 
 import os
+import time
 import pandas as pd
 from ortools.sat.python import cp_model
 
@@ -141,7 +142,8 @@ class CpSatPhase1Optimizer:
         self.station_assignments = {}  # Asemavalinnat
         self.entry_times = {}  # Saapumisajat asemille
         self.exit_times = {}  # Poistumisajat asemilta
-        self.transporter_assignments = {}  # Nostinvalinnat
+        self.transporter_assignments = {}  # Nostinvalinnat (ei käytössä vaiheessa 1)
+        self.allowed_stations = {}  # (batch, stage) -> set(sallitut asemat)
         
     def create_variables(self):
         """Luo optimoinnin muuttujat."""
@@ -187,6 +189,8 @@ class CpSatPhase1Optimizer:
                 # Rajoita domain joukkoon sallittuja arvoja
                 self.model.AddAllowedAssignments([station_var], [[v] for v in allowed])
                 self.station_assignments[(batch_id, stage['Stage'])] = station_var  # Tallennetaan suoraan muuttuja
+                # Talleta sallitut asemat myöhempää parikohtaista karsintaa varten
+                self.allowed_stations[(batch_id, stage['Stage'])] = set(int(v) for v in allowed)
                 
                 # Saapumis- ja poistumisajat
                 entry_var = self.model.NewIntVar(
@@ -202,17 +206,7 @@ class CpSatPhase1Optimizer:
                 )
                 self.exit_times[(batch_id, stage['Stage'])] = exit_var
                 
-                # Nostinvalinta asemalle
-                try:
-                    transporter_var = self.model.NewIntVar(
-                        1,
-                        len(self.transporters),
-                        f'transporter_{batch_id}_{stage["Stage"]}'
-                    )
-                    self.transporter_assignments[(batch_id, stage['Stage'])] = transporter_var
-                except Exception as e:
-                    print(f"    VIRHE: Nostin-muuttujan luonti epäonnistui: {str(e)}")
-                    raise
+                # Nostinvalintaa ei enää mallinneta vaiheessa 1 (valitaan raportointivaiheessa alueen perusteella)
                 
     def add_transporter_area_constraints(self):
         """Lisää nostimien toiminta-aluerajoitteet."""
@@ -296,6 +290,12 @@ class CpSatPhase1Optimizer:
                     for _, stage2 in prog2.iterrows():
                         s2 = stage2['Stage']
                         if s2 == 0:
+                            continue
+
+                        # Karsinta 1: jos mahdollisten asemien leikkaus on tyhjä, nämä vaiheet eivät voi koskaan käyttää samaa asemaa → ohita
+                        allowed1 = self.allowed_stations.get((b1, s1)) or set()
+                        allowed2 = self.allowed_stations.get((b2, s2)) or set()
+                        if not allowed1 or not allowed2 or allowed1.isdisjoint(allowed2):
                             continue
                         
                         # 1. Tarkista käyttävätkö erät samaa asemaa
@@ -381,7 +381,15 @@ class CpSatPhase1Optimizer:
         Käytännössä lisätään taulukkorajoite (station_i, station_j), jossa sallitaan vain parit,
         joiden group on sama. Jos päällekkäistä groupia ei ole (tyhjä leikkaus), ohitetaan pari,
         jotta malli pysyy ratkaistavana.
+
+        Suorituskyvyn vuoksi tämä lohko on oletuksena POIS päältä. Ota käyttöön asettamalla
+        ympäristömuuttuja CPSAT_PHASE1_GROUPS=true.
         """
+        # Oletus: otetaan käyttöön. Poista käytöstä asettamalla CPSAT_PHASE1_GROUPS=0/false
+        enable_groups = os.getenv('CPSAT_PHASE1_GROUPS', '1').strip().lower() in ('1', 'true', 'yes')
+        if not enable_groups:
+            print("  (ohitettu) Asemaryhmärajoitteet poistettu käytöstä (CPSAT_PHASE1_GROUPS)")
+            return
         if not self.station_groups:
             return
 
@@ -461,22 +469,44 @@ class CpSatPhase1Optimizer:
     def solve(self):
         """Ratkaise optimointiongelma."""
         print("Ratkaistaan optimointiongelma...")
+        t_all = time.time()
+
         print("1. Luodaan muuttujat...")
-        self.create_variables()
+        t0 = time.time(); self.create_variables(); print(f"   -> {time.time() - t0:.2f}s")
+
         print("2. Lisätään asemarajoitteet...")
-        self.add_station_constraints()
+        t0 = time.time(); self.add_station_constraints(); print(f"   -> {time.time() - t0:.2f}s")
+
         print("3. Lisätään sekvensointirajoitteet...")
-        self.add_sequence_constraints()
+        t0 = time.time(); self.add_sequence_constraints(); print(f"   -> {time.time() - t0:.2f}s")
+
         print("4. Lisätään identtisten erien rajoitteet...")
-        self.add_identical_batch_constraints()
+        t0 = time.time(); self.add_identical_batch_constraints(); print(f"   -> {time.time() - t0:.2f}s")
+
         print("5. Lisätään asemaryhmien rajoitteet...")
-        self.add_station_group_constraints()
-        print("6. Lisätään nostinalueiden rajoitteet...")
-        self.add_transporter_area_constraints()
+        t0 = time.time(); self.add_station_group_constraints(); print(f"   -> {time.time() - t0:.2f}s")
+
         self.set_objective()
         
         # Ratkaise malli
-        status = self.solver.Solve(self.model)
+        # Ympäristöparametrit: aikaraja ja säikeet
+        try:
+            _tlim = float(os.getenv('CPSAT_PHASE1_MAX_TIME', '0') or '0')
+        except Exception:
+            _tlim = 0.0
+        try:
+            _threads = int(os.getenv('CPSAT_PHASE1_THREADS', '0') or '0')
+        except Exception:
+            _threads = 0
+        if _tlim > 0:
+            self.solver.parameters.max_time_in_seconds = _tlim
+            print(f"   (CP-SAT) Aikaraja asetettu: {int(_tlim)} s")
+        if _threads > 0:
+            self.solver.parameters.num_search_workers = _threads
+            print(f"   (CP-SAT) Säikeet: {_threads}")
+
+        t0 = time.time(); status = self.solver.Solve(self.model); solve_time = time.time() - t0
+        print(f"6. Ratkaisu valmis -> {solve_time:.2f}s, kokonaiskesto {time.time() - t_all:.2f}s")
         
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
             return self.create_result_dataframe()
