@@ -328,14 +328,14 @@ def preprocess_for_cpsat(output_dir):
                     x_time = round(float(calculate_physics_transfer_time(from_info, to_info, transporter_row)), 1)
                 transfer_time = x_time
                 if model == '3D':
-                    # Y-suunnan aika kerran laskettuna (vakio 3000 mm), käytetään samoja fysiikkaparametreja kuin X:ssä
+                    # Y-suunnan aika kerran laskettuna (vakio 4000 mm), käytetään samoja fysiikkaparametreja kuin X:ssä
                     # Lasketaan Y vain jos liikutaan eri linjojen välillä (100-sarja vs 200-sarja)
                     def _line_of(station_number: int) -> int:
                         try:
                             return int(station_number) // 100
                         except Exception:
                             return 0
-                    y_distance = 3000 if _line_of(from_station) != _line_of(to_station) else 0
+                    y_distance = 4000 if _line_of(from_station) != _line_of(to_station) else 0
                     if y_distance > 0:
                         # Rakennetaan keinotekoiset station-rivit, joilla X Position erotus = y_distance
                         import pandas as _pd

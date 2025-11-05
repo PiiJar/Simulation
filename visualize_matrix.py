@@ -139,8 +139,9 @@ def visualize_matrix(output_dir):
                 if phase == 2 and start_time < end_time:
                     mid_time = (start_time + end_time) / 2
                     ax.scatter(mid_time, from_station + 0.08, marker='^', color=transporter_color, s=32, zorder=8)
-                elif phase == 4:
-                    ax.scatter(start_time, from_station - 0.08, marker='v', color=transporter_color, s=32, zorder=8)
+                elif phase == 4 and start_time < end_time:
+                    mid_time = (start_time + end_time) / 2
+                    ax.scatter(mid_time, from_station - 0.08, marker='v', color=transporter_color, s=32, zorder=8)
             # Siivoa apusarake
             if '__order' in move_df_page.columns:
                 del move_df_page['__order']

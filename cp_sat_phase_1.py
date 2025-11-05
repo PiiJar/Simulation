@@ -504,6 +504,12 @@ class CpSatPhase1Optimizer:
         if _threads > 0:
             self.solver.parameters.num_search_workers = _threads
             print(f"   (CP-SAT) Säikeet: {_threads}")
+        # Yleinen kytkin hakulokille (molemmille vaiheille): CPSAT_LOG_PROGRESS=1
+        _log_progress = os.getenv('CPSAT_LOG_PROGRESS', '0') in ('1', 'true', 'True')
+        if _log_progress:
+            self.solver.parameters.log_search_progress = True
+            self.solver.parameters.log_to_stdout = True
+            print("   (CP-SAT) Hakuloki: päällä (log_search_progress)")
 
         t0 = time.time(); status = self.solver.Solve(self.model); solve_time = time.time() - t0
         print(f"6. Ratkaisu valmis -> {solve_time:.2f}s, kokonaiskesto {time.time() - t_all:.2f}s")
