@@ -10,7 +10,7 @@ Vaatimusdokumentin REKQUIREMENTS_FOR_CPSAT_2 mukainen toteutusrunko:
 """
 
 import os
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 import pandas as pd
 from ortools.sat.python import cp_model
 
@@ -100,7 +100,7 @@ def _load_phase1_snapshot(output_dir: str):
 # ---------- Optimointiluokka ----------
 
 class CpSatPhase2Optimizer:
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str, include_batches: Optional[List[int]] = None):
         self.output_dir = output_dir
         (
             self.batch_sched,
@@ -111,6 +111,16 @@ class CpSatPhase2Optimizer:
             self.station_positions,
             self.transporters_df,
         ) = _load_phase1_snapshot(output_dir)
+
+        # Suodata haluttuihin eriin (dekompositio): include_batches = None → kaikki
+        if include_batches is not None:
+            allow = set(int(b) for b in include_batches)
+            # batches_df
+            self.batches_df = self.batches_df[self.batches_df["Batch"].astype(int).isin(allow)].reset_index(drop=True)
+            # batch_sched
+            self.batch_sched = self.batch_sched[self.batch_sched["Batch"].astype(int).isin(allow)].reset_index(drop=True)
+            # programs
+            self.programs = {int(b): df for (b, df) in self.programs.items() if int(b) in allow}
 
         self.change_time = _calculate_change_time(self.transfers_df)
         # Lataa maksimiaikaikkunat ja johda eräkohtaiset ikkunat (vaihe 1 entryjen pohjalta)
@@ -953,8 +963,16 @@ class CpSatPhase2Optimizer:
                 "Duration": duration,
                 "EntryTime_2(To)": entry_to,
             })
-        df = pd.DataFrame(rows).sort_values(["Transporter", "TaskStart", "Batch"]).reset_index(drop=True)
+        df = pd.DataFrame(rows)
         out = os.path.join(cp_dir, "cp_sat_hoist_schedule.csv")
+        # Dekompositiossa voidaan appendata turvallisesti
+        do_append = os.getenv("CPSAT_PHASE2_DECOMPOSE_APPEND", "0") in ("1", "true", "True")
+        if do_append and os.path.exists(out):
+            prev = pd.read_csv(out)
+            df = pd.concat([prev, df], ignore_index=True)
+        # Järjestä ja tallenna
+        if not df.empty:
+            df = df.sort_values(["Transporter", "TaskStart", "Batch"]).reset_index(drop=True)
         df.to_csv(out, index=False)
         print(f"Tallennettu snapshot: {out} ({len(df)} riviä)")
         # Kirjoita myös asema-aikataulun snapshot validointia varten
@@ -973,8 +991,13 @@ class CpSatPhase2Optimizer:
                 "EntryTime": entry_val,
                 "ExitTime": exit_val,
             })
-        sdf = pd.DataFrame(station_rows).sort_values(["Station", "EntryTime", "Batch"]).reset_index(drop=True)
+        sdf = pd.DataFrame(station_rows)
         sout = os.path.join(cp_dir, "cp_sat_station_schedule.csv")
+        if do_append and os.path.exists(sout):
+            prev_s = pd.read_csv(sout)
+            sdf = pd.concat([prev_s, sdf], ignore_index=True)
+        if not sdf.empty:
+            sdf = sdf.sort_values(["Station", "EntryTime", "Batch"]).reset_index(drop=True)
         sdf.to_csv(sout, index=False)
         print(f"Tallennettu station snapshot: {sout} ({len(sdf)} riviä)")
 
@@ -1046,6 +1069,94 @@ class CpSatPhase2Optimizer:
 
 
 def optimize_phase_2(output_dir: str):
-    """Pääfunktio Vaiheen 2 optimoinnille."""
-    optimizer = CpSatPhase2Optimizer(output_dir)
-    return optimizer.solve()
+    """Pääfunktio Vaiheen 2 optimoinnille.
+
+    Jos ympäristömuuttuja CPSAT_PHASE2_DECOMPOSE=1, jaa ongelma ajallisiin komponentteihin
+    eräkohtaisten ikkunoiden perusteella ja ratkaise per komponentti. Muussa tapauksessa
+    ratkaise koko malli kerralla.
+    """
+    decompose = os.getenv("CPSAT_PHASE2_DECOMPOSE", "0") in ("1", "true", "True")
+    if not decompose:
+        optimizer = CpSatPhase2Optimizer(output_dir)
+        return optimizer.solve()
+
+    print("[Decompose] CPSAT_PHASE2_DECOMPOSE=1 → muodostetaan ajalliset komponentit erien ikkunoista…")
+    # Luo tilapäinen optimizer vain ikkunoiden lukemiseen kaikille erille
+    base = CpSatPhase2Optimizer(output_dir)
+    windows = base._compute_phase1_with_margin_windows()
+    # Guard lisämarginaali komponenttirajojen turvallisuuteen
+    try:
+        guard = int(float(os.getenv("CPSAT_PHASE2_DECOMPOSE_GUARD_SEC", "600")))
+    except Exception:
+        guard = 600
+    guard = max(0, guard)
+    # Laajenna ikkunat guardilla
+    ext_windows: Dict[int, Tuple[int, int]] = {}
+    for b, (a, z) in windows.items():
+        aa = max(0, int(a) - guard)
+        zz = min(48*3600, max(aa + 1, int(z) + guard))
+        ext_windows[int(b)] = (aa, zz)
+
+    # Rakenna grafi: kaari jos ikkunat leikkaavat
+    batches = sorted(int(b) for b in base.batches_df["Batch"].astype(int).tolist())
+    n = len(batches)
+    adj: Dict[int, List[int]] = {b: [] for b in batches}
+    def overlap(w1: Tuple[int, int], w2: Tuple[int, int]) -> bool:
+        a1, b1 = w1; a2, b2 = w2
+        return (a1 < b2) and (a2 < b1)
+    for i in range(n):
+        bi = batches[i]
+        wi = ext_windows.get(bi)
+        if wi is None:
+            wi = (0, 48*3600)
+        for j in range(i+1, n):
+            bj = batches[j]
+            wj = ext_windows.get(bj, (0, 48*3600))
+            if overlap(wi, wj):
+                adj[bi].append(bj)
+                adj[bj].append(bi)
+
+    # Yhdistetyt komponentit
+    comps: List[List[int]] = []
+    seen = set()
+    for b in batches:
+        if b in seen:
+            continue
+        stack = [b]
+        comp = []
+        seen.add(b)
+        while stack:
+            u = stack.pop()
+            comp.append(u)
+            for v in adj[u]:
+                if v not in seen:
+                    seen.add(v)
+                    stack.append(v)
+        comps.append(sorted(comp))
+
+    print(f"[Decompose] Komponentteja: {len(comps)}; koot: {[len(c) for c in comps]}")
+    # Tyhjennä aiemmat snapshotit yhdistelyä varten
+    cp_dir = os.path.join(output_dir, "cp_sat")
+    os.makedirs(cp_dir, exist_ok=True)
+    for f in ("cp_sat_hoist_schedule.csv", "cp_sat_station_schedule.csv"):
+        p = os.path.join(cp_dir, f)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+    # Aja komponentti kerrallaan; liitä snapshotit perään
+    os.environ["CPSAT_PHASE2_DECOMPOSE_APPEND"] = "1"
+    all_ok = True
+    for idx, comp in enumerate(comps, start=1):
+        print(f"[Decompose] Ratkaistaan komponentti {idx}/{len(comps)} (erää: {len(comp)}): {comp}")
+        opt = CpSatPhase2Optimizer(output_dir, include_batches=comp)
+        ok = opt.solve()
+        if not ok:
+            print(f"[Decompose] Komponentin {idx} ratkaisu epäonnistui → keskeytetään.")
+            all_ok = False
+            break
+    # Poista append-lippu käytöstä lopuksi
+    os.environ.pop("CPSAT_PHASE2_DECOMPOSE_APPEND", None)
+    return True if all_ok else None
