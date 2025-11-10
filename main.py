@@ -71,9 +71,11 @@ def main():
     logger.log('STEP', 'Reporting started')
 
     from generate_simulation_report import generate_simulation_report
+    from generate_enhanced_report import generate_enhanced_simulation_report
     try:
         visualize_matrix(output_dir)
-        generate_simulation_report(output_dir)
+        generate_simulation_report(output_dir)  # Legacy report
+        generate_enhanced_simulation_report(output_dir)  # Enhanced report
         logger.log('STEP', 'Reporting ready')
     except Exception as e:
         error_msg = f'Reporting failed: {str(e)}'
