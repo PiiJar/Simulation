@@ -1,0 +1,164 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Simulation Input Data Schema",
+  "description": "JSON format for initialization data (customer, plant, stations, transporters)",
+  "type": "object",
+  "properties": {
+    "customer_and_plant": {
+      "type": "object",
+      "description": "Customer and plant identification",
+      "properties": {
+        "customer": {
+          "type": "string",
+          "description": "Customer name or code"
+        },
+        "plant": {
+          "type": "string",
+          "description": "Plant identifier"
+        }
+      },
+      "required": ["customer", "plant"]
+    },
+    "stations": {
+      "type": "array",
+      "description": "List of all processing stations",
+      "items": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "integer",
+            "description": "Unique station number"
+          },
+          "group": {
+            "type": "integer",
+            "description": "Station group identifier"
+          },
+          "name": {
+            "type": "string",
+            "description": "Station name or description"
+          },
+          "x_position": {
+            "type": "integer",
+            "description": "Horizontal position in mm"
+          },
+          "dropping_time": {
+            "type": "number",
+            "description": "Time to drop/place batch at station (seconds)"
+          },
+          "station_type": {
+            "type": "integer",
+            "description": "Type code (0=passive, 1=active, etc.)"
+          },
+          "device_delay": {
+            "type": "number",
+            "description": "Additional device-specific delay (seconds)"
+          }
+        },
+        "required": ["number", "name", "x_position"]
+      }
+    },
+    "transporters": {
+      "type": "array",
+      "description": "List of all transporters (hoists)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "transporter_id": {
+            "type": "integer",
+            "description": "Unique transporter identifier"
+          },
+          "model": {
+            "type": "string",
+            "description": "Transporter model (e.g., 3D)"
+          },
+          "physics": {
+            "type": "object",
+            "description": "Physical movement parameters",
+            "properties": {
+              "acceleration_time": {
+                "type": "number",
+                "description": "Acceleration time in seconds"
+              },
+              "deceleration_time": {
+                "type": "number",
+                "description": "Deceleration time in seconds"
+              },
+              "max_speed": {
+                "type": "number",
+                "description": "Maximum speed in mm/s"
+              },
+              "z_total_distance": {
+                "type": "number",
+                "description": "Total vertical travel distance in mm"
+              },
+              "z_slow_distance_dry": {
+                "type": "number",
+                "description": "Slow zone distance when dry in mm"
+              },
+              "z_slow_distance_wet": {
+                "type": "number",
+                "description": "Slow zone distance when wet in mm"
+              },
+              "z_slow_end_distance": {
+                "type": "number",
+                "description": "Final slow approach distance in mm"
+              },
+              "z_slow_speed": {
+                "type": "number",
+                "description": "Speed in slow zones in mm/s"
+              },
+              "z_fast_speed": {
+                "type": "number",
+                "description": "Speed in fast zones in mm/s"
+              }
+            }
+          },
+          "task_areas": {
+            "type": "object",
+            "description": "Station ranges the transporter can access",
+            "properties": {
+              "min_lift_station_100": {
+                "type": "integer",
+                "description": "Minimum station number for lift in 100-series"
+              },
+              "max_lift_station_100": {
+                "type": "integer",
+                "description": "Maximum station number for lift in 100-series"
+              },
+              "min_sink_station_100": {
+                "type": "integer",
+                "description": "Minimum station number for sink in 100-series"
+              },
+              "max_sink_station_100": {
+                "type": "integer",
+                "description": "Maximum station number for sink in 100-series"
+              },
+              "min_lift_station_200": {
+                "type": "integer",
+                "description": "Minimum station number for lift in 200-series"
+              },
+              "max_lift_station_200": {
+                "type": "integer",
+                "description": "Maximum station number for lift in 200-series"
+              },
+              "min_sink_station_200": {
+                "type": "integer",
+                "description": "Minimum station number for sink in 200-series"
+              },
+              "max_sink_station_200": {
+                "type": "integer",
+                "description": "Maximum station number for sink in 200-series"
+              },
+              "avoid": {
+                "type": "integer",
+                "description": "Minimum distance to avoid other transporters in mm"
+              }
+            }
+          }
+        },
+        "required": ["transporter_id", "model"]
+      }
+    }
+  },
+  "required": ["customer_and_plant", "stations", "transporters"]
+}

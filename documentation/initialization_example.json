@@ -1,0 +1,63 @@
+{
+  "customer_and_plant": {
+    "customer": "BGH",
+    "plant": "CCL-21.002.1"
+  },
+  "stations": [
+    {
+      "number": 101,
+      "group": 1,
+      "name": "Loading",
+      "x_position": 1000,
+      "dropping_time": 0,
+      "station_type": 0,
+      "device_delay": 0.0
+    },
+    {
+      "number": 102,
+      "group": 2,
+      "name": "Spare tank water",
+      "x_position": 3000,
+      "dropping_time": 5,
+      "station_type": 1,
+      "device_delay": 0.0
+    },
+    {
+      "number": 103,
+      "group": 3,
+      "name": "Remove carbon",
+      "x_position": 5000,
+      "dropping_time": 5,
+      "station_type": 1,
+      "device_delay": 0.0
+    }
+  ],
+  "transporters": [
+    {
+      "transporter_id": 1,
+      "model": "3D",
+      "physics": {
+        "acceleration_time": 2.0,
+        "deceleration_time": 2.0,
+        "max_speed": 300,
+        "z_total_distance": 4000,
+        "z_slow_distance_dry": 300,
+        "z_slow_distance_wet": 1000,
+        "z_slow_end_distance": 50,
+        "z_slow_speed": 100,
+        "z_fast_speed": 200
+      },
+      "task_areas": {
+        "min_lift_station_100": 101,
+        "max_lift_station_100": 110,
+        "min_sink_station_100": 101,
+        "max_sink_station_100": 110,
+        "min_lift_station_200": 201,
+        "max_lift_station_200": 212,
+        "min_sink_station_200": 201,
+        "max_sink_station_200": 212,
+        "avoid": 0
+      }
+    }
+  ]
+}
