@@ -826,9 +826,31 @@ class CpSatPhase2Optimizer:
         else:
             self.model.Add(total_stretch == 0)
 
-        w1, w3 = 10**6, 1
+        # Lisätään tavoite: minimoi Stage 1 aloitusvälien summa
+        # Tämä kannustaa tiheämpiin aloituksiin
+        batches_sorted = sorted(self.batches_df["Batch"].astype(int).tolist())
+        stage1_entries = []
+        for b in batches_sorted:
+            if (b, 1) in self.entry:
+                stage1_entries.append(self.entry[(b, 1)])
+        
+        # Laske aloitusvälien summa (peräkkäisten erien välit)
+        start_gaps = []
+        for i in range(len(stage1_entries) - 1):
+            gap = self.model.NewIntVar(0, 48 * 3600, f"start_gap_{i}")
+            self.model.Add(gap == stage1_entries[i+1] - stage1_entries[i])
+            start_gaps.append(gap)
+        
+        total_start_gaps = self.model.NewIntVar(0, 10**9, "total_start_gaps")
+        if start_gaps:
+            self.model.Add(total_start_gaps == sum(start_gaps))
+        else:
+            self.model.Add(total_start_gaps == 0)
+        
+        # Tavoite: minimoi makespan ensisijaisesti, aloitusvälien summa toissijaisesti
+        w1, w2 = 10**6, 1
         objective = self.model.NewIntVar(0, 10**12, "objective")
-        self.model.Add(objective == w1 * makespan + w3 * total_stretch)
+        self.model.Add(objective == w1 * makespan + w2 * total_start_gaps)
         self.model.Minimize(objective)
 
     # --------- Ratkaisu ja tallennus ---------
@@ -865,13 +887,13 @@ class CpSatPhase2Optimizer:
         if _threads > 0:
             self.solver.parameters.num_search_workers = _threads
             print(f" - Säikeet: {_threads}")
-        # Yleinen kytkin hakulokille (molemmille vaiheille): CPSAT_LOG_PROGRESS=1
-        _log_progress = os.getenv("CPSAT_LOG_PROGRESS", "0") in ("1", "true", "True")
-        if _log_progress:
-            self.solver.parameters.log_search_progress = True
-            self.solver.parameters.log_to_stdout = True
-            print(" - Hakuloki: päällä (log_search_progress)")
+        # PAKOTA hakuloki päälle nähdäksemme mitä CP-SAT tekee
+        self.solver.parameters.log_search_progress = True
+        print(" - Hakuloki: PÄÄLLÄ (pakotettuna)")
         print(f" - Aikaraja asetettu: {int(_time_limit)} s")
+        
+
+        
         status = self.solver.Solve(self.model)
         
         # Tulosta status selkeästi
