@@ -42,6 +42,9 @@ class EnhancedSimulationReport(FPDF):
             
     def footer(self):
         """Sivun alatunniste"""
+        # Ei alatunnistetta etusivulle (sivu 1)
+        if self.page_no() == 1:
+            return
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.set_text_color(128, 128, 128)
@@ -222,8 +225,123 @@ def calculate_kpi_metrics(output_dir):
         utilization = (work_time / (total_time * num_stations) * 100) if total_time > 0 else 0
         group_utilization[int(group)] = utilization
     
-    # Etsi käytetyin asemaryhmä (korkein käyttöaste)
-    if group_utilization:
+    # === PULLONKAULA-ANALYYSI: Etsi stage jolla korkein bottleneck rate ===
+    # Bottleneck rate = (stage min time + avg transfer time) / (number of stations)
+    # Tämä kertoo todellisen kapasiteetin rajoitteen, ei pelkkää käyttöastetta
+    
+    bottleneck_group = None
+    bottleneck_rate = 0
+    bottleneck_station_name = "N/A"
+    bottleneck_utilization = 0
+    avg_transfer_time = 0
+    
+    # Lue keskimääräinen siirtoaika transfer tasks -tiedostosta
+    # HUOM: TotalTaskTime on sekunteina, muunnetaan minuuteiksi
+    transfer_tasks_file = os.path.join(output_dir, 'cp_sat', 'cp_sat_transfer_tasks.csv')
+    if os.path.exists(transfer_tasks_file):
+        transfer_tasks_df = pd.read_csv(transfer_tasks_file)
+        avg_transfer_time = transfer_tasks_df['TotalTaskTime'].mean() / 60.0
+    
+    # Lue käsittelyohjelmat (treatment programs) pullonkaulan määrittämiseksi
+    treatment_programs_dir = os.path.join(output_dir, 'cp_sat')
+    if os.path.exists(treatment_programs_dir):
+        # Käytetään Program 1:ää (yleisin ohjelma)
+        tp_file = os.path.join(treatment_programs_dir, 'cp_sat_treatment_program_1.csv')
+        if os.path.exists(tp_file):
+            tp_df = pd.read_csv(tp_file)
+            
+            for _, row in tp_df[tp_df['Stage'] > 0].iterrows():
+                min_stat = int(row['MinStat'])
+                max_stat = int(row['MaxStat'])
+                num_stations = max_stat - min_stat + 1
+                
+                # Parsitaan aika (muodossa "HH:MM:SS")
+                min_time_str = row['MinTime']
+                parts = min_time_str.split(':')
+                min_time_min = int(parts[0]) * 60 + int(parts[1])
+                
+                # Bottleneck rate: (käsittelyaika + siirtoaika) / asemien määrä
+                total_time = min_time_min + avg_transfer_time
+                rate = total_time / num_stations if num_stations > 0 else 0
+                
+                # Hae asemaryhmä
+                station_info = stations_df[stations_df['Number'] == min_stat]
+                if not station_info.empty:
+                    group = int(station_info.iloc[0]['Group'])
+                    
+                    # Päivitä jos tämä on korkeampi bottleneck rate
+                    if rate > bottleneck_rate:
+                        bottleneck_rate = rate
+                        bottleneck_group = group
+                        bottleneck_station_name = station_info.iloc[0]['Name']
+                        bottleneck_utilization = group_utilization.get(group, 0)
+    
+    # === TEOREETTINEN TAKT TIME (Phase 1 optimaalinen) ===
+    # Lasketaan todellinen takt time kuivausasemalla (bottleneck)
+    theoretical_takt_seconds = 0
+    theoretical_takt_formatted = "N/A"
+    
+    batch_schedule_file = os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv')
+    if os.path.exists(batch_schedule_file) and bottleneck_group is not None:
+        schedule_df = pd.read_csv(batch_schedule_file)
+        
+        # Etsi bottleneck station (kuivaus)
+        # Bottleneck_group vastaa treatment program Stage-numeroa
+        # Tarkista mikä Stage vastaa korkeinta bottleneck_rate:a
+        if os.path.exists(tp_file):
+            tp_df = pd.read_csv(tp_file)
+            
+            # Etsi stage jolla on bottleneck_rate
+            for _, row in tp_df[tp_df['Stage'] > 0].iterrows():
+                min_stat = int(row['MinStat'])
+                max_stat = int(row['MaxStat'])
+                num_stations = max_stat - min_stat + 1
+                
+                min_time_str = row['MinTime']
+                parts = min_time_str.split(':')
+                min_time_min = int(parts[0]) * 60 + int(parts[1])
+                
+                total_time = min_time_min + avg_transfer_time
+                rate = total_time / num_stations if num_stations > 0 else 0
+                
+                # Jos tämä on bottleneck stage
+                if abs(rate - bottleneck_rate) < 0.01:
+                    stage_num = int(row['Stage'])
+                    
+                    # Hae tämän stagen entry times batch_schedule:sta
+                    stage_entries = schedule_df[schedule_df['Stage'] == stage_num].sort_values('EntryTime')
+                    
+                    if len(stage_entries) > 1:
+                        # Laske keskimääräinen väli entry timeissa (sekunneissa)
+                        gaps = []
+                        prev_entry = None
+                        for _, entry_row in stage_entries.iterrows():
+                            if prev_entry is not None:
+                                gaps.append(entry_row['EntryTime'] - prev_entry)
+                            prev_entry = entry_row['EntryTime']
+                        
+                        if gaps:
+                            avg_gap_seconds = sum(gaps) / len(gaps)
+                            theoretical_takt_seconds = avg_gap_seconds
+                            
+                            # Muunna muotoon HH:MM:SS
+                            hours = int(avg_gap_seconds // 3600)
+                            minutes = int((avg_gap_seconds % 3600) // 60)
+                            seconds = int(avg_gap_seconds % 60)
+                            theoretical_takt_formatted = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    break
+    
+    # Käytetään pullonkaulaa jos löytyi, muuten vanha logiikka (korkein käyttöaste)
+    if bottleneck_group is not None:
+        metrics['most_used_station_group'] = bottleneck_group
+        metrics['most_used_station_name'] = bottleneck_station_name
+        metrics['most_used_station_utilization'] = bottleneck_utilization
+        metrics['bottleneck_rate'] = bottleneck_rate  # min/station
+        metrics['theoretical_takt_time'] = theoretical_takt_formatted
+        metrics['theoretical_takt_seconds'] = theoretical_takt_seconds
+        metrics['group_utilization'] = group_utilization
+    elif group_utilization:
+        # Fallback: käytetyin asemaryhmä (korkein käyttöaste)
         busiest_group = max(group_utilization, key=group_utilization.get)
         
         # Hae ryhmän edustavan aseman nimi (ensimmäinen asema ryhmästä)
@@ -236,11 +354,13 @@ def calculate_kpi_metrics(output_dir):
         metrics['most_used_station_group'] = busiest_group
         metrics['most_used_station_name'] = busiest_station_name
         metrics['most_used_station_utilization'] = group_utilization[busiest_group]
+        metrics['bottleneck_rate'] = 0
         metrics['group_utilization'] = group_utilization
     else:
         metrics['most_used_station_group'] = 0
         metrics['most_used_station_name'] = "N/A"
         metrics['most_used_station_utilization'] = 0
+        metrics['bottleneck_rate'] = 0
         metrics['group_utilization'] = {}
     
     # Käsittelyohjelmat (Treatment Programs)
@@ -493,6 +613,68 @@ def create_station_usage_chart(output_dir, reports_dir):
     return chart_path
 
 
+def create_transporter_batch_occupation_chart(output_dir, reports_dir):
+    """Luo kaavio nostimien keskimääräisestä eräkohtaisesta varausajasta"""
+    # Käytä transporters_movement.csv, joka sisältää kaikki vaiheet (0-6)
+    movement_file = os.path.join(output_dir, 'logs', 'transporters_movement.csv')
+    
+    if not os.path.exists(movement_file):
+        print(f"[WARN] Movement file not found: {movement_file}")
+        return None
+    
+    movements = pd.read_csv(movement_file)
+    
+    # Laske kunkin vaiheen kesto
+    movements['PhaseDuration'] = movements['End_Time'] - movements['Start_Time']
+    
+    # Suodata vain aktiiviset vaiheet 1-4 (ei idle)
+    # Vaiheet: 1=Move to lift, 2=Lifting, 3=Move to sink, 4=Sinking
+    active_phases = movements[movements['Phase'].isin([1, 2, 3, 4])].copy()
+    
+    # Laske jokaiselle nostimelle: sum(PhaseDuration) per Batch (vaiheet 1-4)
+    batch_occupation = active_phases.groupby(['Transporter', 'Batch'])['PhaseDuration'].sum().reset_index()
+    batch_occupation.rename(columns={'PhaseDuration': 'TotalOccupationTime'}, inplace=True)
+    
+    # Laske keskiarvo per transporter (eräkohtainen summa / erien määrä)
+    avg_occupation = batch_occupation.groupby('Transporter')['TotalOccupationTime'].mean().reset_index()
+    avg_occupation.rename(columns={'TotalOccupationTime': 'AvgOccupationPerBatch'}, inplace=True)
+    avg_occupation['AvgOccupationPerBatch_min'] = avg_occupation['AvgOccupationPerBatch'] / 60
+    
+    # Järjestä transporterit
+    avg_occupation = avg_occupation.sort_values('Transporter')
+    
+    # Luo pylväskaavio
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    transporters = [f"Transporter {int(t)}" for t in avg_occupation['Transporter']]
+    occupation_times = avg_occupation['AvgOccupationPerBatch_min'].values
+    
+    # Käytä samoja värejä kuin muissa nostin-kaavioissa
+    colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c']
+    bar_colors = [colors[i % len(colors)] for i in range(len(transporters))]
+    
+    bars = ax.bar(transporters, occupation_times, color=bar_colors, edgecolor='black', linewidth=0.8)
+    
+    # Lisää arvot palkkien päälle
+    for bar, value in zip(bars, occupation_times):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{value:.1f}',
+                ha='center', va='bottom', fontsize=10, fontweight='bold')
+    
+    ax.set_xlabel('')
+    ax.set_ylabel('min', fontsize=12)
+    # Poistetaan otsikko
+    ax.grid(axis='y', alpha=0.3, linestyle='--')
+    
+    plt.tight_layout()
+    chart_path = os.path.join(reports_dir, 'transporter_batch_occupation.png')
+    plt.savefig(chart_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    return chart_path
+
+
 def create_batch_leadtime_chart(output_dir, reports_dir):
     """Luo erän läpimenoaikakaavio"""
     batch_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv'))
@@ -559,6 +741,7 @@ def generate_enhanced_simulation_report(output_dir):
     
     temporal_load_chart = create_transporter_temporal_load_chart(output_dir, reports_dir)
     task_distribution_chart = create_transporter_task_distribution_chart(output_dir, reports_dir)
+    batch_occupation_chart = create_transporter_batch_occupation_chart(output_dir, reports_dir)
     station_chart = create_station_usage_chart(output_dir, reports_dir)
     leadtime_chart = create_batch_leadtime_chart(output_dir, reports_dir)
     
@@ -567,27 +750,27 @@ def generate_enhanced_simulation_report(output_dir):
     
     # ===== ETUSIVU =====
     pdf.add_page()
-    pdf.set_y(40)
+    pdf.set_y(25)  # Pienennetty 40 -> 25
     
     # Otsikko
     pdf.set_font('Arial', 'B', 24)
     pdf.set_text_color(41, 128, 185)
-    pdf.cell(0, 15, 'Production Line', ln=1, align='C')
-    pdf.cell(0, 15, 'Simulation Report', ln=1, align='C')
-    pdf.ln(10)
+    pdf.cell(0, 12, 'Production Line', ln=1, align='C')  # 15 -> 12
+    pdf.cell(0, 12, 'Simulation Report', ln=1, align='C')  # 15 -> 12
+    pdf.ln(8)  # 10 -> 8
     
     # Asiakastiedot
     pdf.set_font('Arial', '', 14)
     pdf.set_text_color(52, 73, 94)
-    pdf.cell(0, 10, customer, ln=1, align='C')
+    pdf.cell(0, 8, customer, ln=1, align='C')  # 10 -> 8
     pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 8, plant, ln=1, align='C')
-    pdf.ln(5)
+    pdf.cell(0, 7, plant, ln=1, align='C')  # 8 -> 7
+    pdf.ln(4)  # 5 -> 4
     
     pdf.set_font('Arial', 'I', 10)
     pdf.set_text_color(127, 140, 141)
-    pdf.cell(0, 8, timestamp, ln=1, align='C')
-    pdf.ln(15)
+    pdf.cell(0, 7, timestamp, ln=1, align='C')  # 8 -> 7
+    pdf.ln(10)  # 15 -> 10
     
     # Timeline-kuva etusivulle (pienennetty 70% alkuperäisestä)
     first_page_img = os.path.join(reports_dir, 'matrix_timeline_page_1.png')
@@ -607,8 +790,8 @@ def generate_enhanced_simulation_report(output_dir):
                     im_to_save = im.convert('RGB')
                 im_to_save.save(jpg_path, format='JPEG', quality=85)
                 
-                # Laske kuvan korkeus PDF:ssä (pienennetty 70%)
-                w = (pdf.w - pdf.l_margin - pdf.r_margin) * 0.7
+                # Laske kuvan korkeus PDF:ssä (kasvatettu 80%)
+                w = (pdf.w - pdf.l_margin - pdf.r_margin) * 0.8
                 img_w, img_h = im.size
                 h = (img_h / img_w) * w
                 image_end_y = pdf.get_y() + h
@@ -619,16 +802,33 @@ def generate_enhanced_simulation_report(output_dir):
         except Exception as e:
             print(f"[WARN] Cover image failed: {e}")
     
-    # Lyhyt kuvaus - sijoita kuvan alle 15mm välillä
-    pdf.set_y(image_end_y + 15)
-    pdf.set_font('Arial', '', 10)
+    # Lyhyt kuvaus - sijoita kuvan alle
+    pdf.set_y(image_end_y + 8)
+    pdf.set_font('Arial', '', 9)
     pdf.set_text_color(52, 73, 94)
-    desc = (
-        "This report presents a comprehensive analysis of the production line simulation. "
-        "The simulation models batch processing, transporter movements, and station utilization "
-        "to identify optimal scheduling strategies and potential bottlenecks."
+    
+    # Algoritmin kuvaus
+    pdf.set_font('Arial', 'B', 9)
+    pdf.cell(0, 5, 'Two-Phase CP-SAT Optimization Algorithm', ln=1, align='L')
+    pdf.set_font('Arial', '', 9)
+    algo_desc = (
+        "Phase 1: Batch-level scheduling optimizes batch entry times and station assignments. "
+        "Phase 2: Stage-level optimization schedules individual treatment stages, transporter movements, "
+        "and ensures no spatial or temporal conflicts between operations."
     )
-    pdf.multi_cell(0, 6, desc, align='C')
+    pdf.multi_cell(0, 4.5, algo_desc, align='L')
+    pdf.ln(3)
+    
+    # Rajoitukset
+    pdf.set_font('Arial', 'B', 9)
+    pdf.cell(0, 5, 'Simulation Limitations', ln=1, align='L')
+    pdf.set_font('Arial', '', 9)
+    limitations = (
+        "This simulation does not account for: manual loading/unloading times, human-induced delays, "
+        "equipment failures, quality control inspections, or setup/changeover times between batches. "
+        "Results represent an idealized scenario with perfect execution and no unexpected disruptions."
+    )
+    pdf.multi_cell(0, 4.5, limitations, align='L')
     
     # Kansion nimi alas oikeaan (sivu 1:n loppuun)
     pdf.set_y(pdf.h - 20)  # 20mm sivun alareunasta
@@ -667,7 +867,7 @@ def generate_enhanced_simulation_report(output_dir):
     # 4. Total Production Time
     kpi_data.append(("Total Production Time", metrics['makespan_formatted'], ""))
     
-    # 5. Avg. Cycle Time
+    # 5. Avg. Cycle Time (todellinen simuloitu tahtiaika)
     kpi_data.append(("Avg. Cycle Time", metrics['takt_time_formatted'], ""))
     
     # 6. Batches per Hour
@@ -679,10 +879,13 @@ def generate_enhanced_simulation_report(output_dir):
         t_id = key.split('_')[1]
         kpi_data.append((f"Transporter {t_id}", f"{metrics[key]:.1f}", "%"))
     
-    # 9. Busiest Station Group
+    # 9. Bottleneck Station
+    bottleneck_text = f"{metrics['most_used_station_name']}"
+    if metrics['bottleneck_rate'] > 0:
+        bottleneck_text += f"\n({metrics['bottleneck_rate']:.1f} min/sta)"
     kpi_data.append((
-        f"Busiest Station Group",
-        f"{metrics['most_used_station_name']}: {metrics['most_used_station_utilization']:.1f}%",
+        f"Bottleneck Station",
+        bottleneck_text,
         ""
     ))
     
@@ -721,7 +924,7 @@ def generate_enhanced_simulation_report(output_dir):
         avg_util = sum(util_values) / len(util_values)
         summary_text += f"Transporter utilization averaged {avg_util:.1f}%. "
     
-    summary_text += f"Station group '{metrics['most_used_station_name']}' had the highest time utilization at {metrics['most_used_station_utilization']:.1f}%."
+    summary_text += f"Bottleneck station: '{metrics['most_used_station_name']}' with {metrics['bottleneck_rate']:.1f} min/station capacity (utilization: {metrics['most_used_station_utilization']:.1f}%)."
     
     pdf.multi_cell(0, 6, summary_text)
     
@@ -803,7 +1006,27 @@ def generate_enhanced_simulation_report(output_dir):
             h = (img_h / img_w) * w
         pdf.image(task_distribution_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
         pdf.ln(h + 10)
+
+    # --- Hoist per-batch time analysis ---
+    pdf.add_page()
+    pdf.section_title('Transporter Occupation by Batches')
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 6,
+        "This chart shows the average active time each transporter spends per batch. "
+        "The calculation includes phases 1-4: Move to lifting station, Lifting, Move to sinking station, and Sinking. "
+        "Idle time (phase 0) is excluded. Higher values indicate transporters that handle more time-consuming tasks per batch.")
+    pdf.ln(5)
     
+    if os.path.exists(batch_occupation_chart):
+        w = pdf.w - pdf.l_margin - pdf.r_margin
+        with Image.open(batch_occupation_chart) as img:
+            img_w, img_h = img.size
+            h = (img_h / img_w) * w
+        pdf.image(batch_occupation_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
+        pdf.ln(h + 10)
+
+    # --- Station Usage and following sections start on a new page ---
+    pdf.add_page()
     pdf.section_title('Station Usage Frequency')
     pdf.set_font('Arial', '', 10)
     pdf.multi_cell(0, 6,

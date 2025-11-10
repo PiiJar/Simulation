@@ -307,7 +307,7 @@ def solve_and_save_simple(model, task_vars, treatment_programs, output_dir):
     
     # Päivitä production.csv optimoiduilla lähtöajoilla
     print("💾 Päivitetään production.csv...")
-    production_path = os.path.join(output_dir, "initialization", "production.csv")
+    production_path = os.path.join(output_dir, "production.csv")
     if os.path.exists(production_path):
         production_df = pd.read_csv(production_path)
         

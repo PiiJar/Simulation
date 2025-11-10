@@ -873,6 +873,10 @@ class CpSatPhase2Optimizer:
             print(" - Hakuloki: päällä (log_search_progress)")
         print(f" - Aikaraja asetettu: {int(_time_limit)} s")
         status = self.solver.Solve(self.model)
+        
+        # Tulosta status selkeästi
+        status_name = self.solver.StatusName(status)
+        print(f"CP-SAT Vaihe 2 Status: {status_name}")
 
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             if status == cp_model.INFEASIBLE:

@@ -512,7 +512,11 @@ class CpSatPhase1Optimizer:
             print("   (CP-SAT) Hakuloki: päällä (log_search_progress)")
 
         t0 = time.time(); status = self.solver.Solve(self.model); solve_time = time.time() - t0
+        
+        # Tulosta status
+        status_name = self.solver.StatusName(status)
         print(f"6. Ratkaisu valmis -> {solve_time:.2f}s, kokonaiskesto {time.time() - t_all:.2f}s")
+        print(f"   CP-SAT Phase 1 Status: {status_name}")
         
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
             return self.create_result_dataframe()
