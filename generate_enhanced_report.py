@@ -429,6 +429,321 @@ def create_utilization_chart(output_dir, reports_dir):
     return chart_path
 
 
+def create_vertical_speed_change_chart(output_dir, reports_dir):
+    """Create a simple vertical bar chart marking vertical movement speed change points per transporter.
+
+    Uses transporter physics parameters from cp_sat_transporters.csv (preferred) or initialization/transporters.csv.
+    Marks change points at:
+      - z = Z_slow_distance_dry (mm): transition from slow-up to fast-up
+      - z = Z_total_distance - Z_slow_end_distance (mm): transition from fast-up to slow-up end
+
+    The bar is segmented: slow (bottom), fast (middle), slow (top). Values are in millimeters.
+    """
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+
+    # Ensure reports dir
+    os.makedirs(reports_dir, exist_ok=True)
+
+    # Prefer Phase 1 snapshot of transporters (contains Avoid and physics columns)
+    candidates = [
+        os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters.csv'),
+    ]
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if not path:
+        print("[WARN] No transporter CSV found for physics chart")
+        return None
+
+    df = pd.read_csv(path)
+
+    # Normalize column names expected by transporter_physics
+    # Keep original names with exact spelling used in physics calc
+    cols = {
+        'Transporter_id': 'Transporter_id',
+        'Z_total_distance (mm)': 'Z_total_distance (mm)',
+        'Z_slow_distance_dry (mm)': 'Z_slow_distance_dry (mm)',
+        'Z_slow_end_distance (mm)': 'Z_slow_end_distance (mm)',
+        'Z_slow_distance_wet (mm)': 'Z_slow_distance_wet (mm)',
+        'Z_slow_speed (mm/s)': 'Z_slow_speed (mm/s)',
+        'Z_fast_speed (mm/s)': 'Z_fast_speed (mm/s)',
+    }
+    for c in list(cols.values()):
+        if c not in df.columns:
+            # Try looser matches (without units)
+            matches = [col for col in df.columns if c.split(' (')[0] == col.split(' (')[0]]
+            if matches:
+                df[c] = df[matches[0]]
+            else:
+                df[c] = 0
+
+    # Coerce to numeric
+    for c in [
+        'Z_total_distance (mm)', 'Z_slow_distance_dry (mm)', 'Z_slow_end_distance (mm)', 'Z_slow_distance_wet (mm)',
+        'Z_slow_speed (mm/s)', 'Z_fast_speed (mm/s)'
+    ]:
+        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+
+    # Prepare data per transporter
+    rows = []
+    for _, r in df.iterrows():
+        try:
+            t = int(r.get('Transporter_id', r.get('Transporter', 0)))
+        except Exception:
+            t = int(r.get('Transporter', 0))
+        z_total = float(r['Z_total_distance (mm)'])
+        z_slow_dry = max(0.0, min(float(r['Z_slow_distance_dry (mm)']), z_total))
+        z_slow_end = max(0.0, min(float(r['Z_slow_end_distance (mm)']), z_total))
+        # Compute boundaries for lift profile (upwards): [0..z_slow_dry] slow, (z_slow_dry..z_total - z_slow_end] fast, (..z_total] slow
+        z_fast_start = z_slow_dry
+        z_fast_end = max(0.0, z_total - z_slow_end)
+        z_fast_end = max(z_fast_end, z_fast_start)  # avoid negative middle when sums exceed total
+        rows.append({
+            'Transporter': t,
+            'Z_total': z_total,
+            'Z_slow_dry': z_slow_dry,
+            'Z_fast_start': z_fast_start,
+            'Z_fast_end': z_fast_end,
+            'Z_slow_end': z_slow_end,
+        })
+
+    if not rows:
+        print("[WARN] Empty transporter data for physics chart")
+        return None
+
+    rows = sorted(rows, key=lambda x: x['Transporter'])
+
+    # Plot vertical bars
+    n = len(rows)
+    fig, ax = plt.subplots(figsize=(max(4, n * 1.2), 5))
+    bar_width = 0.4
+    x_positions = np.arange(n)
+
+    slow_color = '#95a5a6'  # gray
+    fast_color = '#3498db'  # blue
+
+    max_height = max(r['Z_total'] for r in rows) if rows else 1.0
+    for i, r in enumerate(rows):
+        x = x_positions[i]
+        # Draw slow (bottom)
+        if r['Z_slow_dry'] > 0:
+            rect = patches.Rectangle((x - bar_width/2, 0), bar_width, r['Z_slow_dry'], color=slow_color)
+            ax.add_patch(rect)
+        # Draw fast (middle)
+        if r['Z_fast_end'] > r['Z_fast_start']:
+            rect = patches.Rectangle((x - bar_width/2, r['Z_fast_start']), bar_width, r['Z_fast_end'] - r['Z_fast_start'], color=fast_color)
+            ax.add_patch(rect)
+        # Draw slow (top)
+        if r['Z_total'] > r['Z_fast_end']:
+            rect = patches.Rectangle((x - bar_width/2, r['Z_fast_end']), bar_width, r['Z_total'] - r['Z_fast_end'], color=slow_color)
+            ax.add_patch(rect)
+
+        # Mark change points as small black lines
+        for y in [r['Z_slow_dry'], r['Z_fast_end']]:
+            ax.plot([x - bar_width/2 - 0.1, x + bar_width/2 + 0.1], [y, y], color='black', linewidth=1)
+
+        # Label transporter
+        ax.text(x, -0.05 * max_height, f"T{r['Transporter']}", ha='center', va='top', fontsize=9)
+
+        # Annotate heights (mm) near change points
+        ax.text(x + bar_width/2 + 0.15, r['Z_slow_dry'], f"{int(r['Z_slow_dry'])} mm", va='center', fontsize=8)
+        ax.text(x + bar_width/2 + 0.15, r['Z_fast_end'], f"{int(r['Z_fast_end'])} mm", va='center', fontsize=8)
+
+    ax.set_xlim(-1, n)
+    ax.set_ylim(0, max_height * 1.05 if max_height > 0 else 1)
+    ax.set_ylabel('Z (mm)')
+    ax.set_title('Vertical movement speed change points (lift profile)')
+    ax.set_xticks([])
+    ax.grid(axis='y', alpha=0.2)
+
+    # Legend
+    handles = [
+        patches.Patch(color=slow_color, label='Slow speed zone'),
+        patches.Patch(color=fast_color, label='Fast speed zone'),
+    ]
+    ax.legend(handles=handles, loc='upper right')
+
+    plt.tight_layout()
+    chart_path = os.path.join(reports_dir, 'transporter_vertical_speed_profile.png')
+    plt.savefig(chart_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    return chart_path
+
+
+def _load_transporter_physics(output_dir):
+    """Load transporter physics parameters and normalize columns.
+
+    Returns a list of dict rows with keys:
+      Transporter, Z_total, Z_slow_dry, Z_slow_wet, Z_slow_end
+    """
+    import pandas as pd
+    # Prefer cp_sat snapshot if available, else initialization physics.
+    candidates = [
+        os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters_physics.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters _physics.csv'),  # fallback if naming has a space
+        os.path.join(output_dir, 'initialization', 'transporters.csv'),
+    ]
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if not path:
+        return []
+
+    df = pd.read_csv(path)
+
+    # Map potential column names (with or without units)
+    def get_col(df, preferred, fallback_prefix):
+        if preferred in df.columns:
+            return df[preferred]
+        # try to match without unit suffix
+        base = preferred.split(' (')[0]
+        for c in df.columns:
+            if c.split(' (')[0] == base:
+                return df[c]
+        # try explicit fallback_prefix
+        for c in df.columns:
+            if c.lower().startswith(fallback_prefix):
+                return df[c]
+        return None
+
+    tid_col = None
+    for key in ['Transporter_id', 'Transporter', 'Id', 'Hoist', 'Hoist_id']:
+        if key in df.columns:
+            tid_col = key
+            break
+    if tid_col is None:
+        # create a simple index-based id if not present
+        df['Transporter'] = list(range(1, len(df) + 1))
+        tid_col = 'Transporter'
+
+    z_total = get_col(df, 'Z_total_distance (mm)', 'z_total')
+    z_slow_dry = get_col(df, 'Z_slow_distance_dry (mm)', 'z_slow_dry')
+    z_slow_wet = get_col(df, 'Z_slow_distance_wet (mm)', 'z_slow_wet')
+    z_slow_end = get_col(df, 'Z_slow_end_distance (mm)', 'z_slow_end')
+
+    # Build normalized rows
+    rows = []
+    for _, r in df.iterrows():
+        try:
+            t = int(r[tid_col])
+        except Exception:
+            t = int(_ + 1)
+
+        def num(val):
+            try:
+                return float(val)
+            except Exception:
+                return 0.0
+
+        ZT = num(r[z_total.name]) if z_total is not None else 0.0
+        ZD = min(num(r[z_slow_dry.name]) if z_slow_dry is not None else 0.0, ZT)
+        ZW = min(num(r[z_slow_wet.name]) if z_slow_wet is not None else 0.0, ZT)
+        ZE = min(num(r[z_slow_end.name]) if z_slow_end is not None else 0.0, ZT)
+
+        rows.append({
+            'Transporter': t,
+            'Z_total': ZT,
+            'Z_slow_dry': ZD,
+            'Z_slow_wet': ZW,
+            'Z_slow_end': ZE,
+        })
+
+    rows = [r for r in rows if r['Z_total'] > 0]
+    return sorted(rows, key=lambda x: x['Transporter'])
+
+
+def add_per_transporter_physics_pages(output_dir, pdf):
+    """Add one PDF page per transporter with a simple vertical bar:
+    - Total height (full bar)
+    - Bottom left half: slow zone for dry stations (type 0)
+    - Bottom right half: slow zone for wet stations (type 1)
+    - Top full-width slow zone (Z_slow_end)
+    """
+    rows = _load_transporter_physics(output_dir)
+    if not rows:
+        return
+
+    # Colors
+    border = (52, 73, 94)
+    dry_color = (149, 165, 166)     # gray
+    wet_color = (26, 188, 156)      # teal
+    top_color = (127, 140, 141)     # darker gray
+
+    for r in rows:
+        t = r['Transporter']
+        ZT = r['Z_total']
+        ZD = min(r['Z_slow_dry'], ZT)
+        ZW = min(r['Z_slow_wet'], ZT)
+        ZE = min(r['Z_slow_end'], ZT)
+        Z_fast_end = max(0.0, ZT - ZE)  # height below top slow start
+
+        pdf.add_page()
+        pdf.chapter_title(f'Transporter T{t} - Physics Profile')
+        pdf.set_font('Arial', '', 10)
+        pdf.multi_cell(0, 6,
+            'Single vertical bar shows configured vertical movement profile. '
+            'Left half bottom = slow zone at DRY stations (type 0). '
+            'Right half bottom = slow zone at WET stations (type 1). '
+            'Top full-width segment = slow zone near top end.')
+        pdf.ln(3)
+
+        # Drawing area
+        left = pdf.l_margin + 20
+        top = pdf.get_y() + 6
+        bar_width = 30
+        bar_height = min(120, pdf.h - top - 60)  # keep within page
+        scale = bar_height / ZT if ZT > 0 else 1.0
+
+        # Bar border
+        pdf.set_draw_color(*border)
+        pdf.rect(left, top, bar_width, bar_height)
+
+        # Bottom DRY slow (left half width)
+        h_dry = ZD * scale
+        if h_dry > 0:
+            pdf.set_fill_color(*dry_color)
+            pdf.rect(left, top + bar_height - h_dry, bar_width/2.0, h_dry, 'F')
+
+        # Bottom WET slow (right half width)
+        h_wet = ZW * scale
+        if h_wet > 0:
+            pdf.set_fill_color(*wet_color)
+            pdf.rect(left + bar_width/2.0, top + bar_height - h_wet, bar_width/2.0, h_wet, 'F')
+
+        # Top slow (full width from Z_fast_end to Z_total)
+        if ZT > Z_fast_end:
+            h_top = (ZT - Z_fast_end) * scale
+            pdf.set_fill_color(*top_color)
+            pdf.rect(left, top + bar_height - (ZT * scale), bar_width, h_top, 'F')
+
+        # Labels
+        pdf.set_font('Arial', '', 9)
+        pdf.set_text_color(52, 73, 94)
+        # Total height label
+        pdf.text(left + bar_width + 6, top + 3, f'Z_total: {int(ZT)} mm')
+        # Dry/Wet labels near bottom
+        pdf.text(left + 1, top + bar_height + 6, f'Dry slow: {int(ZD)} mm')
+        pdf.text(left + bar_width/2.0 + 1, top + bar_height + 6, f'Wet slow: {int(ZW)} mm')
+        # Top slow label near its start
+        y_top_start = top + bar_height - (Z_fast_end * scale)
+        pdf.text(left + bar_width + 6, y_top_start + 2, f'Top slow: {int(ZE)} mm')
+
+        # Legend
+        legend_y = top + bar_height + 14
+        pdf.set_fill_color(*dry_color)
+        pdf.rect(left, legend_y, 4, 4, 'F')
+        pdf.text(left + 6, legend_y + 4, 'Dry slow (type 0)')
+        legend_y += 6
+        pdf.set_fill_color(*wet_color)
+        pdf.rect(left, legend_y, 4, 4, 'F')
+        pdf.text(left + 6, legend_y + 4, 'Wet slow (type 1)')
+        legend_y += 6
+        pdf.set_fill_color(*top_color)
+        pdf.rect(left, legend_y, 4, 4, 'F')
+        pdf.text(left + 6, legend_y + 4, 'Top slow zone')
+
+
 def create_transporter_temporal_load_chart(output_dir, reports_dir):
     """Luo ajallinen kuormituskaavio nostimille (5 min ikkunat)"""
     hoist_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
@@ -744,6 +1059,7 @@ def generate_enhanced_simulation_report(output_dir):
     batch_occupation_chart = create_transporter_batch_occupation_chart(output_dir, reports_dir)
     station_chart = create_station_usage_chart(output_dir, reports_dir)
     leadtime_chart = create_batch_leadtime_chart(output_dir, reports_dir)
+    vertical_speed_chart = create_vertical_speed_change_chart(output_dir, reports_dir)
     
     # Luo PDF
     pdf = EnhancedSimulationReport(customer, plant, timestamp)
@@ -928,6 +1244,24 @@ def generate_enhanced_simulation_report(output_dir):
     
     pdf.multi_cell(0, 6, summary_text)
     
+    # ===== PHYSICS SETTINGS (after Executive Summary) =====
+    pdf.add_page()
+    pdf.chapter_title('Transporter Physics Settings')
+    pdf.section_title('Vertical speed change points')
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 6,
+        "Simple vertical bars per transporter showing change points in vertical movement speed. "
+        "Bottom and top gray segments indicate slow-speed zones; the blue middle segment indicates fast-speed zone. "
+        "Markers on the bars show the exact heights where speed changes.")
+    pdf.ln(3)
+    if vertical_speed_chart and os.path.exists(vertical_speed_chart):
+        w = pdf.w - pdf.l_margin - pdf.r_margin
+        with Image.open(vertical_speed_chart) as img:
+            img_w, img_h = img.size
+            h = (img_h / img_w) * w
+        pdf.image(vertical_speed_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
+        pdf.ln(h + 6)
+
     # ===== PERFORMANCE ANALYSIS =====
     pdf.add_page()
     pdf.chapter_title('Performance Analysis - Transporters')
