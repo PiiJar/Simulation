@@ -17,7 +17,9 @@ import numpy as np
 from fpdf import FPDF
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.ticker as mtick
 from PIL import Image
+import math
 
 # Standard body text font used across the report
 BODY_FONT_NAME = 'Arial'
@@ -662,6 +664,87 @@ def _load_transporter_physics(output_dir):
     return sorted(rows, key=lambda x: x['Transporter'])
 
 
+def create_transporter_dynamics_plot(output_dir, reports_dir, transporter_id):
+    """Return explicit time/position curves for a transporter.
+
+    Only returns data when explicit arrays are present in CSV columns.
+    Returns a list of (times_list, pos_list, label).
+    """
+    candidates = [
+        os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters_physics.csv'),
+        os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters_physics.csv'),
+        os.path.join(os.path.dirname(__file__), 'initialization', 'transporters_physics.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters.csv'),
+    ]
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if not path:
+        return []
+
+    df = pd.read_csv(path)
+
+    # Find transporter row
+    tid_col = None
+    for key in ['Transporter_id', 'Transporter', 'Id', 'transporters_id', 'id']:
+        if key in df.columns:
+            tid_col = key
+            break
+    if tid_col is None:
+        row = df.iloc[0]
+    else:
+        matches = df[df[tid_col] == transporter_id]
+        if matches.empty:
+            matches = df[df[tid_col].astype(str) == str(transporter_id)]
+        row = matches.iloc[0] if not matches.empty else df.iloc[0]
+
+    def try_read(prefix, typ=None):
+        time_cols = []
+        pos_cols = []
+        if typ is not None:
+            time_cols += [f"{prefix}_{typ}_time_s", f"{prefix}_{typ}_time", f"{prefix}_time_{typ}"]
+            pos_cols += [f"{prefix}_{typ}_pos_mm", f"{prefix}_{typ}_pos", f"{prefix}_pos_{typ}"]
+        time_cols += [f"{prefix}_time_s", f"{prefix}_time", f"{prefix}_times"]
+        pos_cols += [f"{prefix}_pos_mm", f"{prefix}_pos", f"{prefix}_positions", f"{prefix}_pos_mm_{prefix}"]
+
+        found_time = next((c for c in df.columns if c in time_cols), None)
+        found_pos = next((c for c in df.columns if c in pos_cols), None)
+        if not found_time or not found_pos:
+            return None
+
+        import ast
+        try:
+            tval = row[found_time]
+            pval = row[found_pos]
+            if isinstance(tval, str) and tval.strip().startswith('['):
+                times = list(ast.literal_eval(tval))
+            else:
+                times = [float(x) for x in str(tval).split(',') if x.strip()]
+            if isinstance(pval, str) and pval.strip().startswith('['):
+                poss = list(ast.literal_eval(pval))
+            else:
+                poss = [float(x) for x in str(pval).split(',') if x.strip()]
+            if len(times) != len(poss) or len(times) == 0:
+                return None
+            return times, poss
+        except Exception:
+            return None
+
+    curves = []
+    order = [('lift', 0), ('sink', 0), ('lift', 1), ('sink', 1)]
+    for pref, typ in order:
+        c = try_read(pref, typ)
+        if c:
+            curves.append((c[0], c[1], f"{pref} T{typ}"))
+
+    if not curves:
+        for pref in ['lift', 'sink']:
+            c = try_read(pref, None)
+            if c:
+                curves.append((c[0], c[1], pref))
+
+    return curves
+
+
 def load_transporter_info(output_dir):
     """Load basic transporter info (id, model, min/max stations, start pos, avoid)"""
     import pandas as pd
@@ -747,6 +830,8 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
     rows = _load_transporter_physics(output_dir)
     if not rows:
         return
+    reports_dir = os.path.join(output_dir, 'reports')
+    os.makedirs(reports_dir, exist_ok=True)
 
     # Colors
     border = (52, 73, 94)
@@ -852,6 +937,68 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
             axis_bottom = top + bar_height
             # Use the maximum available width up to the right margin
             axis_width = max(40, pdf.w - pdf.r_margin - axis_x - 2)
+            pdf.set_draw_color(0, 0, 0)
+            # Try to compute data-driven total seconds for this transporter from physics
+            data_max_time = 0.0
+            try:
+                phys_candidates = [
+                    os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters_physics.csv'),
+                    os.path.join(output_dir, 'initialization', 'transporters _physics.csv'),
+                    os.path.join(output_dir, 'initialization', 'transporters_physics.csv'),
+                    os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
+                    os.path.join(output_dir, 'initialization', 'transporters.csv'),
+                ]
+                phys_path = next((p for p in phys_candidates if os.path.exists(p)), None)
+                if phys_path:
+                    p_df = pd.read_csv(phys_path)
+                    id_col = next((c for c in p_df.columns if c.lower().startswith('transporter')), p_df.columns[0])
+                    prow = None
+                    try:
+                        prow = p_df[p_df[id_col] == t].iloc[0]
+                    except Exception:
+                        try:
+                            prow = p_df[p_df[id_col].astype(str) == str(t)].iloc[0]
+                        except Exception:
+                            prow = None
+                    if prow is not None:
+                        def getnum(keylist):
+                            for col in p_df.columns:
+                                for k in keylist:
+                                    if col.replace(' ', '').lower().startswith(k.replace(' ', '').lower()):
+                                        try:
+                                            return float(prow[col])
+                                        except Exception:
+                                            try:
+                                                return float(str(prow[col]).strip())
+                                            except Exception:
+                                                return None
+                            return None
+
+                        ZT = getnum(['Z_total_distance', 'Z_total']) or 0.0
+                        ZD = getnum(['Z_slow_distance_dry', 'Z_slow_dry']) or 0.0
+                        ZW = getnum(['Z_slow_distance_wet', 'Z_slow_wet']) or 0.0
+                        ZE = getnum(['Z_slow_end_distance', 'Z_slow_end']) or 0.0
+                        slow_speed = getnum(['Z_slow_speed']) or 0.0
+                        fast_speed = getnum(['Z_fast_speed']) or 0.0
+
+                        def max_time_for(bottom):
+                            bottom = max(0.0, min(bottom, ZT))
+                            top_seg = max(0.0, min(ZE, ZT - bottom))
+                            middle = max(0.0, ZT - bottom - top_seg)
+                            total = 0.0
+                            if bottom > 0 and slow_speed > 0:
+                                total += bottom / slow_speed
+                            if middle > 0 and fast_speed > 0:
+                                total += middle / fast_speed
+                            if top_seg > 0 and slow_speed > 0:
+                                total += top_seg / slow_speed
+                            return total
+
+                        mt0 = max_time_for(ZD)
+                        mt1 = max_time_for(ZW)
+                        data_max_time = max(mt0, mt1)
+            except Exception:
+                data_max_time = 0.0
 
             pdf.set_draw_color(0, 0, 0)
             pdf.set_line_width(0.5)
@@ -881,24 +1028,184 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
             # limit by axis_width
             num_div = int(axis_width // mm_per_half_sec)
             pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 2))
-            for i in range(num_div + 1):
-                x_tick = axis_x + i * mm_per_half_sec
+            # Determine effective total seconds for axis labels
+            # compute axis seconds: prefer data_max_time, round up to nearest whole second
+            axis_min_seconds = (num_div * 0.5) if num_div > 0 else 0.0
+            raw_total = max(data_max_time or 0.0, axis_min_seconds, 1e-6)
+            # round up to integer seconds for clean tick labels
+            total_seconds_for_axis = float(int(math.ceil(raw_total)))
+            # Decide tick delta in seconds (1s grid). Compute number of seconds to show
+            tick_seconds = 1
+            num_seconds = int(max(1, total_seconds_for_axis))
+            # map seconds to positions across axis_width
+            pdf.set_text_color(0, 0, 0)
+            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 2))
+            for s in range(0, num_seconds + 1, tick_seconds):
+                frac = s / float(max(1, num_seconds))
+                x_tick = axis_x + frac * axis_width
                 pdf.line(x_tick, axis_bottom, x_tick, axis_bottom - 3)
-                # label every tick with time in seconds
-                t_sec = i * 0.5
-                txt = f"{t_sec:.1f}s"
+                txt = f"{s:d}"
                 pdf.set_xy(x_tick - 6, axis_bottom + 1)
                 pdf.cell(12, 4, txt, ln=0, align='C')
                 pdf.set_x(pdf.l_margin)
 
             # Axis titles
-            pdf.set_xy(axis_x, axis_top - 6)
-            pdf.cell(0, 4, 'Height (mm)', ln=0)
+            # NOTE: per request, do not render the Y-axis 'Height (mm)' label to reduce clutter
+            pdf.set_text_color(0, 0, 0)
+            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 2))
             pdf.set_xy(axis_x + axis_width/2 - 10, axis_bottom + 6)
             pdf.cell(0, 4, 'Time (s)', ln=0)
             pdf.set_line_width(0.0)
         except Exception:
             # don't fail the whole page if axes drawing fails
+            pass
+        # Draw transporter dynamics curves directly on the axes using physics data
+        try:
+            # load physics CSV (prefer snapshot cp_sat physics, then initialization)
+            candidates = [
+                os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters_physics.csv'),
+                os.path.join(output_dir, 'initialization', 'transporters _physics.csv'),
+                os.path.join(output_dir, 'initialization', 'transporters_physics.csv'),
+                os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
+                os.path.join(output_dir, 'initialization', 'transporters.csv'),
+            ]
+            phys_path = next((p for p in candidates if os.path.exists(p)), None)
+            if phys_path:
+                pdf.set_line_width(0.6)
+                try:
+                    p_df = pd.read_csv(phys_path)
+                    # normalize id col
+                    id_col = next((c for c in p_df.columns if c.lower().startswith('transporter')), None)
+                    if id_col is None:
+                        id_col = p_df.columns[0]
+                    row = None
+                    try:
+                        row = p_df[p_df[id_col] == t].iloc[0]
+                    except Exception:
+                        try:
+                            row = p_df[p_df[id_col].astype(str) == str(t)].iloc[0]
+                        except Exception:
+                            row = None
+
+                    if row is not None:
+                        # read distances and speeds
+                        def get(k):
+                            for col in p_df.columns:
+                                if col.replace(' ', '').lower().startswith(k.replace(' ', '').lower()):
+                                    try:
+                                        return float(row[col])
+                                    except Exception:
+                                        try:
+                                            return float(str(row[col]).strip())
+                                        except Exception:
+                                            return None
+                            return None
+
+                        ZT = get('Z_total_distance') or get('Z_total') or 0.0
+                        ZD = get('Z_slow_distance_dry') or 0.0
+                        ZW = get('Z_slow_distance_wet') or 0.0
+                        ZE = get('Z_slow_end_distance') or 0.0
+                        slow_speed = get('Z_slow_speed') or get('Z_slow_speed (mm/s)') or 0.0
+                        fast_speed = get('Z_fast_speed') or get('Z_fast_speed (mm/s)') or 0.0
+
+                        if ZT > 0 and (slow_speed and fast_speed):
+                            # build piecewise profiles
+                            def build_profile(bottom_slow_len):
+                                bottom = max(0.0, min(bottom_slow_len, ZT))
+                                top = max(0.0, min(ZE, ZT - bottom))
+                                middle = max(0.0, ZT - bottom - top)
+                                pts_x = []
+                                pts_y = []
+                                # sample bottom slow
+                                if bottom > 0:
+                                    n = max(4, int(min(40, bottom/5)))
+                                    xs = [i*(bottom/(n-1)) for i in range(n)]
+                                    ts = [x/slow_speed for x in xs]
+                                    pts_x.extend(ts)
+                                    pts_y.extend(xs)
+                                # sample middle fast
+                                if middle > 0:
+                                    n = max(4, int(min(80, middle/5)))
+                                    xs_m = [bottom + i*(middle/(n-1)) for i in range(n)]
+                                    ts_m = [(x-bottom)/fast_speed + (pts_x[-1] if pts_x else 0) for x in xs_m]
+                                    pts_x.extend(ts_m)
+                                    pts_y.extend(xs_m)
+                                # sample top slow
+                                if top > 0:
+                                    n = max(4, int(min(40, top/5)))
+                                    xs_t = [bottom + middle + i*(top/(n-1)) for i in range(n)]
+                                    ts_t = [(x-(bottom+middle))/slow_speed + (pts_x[-1] if pts_x else 0) for x in xs_t]
+                                    pts_x.extend(ts_t)
+                                    pts_y.extend(xs_t)
+                                # ensure monotonic times
+                                # normalize times to start at 0
+                                if len(pts_x) > 0:
+                                    base = pts_x[0]
+                                    pts_x = [p - base for p in pts_x]
+                                return pts_x, pts_y
+
+                            profiles = []
+                            # type0 lift (bottom->top)
+                            p_lift_0 = build_profile(ZD)
+                            profiles.append((p_lift_0, 'type0 lift'))
+                            # type0 sink (top->bottom): reverse positions and times so motion starts at top
+                            if p_lift_0[0] and p_lift_0[1]:
+                                total0 = p_lift_0[0][-1]
+                                times_rev0 = [total0 - t for t in reversed(p_lift_0[0])]
+                                pos_rev0 = list(reversed(p_lift_0[1]))
+                                profiles.append(((times_rev0, pos_rev0), 'type0 sink'))
+                            # type1 lift
+                            p_lift_1 = build_profile(ZW)
+                            profiles.append((p_lift_1, 'type1 lift'))
+                            # type1 sink (top->bottom)
+                            if p_lift_1[0] and p_lift_1[1]:
+                                total1 = p_lift_1[0][-1]
+                                times_rev1 = [total1 - t for t in reversed(p_lift_1[0])]
+                                pos_rev1 = list(reversed(p_lift_1[1]))
+                                profiles.append(((times_rev1, pos_rev1), 'type1 sink'))
+
+                            # map to PDF coords and draw
+                            default_hex = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+                            # compute effective total seconds from data (use axis tick range as minimum)
+                            max_time_in_profiles = 0.0
+                            for prof, _lbl in profiles:
+                                tvals, _p = prof
+                                if tvals:
+                                    max_time_in_profiles = max(max_time_in_profiles, max(tvals))
+                            axis_min_seconds = (num_div * 0.5) if num_div > 0 else 0.0
+                            effective_total_seconds = max(max_time_in_profiles, axis_min_seconds, 1e-6)
+                            for idx, (prof, lbl) in enumerate(profiles):
+                                times, poss = prof
+                                if not times or not poss:
+                                    continue
+                                # choose color
+                                col = None
+                                try:
+                                    if color_map and t in color_map:
+                                        col = color_map[t]
+                                except Exception:
+                                    col = None
+                                if not col:
+                                    col = default_hex[idx % len(default_hex)]
+                                rcol, gcol, bcol = tuple(int(col.lstrip('#')[i:i+2], 16) for i in (0,2,4))
+                                pdf.set_draw_color(rcol, gcol, bcol)
+                                pdf.set_line_width(0.4)
+                                # draw polyline via small segments
+                                prev = None
+                                for time_val, pos_val in zip(times, poss):
+                                    # map time to x using data-driven scale into axis_width
+                                    frac = min(max(time_val / effective_total_seconds, 0.0), 1.0)
+                                    x = axis_x + frac * axis_width
+                                    # map pos to y
+                                    y = axis_bottom - (pos_val * scale)
+                                    if prev is not None:
+                                        pdf.line(prev[0], prev[1], x, y)
+                                    prev = (x, y)
+                            # restore color
+                            pdf.set_draw_color(0,0,0)
+                except Exception:
+                    pass
+        except Exception:
             pass
 
 
@@ -1757,9 +2064,36 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.set_font('Arial', 'B', 9)
     pdf.cell(0, 6, 'Solver Information', 0, 1)
     pdf.set_font('Arial', '', 8)
+    # Yritä lukea Phase 2 status-tiedosto (ensin), sitten Phase 1; jos ei löydy, käytä fallback-heuristiikkaa
+    solver_status_text = "Status: Unknown"
+    try:
+        import json
+        phase2_status = os.path.join(output_dir, 'cp_sat', 'cp_sat_phase2_status.json')
+        phase1_status = os.path.join(output_dir, 'cp_sat', 'cp_sat_phase1_status.json')
+        if os.path.exists(phase2_status):
+            with open(phase2_status, 'r') as fh:
+                s = json.load(fh)
+                solver_status_text = f"Status: {s.get('status_name', 'UNKNOWN')} (Phase 2)"
+        elif os.path.exists(phase1_status):
+            with open(phase1_status, 'r') as fh:
+                s = json.load(fh)
+                solver_status_text = f"Status: {s.get('status_name', 'UNKNOWN')} (Phase 1)"
+        else:
+            # Fallback: jos konfliktit löytyvät, merkitse INFEASIBLE; jos hoist_schedule löytyy, merkitse SOLUTION FOUND
+            conflicts = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_conflicts.csv')
+            hoist = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv')
+            if os.path.exists(conflicts):
+                solver_status_text = 'Status: INFEASIBLE (conflicts reported)'
+            elif os.path.exists(hoist):
+                solver_status_text = 'Status: SOLUTION FOUND (heuristic)'
+            else:
+                solver_status_text = 'Status: No solver output found'
+    except Exception:
+        solver_status_text = 'Status: Unknown (error reading status file)'
+
     pdf.multi_cell(0, 5, 
         "Optimization engine: Google OR-Tools CP-SAT\n"
-        "Status: FEASIBLE solution found\n"
+        f"{solver_status_text}\n"
         f"Total makespan: {metrics['makespan_seconds']} seconds")
     
     # Tallenna PDF

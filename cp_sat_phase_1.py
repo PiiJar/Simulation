@@ -517,6 +517,20 @@ class CpSatPhase1Optimizer:
         status_name = self.solver.StatusName(status)
         print(f"6. Ratkaisu valmis -> {solve_time:.2f}s, kokonaiskesto {time.time() - t_all:.2f}s")
         print(f"   CP-SAT Phase 1 Status: {status_name}")
+        # Kirjoita status-tiedosto cp_sat-kansioon, jotta raportit voivat lukea tarkan tilan
+        try:
+            import json
+            cp_sat_dir = os.path.join(self.output_dir, "cp_sat")
+            os.makedirs(cp_sat_dir, exist_ok=True)
+            status_path = os.path.join(cp_sat_dir, "cp_sat_phase1_status.json")
+            with open(status_path, "w") as fh:
+                json.dump({
+                    "status_name": str(status_name),
+                    "status_code": int(status),
+                    "solve_time_seconds": float(solve_time)
+                }, fh)
+        except Exception:
+            pass
         
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
             return self.create_result_dataframe()

@@ -966,6 +966,22 @@ class CpSatPhase2Optimizer:
 
         print("CP-SAT Vaihe 2: ratkaisu löytyi")
 
+        # Kirjoita status-tiedosto cp_sat-kansioon, jotta raportit voivat lukea tarkan tilan
+        try:
+            import json, time
+            cp_sat_dir = os.path.join(self.output_dir, "cp_sat")
+            os.makedirs(cp_sat_dir, exist_ok=True)
+            status_path = os.path.join(cp_sat_dir, "cp_sat_phase2_status.json")
+            # Yritä hakea walltime jos saatavilla (CpSolver ei anna suoraan), tallenna oletuksena 0
+            with open(status_path, "w") as fh:
+                json.dump({
+                    "status_name": str(status_name),
+                    "status_code": int(status),
+                    "walltime_seconds": float(getattr(self.solver, '_walltime', 0) or 0)
+                }, fh)
+        except Exception:
+            pass
+
         # Post-validate that there are no overlaps per transporter
         violations = self._validate_transporter_no_overlap()
         if violations:
