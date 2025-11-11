@@ -583,6 +583,23 @@ class CpSatPhase2Optimizer:
         Huom: konservatiivinen approksimaatio – tarkistetaan vain from/to päätepisteiden
         etäisyydet, ei koko liikeradan lähentymistä.
         """
+        # Aikamarginaali sekunteina (perusmarginaali). Oletus 3 s.
+        import math  # käytetään dynaamisen marginaalin pyöristyksessä
+        try:
+            avoid_time_margin = int(float(os.getenv("CPSAT_PHASE2_AVOID_TIME_MARGIN_SEC", "3")))
+        except Exception:
+            avoid_time_margin = 3
+        avoid_time_margin = max(0, avoid_time_margin)
+
+        # Dynaaminen lisämarginaali: skaalataan lähellä olevan "yhteisen alueen" pituudella (mm)
+        # enable: CPSAT_PHASE2_AVOID_DYNAMIC_ENABLE in {1,true,yes,on}
+        # kerroin: CPSAT_PHASE2_AVOID_DYNAMIC_PER_MM_SEC (sec/mm), esim. 0.002 -> 2 s / 1000 mm
+        dyn_enable = str(os.getenv("CPSAT_PHASE2_AVOID_DYNAMIC_ENABLE", "0")).strip().lower() in ("1", "true", "yes", "on")
+        try:
+            dyn_per_mm_sec = float(os.getenv("CPSAT_PHASE2_AVOID_DYNAMIC_PER_MM_SEC", "0"))
+        except Exception:
+            dyn_per_mm_sec = 0.0
+
         # Kerää Avoid-arvot
         avoid_by_t: Dict[int, int] = {}
         if "Transporter_id" in self.transporters_df.columns:
@@ -637,13 +654,23 @@ class CpSatPhase2Optimizer:
                     return not (max1 + limit <= min2 or max2 + limit <= min1)
 
                 if segments_overlap(x_from1, x_to1, x_from2, x_to2, avoid_limit):
-                    # Pakota ei-päällekkäisyys marginaalilla (1 sekunti)
-                    margin = 1  # sekuntia
+                    # Laske lähelläolovälin pituus (mm) käyttäen avoid_limit-laajennettuja välejä
+                    min1, max1 = (x_from1, x_to1) if x_from1 <= x_to1 else (x_to1, x_from1)
+                    min2, max2 = (x_from2, x_to2) if x_from2 <= x_to2 else (x_to2, x_from2)
+                    left = max(min1 - avoid_limit, min2 - avoid_limit)
+                    right = min(max1 + avoid_limit, max2 + avoid_limit)
+                    proximity_span_mm = max(0, int(right - left))
+                    extra_margin = 0
+                    if dyn_enable and dyn_per_mm_sec > 0.0:
+                        # Pyöristetään ylöspäin varmuuden vuoksi
+                        extra_margin = int(math.ceil(dyn_per_mm_sec * float(proximity_span_mm)))
+                    pair_margin = int(avoid_time_margin + extra_margin)
+                    # Pakota ei-päällekkäisyys parikohtaisella marginaalilla
                     i_before = self.model.NewBoolVar(f"avoid_t{t1}_b{b1}s{s1}_vs_t{t2}_b{b2}s{s2}")
                     # i ennen j, marginaalilla
-                    self.model.Add(start2 >= end1 + margin).OnlyEnforceIf(i_before)
+                    self.model.Add(start2 >= end1 + pair_margin).OnlyEnforceIf(i_before)
                     # j ennen i, marginaalilla
-                    self.model.Add(start1 >= end2 + margin).OnlyEnforceIf(i_before.Not())
+                    self.model.Add(start1 >= end2 + pair_margin).OnlyEnforceIf(i_before.Not())
 
     def _validate_transporter_no_overlap(self) -> List[Dict[str, int]]:
         """Validate after solving that no two tasks of the same transporter overlap,
@@ -690,9 +717,22 @@ class CpSatPhase2Optimizer:
         """Validate after solving that different transporters do not operate too close simultaneously.
 
         Uses the same conservative segment overlap heuristic as in the model: if the X-intervals of
-        the two tasks overlap within avoid_limit and the time intervals overlap, it's a violation.
+        the two tasks overlap within avoid_limit and the time intervals are closer than a configured
+        time margin, it's a violation.
 
         Returns a list of violations (empty if none)."""
+        # Sama aikamarginaali kuin mallissa (perusmarginaali) + mahdollinen dynaaminen lisä
+        try:
+            avoid_time_margin = int(float(os.getenv("CPSAT_PHASE2_AVOID_TIME_MARGIN_SEC", "3")))
+        except Exception:
+            avoid_time_margin = 3
+        avoid_time_margin = max(0, avoid_time_margin)
+        dyn_enable = str(os.getenv("CPSAT_PHASE2_AVOID_DYNAMIC_ENABLE", "0")).strip().lower() in ("1", "true", "yes", "on")
+        try:
+            dyn_per_mm_sec = float(os.getenv("CPSAT_PHASE2_AVOID_DYNAMIC_PER_MM_SEC", "0"))
+        except Exception:
+            dyn_per_mm_sec = 0.0
+        import math
         def x(station: int) -> float:
             return float(self.station_positions.get(int(station), 0.0))
 
@@ -729,8 +769,19 @@ class CpSatPhase2Optimizer:
                 avoid_limit = float(max(avoid_by_t.get(t1, 0), avoid_by_t.get(t2, 0)))
                 if avoid_limit <= 0:
                     continue
-                time_overlap = (s_start < t_end) and (t_start < s_end)
-                if not time_overlap:
+                # Laske parikohtainen marginaali (perus + dynaaminen lisä lähialueen pituuden perusteella)
+                min1, max1 = (x1_from, x1_to) if x1_from <= x1_to else (x1_to, x1_from)
+                min2, max2 = (x2_from, x2_to) if x2_from <= x2_to else (x2_to, x2_from)
+                left = max(min1 - avoid_limit, min2 - avoid_limit)
+                right = min(max1 + avoid_limit, max2 + avoid_limit)
+                proximity_span_mm = max(0, int(right - left))
+                extra_margin = 0
+                if dyn_enable and dyn_per_mm_sec > 0.0:
+                    extra_margin = int(math.ceil(dyn_per_mm_sec * float(proximity_span_mm)))
+                pair_margin = int(avoid_time_margin + extra_margin)
+                # Ajan osalta tarkistetaan marginaalilla: jos tehtävät ovat lähempänä kuin pair_margin, tulkitaan riskiksi.
+                too_close_in_time = not ((s_end + pair_margin) <= t_start or (t_end + pair_margin) <= s_start)
+                if not too_close_in_time:
                     continue
                 if segments_overlap(x1_from, x1_to, x2_from, x2_to, avoid_limit):
                     violations.append({
@@ -738,7 +789,8 @@ class CpSatPhase2Optimizer:
                         "Start1": int(s_start), "End1": int(s_end),
                         "T2": int(t2), "B2": int(b2), "S2": int(s2),
                         "Start2": int(t_start), "End2": int(t_end),
-                        "Avoid_Limit": int(avoid_limit)
+                        "Avoid_Limit": int(avoid_limit),
+                        "Time_Margin": int(pair_margin)
                     })
         return violations
 
