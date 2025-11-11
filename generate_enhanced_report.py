@@ -19,6 +19,12 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from PIL import Image
 
+# Standard body text font used across the report
+BODY_FONT_NAME = 'Arial'
+BODY_FONT_SIZE = 11
+# Vertical spacing (mm) to leave after chapter title before body text on every page
+CHAPTER_BODY_TOP_MARGIN = 6
+
 class EnhancedSimulationReport(FPDF):
     """Laajennettu FPDF-luokka tyylikkäämpään raportointiin"""
     
@@ -55,8 +61,11 @@ class EnhancedSimulationReport(FPDF):
         self.set_font('Arial', 'B', 14)
         self.set_fill_color(41, 128, 185)  # Sininen tausta
         self.set_text_color(255, 255, 255)
+        # Draw title bar
         self.cell(0, 10, title, 0, 1, 'L', 1)
-        self.ln(4)
+        # Ensure consistent vertical spacing after the title bar before body text
+        # Use CHAPTER_BODY_TOP_MARGIN (mm)
+        self.ln(CHAPTER_BODY_TOP_MARGIN)
         self.set_text_color(0, 0, 0)
         
     def section_title(self, title):
@@ -115,7 +124,7 @@ def calculate_kpi_metrics(output_dir):
     
     # Lue tiedostot
     batch_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv'))
-    hoist_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
+    transporter_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
     station_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_station_schedule.csv'))
     transporter_phases = pd.read_csv(os.path.join(output_dir, 'reports', 'transporter_phases.csv'))
     
@@ -608,7 +617,7 @@ def _load_transporter_physics(output_dir):
         return None
 
     tid_col = None
-    for key in ['Transporter_id', 'Transporter', 'Id', 'Hoist', 'Hoist_id']:
+    for key in ['Transporter_id', 'Transporter', 'Id']:
         if key in df.columns:
             tid_col = key
             break
@@ -653,7 +662,82 @@ def _load_transporter_physics(output_dir):
     return sorted(rows, key=lambda x: x['Transporter'])
 
 
-def add_per_transporter_physics_pages(output_dir, pdf):
+def load_transporter_info(output_dir):
+    """Load basic transporter info (id, model, min/max stations, start pos, avoid)"""
+    import pandas as pd
+    rows = []
+    candidates = [
+        os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters _task_areas.csv'),
+    ]
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if not path:
+        return []
+
+    df = pd.read_csv(path)
+    # Normalize transporter id column
+    tid_col = None
+    for key in ['Transporter_id', 'Transporter', 'Id']:
+        if key in df.columns:
+            tid_col = key
+            break
+    if tid_col is None:
+        df['Transporter'] = list(range(1, len(df) + 1))
+        tid_col = 'Transporter'
+
+    for _, r in df.iterrows():
+        try:
+            t = int(r[tid_col])
+        except Exception:
+            continue
+        row = {'Transporter': t}
+        for col in ['Model', 'Min_Lift_Station', 'Max_Lift_Station', 'Min_Sink_Station', 'Max_Sink_Station', 'Avoid']:
+            if col in r.index:
+                row[col] = r.get(col)
+        rows.append(row)
+
+    # Merge start positions if present
+    spath = os.path.join(output_dir, 'initialization', 'transporters_start_positions.csv')
+    if os.path.exists(spath):
+        sp = pd.read_csv(spath)
+        sp_map = {int(r['Transporter']): int(r['Start_station']) for _, r in sp.iterrows()}
+        for r in rows:
+            r['Start_station'] = sp_map.get(r['Transporter'], None)
+
+    return sorted(rows, key=lambda x: x['Transporter'])
+
+
+def assign_transporter_colors(transporters):
+    """Deterministically assign hex colors to transporter ids.
+
+    Returns dict {transporter_id: '#RRGGBB'}
+    """
+    # Use matplotlib tab20 colormap for up to 20 distinct colors, fallback to generated colors
+    try:
+        import matplotlib.cm as cm
+        import matplotlib.colors as mcolors
+        cmap = cm.get_cmap('tab20')
+        ids = [int(t['Transporter']) for t in transporters]
+        ids_sorted = sorted(ids)
+        n = max(len(ids_sorted), 1)
+        color_map = {}
+        for i, tid in enumerate(ids_sorted):
+            rgba = cmap(i % 20)
+            hexc = mcolors.to_hex(rgba)
+            color_map[tid] = hexc
+        return color_map
+    except Exception:
+        # Fallback: generate deterministic colors via simple hash
+        color_map = {}
+        base_colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#e74c3c', '#34495e']
+        ids = [int(t['Transporter']) for t in transporters]
+        for i, tid in enumerate(sorted(ids)):
+            color_map[tid] = base_colors[i % len(base_colors)]
+        return color_map
+
+
+def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
     """Add one PDF page per transporter with a simple vertical bar:
     - Total height (full bar)
     - Bottom left half: slow zone for dry stations (type 0)
@@ -679,74 +763,151 @@ def add_per_transporter_physics_pages(output_dir, pdf):
         Z_fast_end = max(0.0, ZT - ZE)  # height below top slow start
 
         pdf.add_page()
-        pdf.chapter_title(f'Transporter T{t} - Physics Profile')
-        pdf.set_font('Arial', '', 10)
-        pdf.multi_cell(0, 6,
+        pdf.chapter_title(f'Transporter {t} - Physics Profile')
+        # (Transporter color swatch removed per request - no top-right color box)
+        # Render description (left-aligned). The Z bar will be drawn below the text,
+        # also left-aligned to keep the page compact.
+        pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
+        description = (
             'Single vertical bar shows configured vertical movement profile. '
             'Left half bottom = slow zone at DRY stations (type 0). '
             'Right half bottom = slow zone at WET stations (type 1). '
-            'Top full-width segment = slow zone near top end.')
-        pdf.ln(3)
+            'Top full-width segment = slow zone near top end.'
+        )
+        text_width_full = pdf.w - pdf.l_margin - pdf.r_margin
+        pdf.set_xy(pdf.l_margin, pdf.get_y())
+        pdf.multi_cell(text_width_full, 6, description)
+        pdf.ln(2)
 
-        # Drawing area
-        left = pdf.l_margin + 20
-        top = pdf.get_y() + 6
-        bar_width = 30
-        bar_height = min(120, pdf.h - top - 60)  # keep within page
+        # Now draw the narrow Z-profile bar below the description, left-aligned
+        left = pdf.l_margin + 2
+        bar_width = 12
+        top = pdf.get_y() + 4
+        max_bar_height = max(100, pdf.h * 0.45)
+        bar_height = min(max_bar_height, pdf.h - top - 70)
         scale = bar_height / ZT if ZT > 0 else 1.0
 
-        # Bar border
+        # Determine fill color from color_map if available
+        fill_color = top_color
+        if color_map and t in color_map:
+            try:
+                hexc = color_map[t]
+                rcol, gcol, bcol = tuple(int(hexc.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+                fill_color = (rcol, gcol, bcol)
+            except Exception:
+                pass
+
+        # Draw full bar filled with transporter color
         pdf.set_draw_color(*border)
-        pdf.rect(left, top, bar_width, bar_height)
+        pdf.set_fill_color(*fill_color)
+        pdf.rect(left, top, bar_width, bar_height, 'F')
+        pdf.rect(left, top, bar_width, bar_height, 'D')
 
-        # Bottom DRY slow (left half width)
-        h_dry = ZD * scale
-        if h_dry > 0:
-            pdf.set_fill_color(*dry_color)
-            pdf.rect(left, top + bar_height - h_dry, bar_width/2.0, h_dry, 'F')
+    # (Description was rendered above; continue with annotations)
 
-        # Bottom WET slow (right half width)
-        h_wet = ZW * scale
-        if h_wet > 0:
-            pdf.set_fill_color(*wet_color)
-            pdf.rect(left + bar_width/2.0, top + bar_height - h_wet, bar_width/2.0, h_wet, 'F')
+        # Restore horizontal change-point marker lines (thin black lines) without any
+        # textual annotations or legend — user did not ask to remove the lines.
+        pdf.set_draw_color(0, 0, 0)
+        # Draw thin horizontal lines at key change points: dry start, wet start, fast-end and total
+        for val in (ZD, ZW, Z_fast_end, ZT):
+            try:
+                if val is None:
+                    continue
+                y_pos = top + bar_height - (val * scale)
+                # Clip inside bar
+                if y_pos < top:
+                    y_pos = top
+                if y_pos > top + bar_height:
+                    y_pos = top + bar_height
+                # Draw a short horizontal marker starting at the bar's left edge
+                # and extending a few mm past the right edge for visibility.
+                pdf.set_line_width(0.3)
+                pdf.line(left, y_pos, left + bar_width + 4, y_pos)
+                # Draw right-side millimetre label for this marker (e.g., '300 mm')
+                try:
+                    label_val = int(round(val))
+                    label_txt = f"{label_val} mm"
+                except Exception:
+                    label_txt = ''
+                if label_txt:
+                    # Small font for the labels; don't change main cursor vertically
+                    label_x = left + bar_width + 6
+                    label_h = 4
+                    pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 2))
+                    pdf.set_text_color(0, 0, 0)
+                    pdf.set_xy(label_x, y_pos - (label_h / 2))
+                    pdf.cell(0, label_h, label_txt, ln=0, align='L')
+                    # Restore x back to left margin
+                    pdf.set_x(pdf.l_margin)
+            except Exception:
+                continue
+        pdf.set_line_width(0.0)
 
-        # Top slow (full width from Z_fast_end to Z_total)
-        if ZT > Z_fast_end:
-            h_top = (ZT - Z_fast_end) * scale
-            pdf.set_fill_color(*top_color)
-            pdf.rect(left, top + bar_height - (ZT * scale), bar_width, h_top, 'F')
+        # Draw coordinate axes to the right of the Z bar (no functions plotted yet)
+        try:
+            # Move axes further right from the Z bar and use full available width to the
+            # right margin for the horizontal axis.
+            axis_x = left + bar_width + 28  # larger gap between bar and axis (mm)
+            axis_top = top
+            axis_bottom = top + bar_height
+            # Use the maximum available width up to the right margin
+            axis_width = max(40, pdf.w - pdf.r_margin - axis_x - 2)
 
-        # Labels
-        pdf.set_font('Arial', '', 9)
-        pdf.set_text_color(52, 73, 94)
-        # Total height label
-        pdf.text(left + bar_width + 6, top + 3, f'Z_total: {int(ZT)} mm')
-        # Dry/Wet labels near bottom
-        pdf.text(left + 1, top + bar_height + 6, f'Dry slow: {int(ZD)} mm')
-        pdf.text(left + bar_width/2.0 + 1, top + bar_height + 6, f'Wet slow: {int(ZW)} mm')
-        # Top slow label near its start
-        y_top_start = top + bar_height - (Z_fast_end * scale)
-        pdf.text(left + bar_width + 6, y_top_start + 2, f'Top slow: {int(ZE)} mm')
+            pdf.set_draw_color(0, 0, 0)
+            pdf.set_line_width(0.5)
+            # Vertical axis (height) aligned with Z bar
+            pdf.line(axis_x, axis_bottom, axis_x, axis_top)
 
-        # Legend
-        legend_y = top + bar_height + 14
-        pdf.set_fill_color(*dry_color)
-        pdf.rect(left, legend_y, 4, 4, 'F')
-        pdf.text(left + 6, legend_y + 4, 'Dry slow (type 0)')
-        legend_y += 6
-        pdf.set_fill_color(*wet_color)
-        pdf.rect(left, legend_y, 4, 4, 'F')
-        pdf.text(left + 6, legend_y + 4, 'Wet slow (type 1)')
-        legend_y += 6
-        pdf.set_fill_color(*top_color)
-        pdf.rect(left, legend_y, 4, 4, 'F')
-        pdf.text(left + 6, legend_y + 4, 'Top slow zone')
+            # Vertical ticks aligned with the bar's marker lines
+            for val in (ZD, ZW, Z_fast_end, ZT):
+                try:
+                    if val is None:
+                        continue
+                    y_pos = top + bar_height - (val * scale)
+                    if y_pos < top:
+                        y_pos = top
+                    if y_pos > top + bar_height:
+                        y_pos = top + bar_height
+                    # small tick to the right of the axis (no label; heights are on Z bar)
+                    pdf.line(axis_x, y_pos, axis_x + 3, y_pos)
+                except Exception:
+                    continue
+
+            # Horizontal axis (time) at axis_bottom, 0.5s divisions
+            pdf.set_line_width(0.5)
+            pdf.line(axis_x, axis_bottom, axis_x + axis_width, axis_bottom)
+            # choose mm per 0.5s
+            mm_per_half_sec = 10
+            # limit by axis_width
+            num_div = int(axis_width // mm_per_half_sec)
+            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 2))
+            for i in range(num_div + 1):
+                x_tick = axis_x + i * mm_per_half_sec
+                pdf.line(x_tick, axis_bottom, x_tick, axis_bottom - 3)
+                # label every tick with time in seconds
+                t_sec = i * 0.5
+                txt = f"{t_sec:.1f}s"
+                pdf.set_xy(x_tick - 6, axis_bottom + 1)
+                pdf.cell(12, 4, txt, ln=0, align='C')
+                pdf.set_x(pdf.l_margin)
+
+            # Axis titles
+            pdf.set_xy(axis_x, axis_top - 6)
+            pdf.cell(0, 4, 'Height (mm)', ln=0)
+            pdf.set_xy(axis_x + axis_width/2 - 10, axis_bottom + 6)
+            pdf.cell(0, 4, 'Time (s)', ln=0)
+            pdf.set_line_width(0.0)
+        except Exception:
+            # don't fail the whole page if axes drawing fails
+            pass
 
 
-def create_transporter_temporal_load_chart(output_dir, reports_dir):
-    """Luo ajallinen kuormituskaavio nostimille (5 min ikkunat)"""
-    hoist_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
+def create_transporter_temporal_load_chart(output_dir, reports_dir, color_map=None):
+    """Luo ajallinen kuormituskaavio nostimille (5 min ikkunat)
+
+    color_map: optional dict {transporter_id: hexcolor} to ensure consistent colors
+    """
+    transporter_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
     batch_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv'))
     
     # Makespan
@@ -760,7 +921,7 @@ def create_transporter_temporal_load_chart(output_dir, reports_dir):
     time_windows = [(i * window_size, (i + 1) * window_size) for i in range(num_windows)]
     
     # Hae uniikit transporterit
-    transporters = sorted(hoist_schedule['Transporter'].unique())
+    transporters = sorted(transporter_schedule['Transporter'].unique())
     
     # Laske kuormitus per transporter per aikaikkuna
     load_data = {t: [] for t in transporters}
@@ -768,7 +929,7 @@ def create_transporter_temporal_load_chart(output_dir, reports_dir):
     for start_time, end_time in time_windows:
         for transporter in transporters:
             # Suodata kyseisen transporterin tehtävät
-            t_tasks = hoist_schedule[hoist_schedule['Transporter'] == transporter]
+            t_tasks = transporter_schedule[transporter_schedule['Transporter'] == transporter]
             
             # Laske kuinka paljon aikaa on käytetty tässä ikkunassa (ei-idle)
             # Idle = Phase 0, Productive = Phase != 0
@@ -778,7 +939,7 @@ def create_transporter_temporal_load_chart(output_dir, reports_dir):
                 task_start = task['TaskStart']
                 task_end = task['TaskEnd']
                 
-                # Hoist_schedule ei sisällä Phase-saraketta, joten lasketaan kaikki tehtävät työksi
+                # Transporter schedule ei sisällä Phase-saraketta, joten lasketaan kaikki tehtävät työksi
                 # (idle-aika on välejä tehtävien välillä, ei erillisiä rivejä)
                 
                 # Laske overlap ikkunan kanssa
@@ -798,10 +959,18 @@ def create_transporter_temporal_load_chart(output_dir, reports_dir):
     # X-akselin arvot (minuutteina)
     x_values = [i * 5 for i in range(num_windows)]
     
-    # Piirrä jokainen transporter omalla viivalla (ei punaista)
-    colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c']
+    # Piirrä jokainen transporter omalla viivalla; värit lukitaan color_map:stä jos annettu
+    default_colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#e74c3c', '#34495e']
     for idx, transporter in enumerate(transporters):
-        color = colors[idx % len(colors)]
+        color = None
+        try:
+            t_int = int(transporter)
+            if color_map and t_int in color_map:
+                color = color_map[t_int]
+        except Exception:
+            pass
+        if color is None:
+            color = default_colors[idx % len(default_colors)]
         ax.plot(x_values, load_data[transporter], marker='o', label=f'Transporter {transporter}', 
                 color=color, linewidth=2, markersize=4)
     
@@ -819,26 +988,32 @@ def create_transporter_temporal_load_chart(output_dir, reports_dir):
     return chart_path
 
 
-def create_transporter_task_distribution_chart(output_dir, reports_dir):
+def create_transporter_task_distribution_chart(output_dir, reports_dir, color_map=None):
     """Luo tehtävien jakautumiskaavio nostimien kesken (vaakapalkki)"""
-    hoist_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
+    transporter_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
     
     # Laske tehtävien määrä per transporter
-    task_counts = hoist_schedule.groupby('Transporter').size()
+    task_counts = transporter_schedule.groupby('Transporter').size()
     total_tasks = task_counts.sum()
     
     # Laske prosentit
     task_percentages = (task_counts / total_tasks * 100).sort_index()
     
-    # Värit (ei punaista, käytä eri värejä)
-    colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c']
+    # Värit (ensisijaisesti color_map jos annettu)
+    default_colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#e74c3c', '#34495e']
     
     # Luo vaakapalkki-kaavio (kapeampi)
     fig, ax = plt.subplots(figsize=(12, 1.2))
     
     left = 0
     for idx, (transporter, percentage) in enumerate(task_percentages.items()):
-        color = colors[idx % len(colors)]
+        try:
+            t_int = int(transporter)
+            color = color_map.get(t_int) if color_map else None
+        except Exception:
+            color = None
+        if not color:
+            color = default_colors[idx % len(default_colors)]
         ax.barh(0, percentage, left=left, height=0.6, color=color, 
                 label=f'Transporter {transporter}: {percentage:.1f}%')
         
@@ -928,8 +1103,11 @@ def create_station_usage_chart(output_dir, reports_dir):
     return chart_path
 
 
-def create_transporter_batch_occupation_chart(output_dir, reports_dir):
-    """Luo kaavio nostimien keskimääräisestä eräkohtaisesta varausajasta"""
+def create_transporter_batch_occupation_chart(output_dir, reports_dir, color_map=None):
+    """Luo kaavio nostimien keskimääräisestä eräkohtaisesta varausajasta
+
+    color_map: optional dict {transporter_id: hexcolor}
+    """
     # Käytä transporters_movement.csv, joka sisältää kaikki vaiheet (0-6)
     movement_file = os.path.join(output_dir, 'logs', 'transporters_movement.csv')
     
@@ -957,36 +1135,64 @@ def create_transporter_batch_occupation_chart(output_dir, reports_dir):
     
     # Järjestä transporterit
     avg_occupation = avg_occupation.sort_values('Transporter')
-    
+
+def create_transporter_batch_occupation_chart(output_dir, reports_dir, color_map=None):
+    """Luo kaavio nostimien keskimääräisestä eräkohtaisesta varausajasta
+
+    color_map: optional dict {transporter_id: hexcolor}
+    """
+    # Laske ja piirrä kaavio uudelleen tässä funktiossa
+    movement_file = os.path.join(output_dir, 'logs', 'transporters_movement.csv')
+    if not os.path.exists(movement_file):
+        print(f"[WARN] Movement file not found: {movement_file}")
+        return None
+
+    movements = pd.read_csv(movement_file)
+    movements['PhaseDuration'] = movements['End_Time'] - movements['Start_Time']
+    active_phases = movements[movements['Phase'].isin([1, 2, 3, 4])].copy()
+    batch_occupation = active_phases.groupby(['Transporter', 'Batch'])['PhaseDuration'].sum().reset_index()
+    batch_occupation.rename(columns={'PhaseDuration': 'TotalOccupationTime'}, inplace=True)
+    avg_occupation = batch_occupation.groupby('Transporter')['TotalOccupationTime'].mean().reset_index()
+    avg_occupation.rename(columns={'TotalOccupationTime': 'AvgOccupationPerBatch'}, inplace=True)
+    avg_occupation['AvgOccupationPerBatch_min'] = avg_occupation['AvgOccupationPerBatch'] / 60
+    avg_occupation = avg_occupation.sort_values('Transporter')
+
     # Luo pylväskaavio
     fig, ax = plt.subplots(figsize=(10, 5))
-    
     transporters = [f"Transporter {int(t)}" for t in avg_occupation['Transporter']]
     occupation_times = avg_occupation['AvgOccupationPerBatch_min'].values
-    
-    # Käytä samoja värejä kuin muissa nostin-kaavioissa
-    colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c']
-    bar_colors = [colors[i % len(colors)] for i in range(len(transporters))]
-    
+
+    # Värit
+    default_colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#e74c3c', '#34495e']
+    bar_colors = []
+    for i, t in enumerate(transporters):
+        try:
+            tid = int(t.split()[-1]) if isinstance(t, str) and ' ' in t else int(t)
+        except Exception:
+            tid = None
+        if tid and color_map and tid in color_map:
+            bar_colors.append(color_map[tid])
+        else:
+            bar_colors.append(default_colors[i % len(default_colors)])
+
     bars = ax.bar(transporters, occupation_times, color=bar_colors, edgecolor='black', linewidth=0.8)
-    
+
     # Lisää arvot palkkien päälle
     for bar, value in zip(bars, occupation_times):
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., height,
                 f'{value:.1f}',
                 ha='center', va='bottom', fontsize=10, fontweight='bold')
-    
+
     ax.set_xlabel('')
     ax.set_ylabel('min', fontsize=12)
-    # Poistetaan otsikko
     ax.grid(axis='y', alpha=0.3, linestyle='--')
-    
+
     plt.tight_layout()
     chart_path = os.path.join(reports_dir, 'transporter_batch_occupation.png')
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
-    
+
     return chart_path
 
 
@@ -1040,23 +1246,57 @@ def generate_enhanced_simulation_report(output_dir):
         customer = 'Customer'
         plant = 'Plant'
     
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # Derive report timestamp from the simulation snapshot folder name when possible
+    # (so the front page shows the simulation run time, not the PDF creation time).
     folder_name = os.path.basename(os.path.abspath(output_dir))
+    timestamp = None
+    try:
+        import re
+        # Expect folder names that contain a trailing timestamp like
+        # ..._YYYY-MM-DD_HH-MM-SS (e.g. 900135_-_Factory_..._2025-11-11_14-31-12)
+        m = re.search(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", folder_name)
+        if m:
+            ts_fragment = m.group(1)  # '2025-11-11_14-31-12'
+            date_part, time_part = ts_fragment.split('_', 1)
+            # convert time dashes to colons -> '14:31:12'
+            time_part = time_part.replace('-', ':')
+            ts_dt = datetime.strptime(f"{date_part} {time_part}", '%Y-%m-%d %H:%M:%S')
+            timestamp = ts_dt.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            # Fallback: use the snapshot folder's modification time
+            mtime = os.path.getmtime(output_dir)
+            ts_dt = datetime.fromtimestamp(mtime)
+            timestamp = ts_dt.strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        # Last-resort fallback: now
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     # Laske KPI:t
     metrics = calculate_kpi_metrics(output_dir)
-    
-    # Luo kaaviot
+
+    # Lataa transporterien metatiedot ja määritä värit
+    transporters_info = load_transporter_info(output_dir)
+    color_map = assign_transporter_colors(transporters_info)
+    # Tallenna color map reports-kansioon
+    os.makedirs(reports_dir, exist_ok=True)
+    try:
+        import json
+        with open(os.path.join(reports_dir, 'transporter_colors.json'), 'w', encoding='utf-8') as jf:
+            json.dump(color_map, jf, indent=2)
+    except Exception:
+        pass
+
+    # Luo kaaviot (pass color_map jotta värit lukittuvat koko raporttiin)
     # Piirakkakaaviot luodaan jo aiemmin, käytä niitä
     transporter_pie_charts = []
-    for i in range(1, 10):  # Etsi transporterit 1-9
+    for i in range(1, 30):  # Etsi transporterit 1-29
         pie_path = os.path.join(reports_dir, f'transporter_{i}_phases_pie.png')
         if os.path.exists(pie_path):
             transporter_pie_charts.append(pie_path)
-    
-    temporal_load_chart = create_transporter_temporal_load_chart(output_dir, reports_dir)
-    task_distribution_chart = create_transporter_task_distribution_chart(output_dir, reports_dir)
-    batch_occupation_chart = create_transporter_batch_occupation_chart(output_dir, reports_dir)
+
+    temporal_load_chart = create_transporter_temporal_load_chart(output_dir, reports_dir, color_map=color_map)
+    task_distribution_chart = create_transporter_task_distribution_chart(output_dir, reports_dir, color_map=color_map)
+    batch_occupation_chart = create_transporter_batch_occupation_chart(output_dir, reports_dir, color_map=color_map)
     station_chart = create_station_usage_chart(output_dir, reports_dir)
     leadtime_chart = create_batch_leadtime_chart(output_dir, reports_dir)
     vertical_speed_chart = create_vertical_speed_change_chart(output_dir, reports_dir)
@@ -1120,13 +1360,13 @@ def generate_enhanced_simulation_report(output_dir):
     
     # Lyhyt kuvaus - sijoita kuvan alle
     pdf.set_y(image_end_y + 8)
-    pdf.set_font('Arial', '', 9)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.set_text_color(52, 73, 94)
     
     # Algoritmin kuvaus
     pdf.set_font('Arial', 'B', 9)
     pdf.cell(0, 5, 'Two-Phase CP-SAT Optimization Algorithm', ln=1, align='L')
-    pdf.set_font('Arial', '', 9)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     algo_desc = (
         "Phase 1: Batch-level scheduling optimizes batch entry times and station assignments. "
         "Phase 2: Stage-level optimization schedules individual treatment stages, transporter movements, "
@@ -1138,7 +1378,7 @@ def generate_enhanced_simulation_report(output_dir):
     # Rajoitukset
     pdf.set_font('Arial', 'B', 9)
     pdf.cell(0, 5, 'Simulation Limitations', ln=1, align='L')
-    pdf.set_font('Arial', '', 9)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     limitations = (
         "This simulation does not account for: manual loading/unloading times, human-induced delays, "
         "equipment failures, quality control inspections, or setup/changeover times between batches. "
@@ -1156,7 +1396,7 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.add_page()
     pdf.chapter_title('Executive Summary')
     
-    pdf.set_font('Arial', '', 11)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6, 
         "Key performance indicators from the simulation run. "
         "These metrics provide a high-level overview of production efficiency, "
@@ -1227,7 +1467,7 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.ln(5)
     
     # Lyhyt yhteenveto
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     summary_text = (
         f"The simulation successfully scheduled {metrics['total_batches']} batches with a total production time "
         f"of {metrics['makespan_formatted']}. "
@@ -1244,30 +1484,22 @@ def generate_enhanced_simulation_report(output_dir):
     
     pdf.multi_cell(0, 6, summary_text)
     
-    # ===== PHYSICS SETTINGS (after Executive Summary) =====
-    pdf.add_page()
-    pdf.chapter_title('Transporter Physics Settings')
-    pdf.section_title('Vertical speed change points')
-    pdf.set_font('Arial', '', 10)
-    pdf.multi_cell(0, 6,
-        "Simple vertical bars per transporter showing change points in vertical movement speed. "
-        "Bottom and top gray segments indicate slow-speed zones; the blue middle segment indicates fast-speed zone. "
-        "Markers on the bars show the exact heights where speed changes.")
-    pdf.ln(3)
-    if vertical_speed_chart and os.path.exists(vertical_speed_chart):
-        w = pdf.w - pdf.l_margin - pdf.r_margin
-        with Image.open(vertical_speed_chart) as img:
-            img_w, img_h = img.size
-            h = (img_h / img_w) * w
-        pdf.image(vertical_speed_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
-        pdf.ln(h + 6)
+    # ===== PER-TRANSPORTER PAGES =====
+    # Color mapping is already written to reports/transporter_colors.json; per-transporter
+    # pages will follow. Legend page removed — colors are now persisted in JSON only.
+    # Lisää per-transporter -sivut (physics + summary swatch)
+    try:
+        add_per_transporter_physics_pages(output_dir, pdf, color_map=color_map)
+    except TypeError:
+        # Fallback: call without color_map if function signature differs
+        add_per_transporter_physics_pages(output_dir, pdf)
 
     # ===== PERFORMANCE ANALYSIS =====
     pdf.add_page()
     pdf.chapter_title('Performance Analysis - Transporters')
     
     pdf.section_title('Transporter Utilization')
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6, 
         "Transporter utilization shows the percentage of time each transporter spent on different phases. "
         "Phases include: Idle (0), Lifting (1), Moving (2-5), and Sinking (6). "
@@ -1310,7 +1542,7 @@ def generate_enhanced_simulation_report(output_dir):
     
     # Ajallinen kuormitusanalyysi
     pdf.section_title('Transporter Load Over Time')
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6,
         "This chart shows how transporter load varies over time in 5-minute windows. "
         "Peaks in the graph indicate periods of high utilization where transporters are heavily utilized. "
@@ -1327,7 +1559,7 @@ def generate_enhanced_simulation_report(output_dir):
     
     # Tehtävien jakautuminen nostimien kesken
     pdf.section_title('Task Distribution')
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6,
         "The chart below shows how tasks are distributed across transporters. "
         "Uneven distribution may indicate imbalanced workload allocation.")
@@ -1341,10 +1573,10 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.image(task_distribution_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
         pdf.ln(h + 10)
 
-    # --- Hoist per-batch time analysis ---
+    # --- Transporter per-batch time analysis ---
     pdf.add_page()
     pdf.section_title('Transporter Occupation by Batches')
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6,
         "This chart shows the average active time each transporter spends per batch. "
         "The calculation includes phases 1-4: Move to lifting station, Lifting, Move to sinking station, and Sinking. "
@@ -1362,7 +1594,7 @@ def generate_enhanced_simulation_report(output_dir):
     # --- Station Usage and following sections start on a new page ---
     pdf.add_page()
     pdf.section_title('Station Usage Frequency')
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6,
         "This chart shows how many batches visited each station. Stations with high visit counts may be "
         "potential bottlenecks and candidates for capacity expansion or process optimization.")
@@ -1382,7 +1614,7 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.chapter_title('Batch Analysis')
     
     pdf.section_title('Batch Lead Times')
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6,
         "Lead time represents the total time from a batch entering the line to exiting. "
         "Variations in lead time can indicate differences in treatment programs or resource contention.")
@@ -1437,7 +1669,7 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.add_page()
     pdf.chapter_title('Recommendations & Insights')
     
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     
     # Bottleneck-analyysi
     pdf.section_title('Potential Bottlenecks')
