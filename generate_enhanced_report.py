@@ -555,26 +555,203 @@ def create_vertical_speed_change_chart(output_dir, reports_dir):
         for y in [r['Z_slow_dry'], r['Z_fast_end']]:
             ax.plot([x - bar_width/2 - 0.1, x + bar_width/2 + 0.1], [y, y], color='black', linewidth=1)
 
-        # Label transporter
-        ax.text(x, -0.05 * max_height, f"T{r['Transporter']}", ha='center', va='top', fontsize=9)
-
         # Annotate heights (mm) near change points
-        ax.text(x + bar_width/2 + 0.15, r['Z_slow_dry'], f"{int(r['Z_slow_dry'])} mm", va='center', fontsize=8)
-        ax.text(x + bar_width/2 + 0.15, r['Z_fast_end'], f"{int(r['Z_fast_end'])} mm", va='center', fontsize=8)
+        # Nudge labels slightly above helper lines so they don't overlap
+        label_offset = max(5.0, 0.01 * max_height)
+        ax.text(
+            x + bar_width/2 + 0.15,
+            r['Z_slow_dry'] + label_offset,
+            f"{int(r['Z_slow_dry'])} mm",
+            va='bottom', fontsize=8
+        )
+        ax.text(
+            x + bar_width/2 + 0.15,
+            r['Z_fast_end'] + label_offset,
+            f"{int(r['Z_fast_end'])} mm",
+            va='bottom', fontsize=8
+        )
 
     ax.set_xlim(-1, n)
     ax.set_ylim(0, max_height * 1.05 if max_height > 0 else 1)
-    ax.set_ylabel('Z (mm)')
-    ax.set_title('Vertical movement speed change points (lift profile)')
+    # Remove title and ylabel to match lower plot (they have their own labels)
+    # Disable grid completely - no vertical or horizontal lines
+    ax.grid(False)
+    ax.set_axisbelow(True)
+    
+    # CRITICAL: Remove xticks BEFORE any other axis modifications
     ax.set_xticks([])
-    ax.grid(axis='y', alpha=0.2)
+    ax.xaxis.set_ticks_position('none')
+    ax.yaxis.set_ticks_position('none')
 
-    # Legend
-    handles = [
-        patches.Patch(color=slow_color, label='Slow speed zone'),
-        patches.Patch(color=fast_color, label='Fast speed zone'),
+    # --- Vertical helper lines: seconds based on transporter vertical-motion durations ---
+    # Compute per-transporter vertical move time from transporter physics (z speeds), not from batch ExitTime.
+    max_time = 0.0
+    # Try to load transporter physics/speeds from snapshot or initialization
+    candidates = [
+        os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters_physics.csv'),
     ]
-    ax.legend(handles=handles, loc='upper right')
+    tpath = next((p for p in candidates if os.path.exists(p)), None)
+    trans_df = None
+    if tpath:
+        try:
+            trans_df = pd.read_csv(tpath)
+        except Exception:
+            trans_df = None
+
+    for r in rows:
+        try:
+            ZT = float(r.get('Z_total', 0.0))
+            ZD = float(r.get('Z_slow_dry', 0.0))
+            ZE = float(r.get('Z_slow_end', 0.0))
+        except Exception:
+            continue
+
+        # Defaults if speeds not found
+        z_slow_speed = 100.0  # mm/s fallback
+        z_fast_speed = 500.0  # mm/s fallback
+
+        if trans_df is not None:
+            # find matching transporter row by Transporter id if available
+            tid = r.get('Transporter')
+            try:
+                # match common id column names
+                if 'Transporter_id' in trans_df.columns:
+                    prow = trans_df[trans_df['Transporter_id'] == tid]
+                elif 'Transporter' in trans_df.columns:
+                    prow = trans_df[trans_df['Transporter'] == tid]
+                elif 'Id' in trans_df.columns:
+                    prow = trans_df[trans_df['Id'] == tid]
+                else:
+                    prow = trans_df.iloc[[0]]
+                if not prow.empty:
+                    prow = prow.iloc[0]
+                    z_slow_speed = float(prow.get('Z_slow_speed (mm/s)', prow.get('Z_slow_speed', z_slow_speed)))
+                    z_fast_speed = float(prow.get('Z_fast_speed (mm/s)', prow.get('Z_fast_speed', z_fast_speed)))
+            except Exception:
+                pass
+
+        # Compute fast distance
+        fast_dist = max(0.0, ZT - ZD - ZE)
+        # Time components (device delays excluded here; this is pure motion time)
+        t_slow1 = ZD / max(z_slow_speed, 1e-6)
+        t_fast = fast_dist / max(z_fast_speed, 1e-6)
+        t_slow2 = ZE / max(z_slow_speed, 1e-6)
+        t_total = t_slow1 + t_fast + t_slow2
+        if t_total > max_time:
+            max_time = t_total
+
+    # Ensure a sensible min and ceil
+    import math
+    if max_time <= 0:
+        max_time = max(1.0, float(n))
+    max_time_ceiled = int(math.ceil(max_time))
+
+    # Map seconds [0..max_time_ceiled] onto x positions [0..n-1]
+    if n > 1 and max_time_ceiled > 0:
+        x_scale = (n - 1) / float(max_time_ceiled)
+        seconds = np.arange(0, max_time_ceiled + 1, 1)
+        sec_x = seconds * x_scale
+        # Avoid creating huge tick arrays that break Matplotlib's locator.
+        # Cap the number of drawn ticklines to a reasonable value (user-requested: 60).
+        max_draw = 60
+        if len(sec_x) > max_draw:
+            step = int(math.ceil(len(sec_x) / float(max_draw)))
+            draw_x = sec_x[::step]
+        else:
+            draw_x = sec_x
+        # Draw vertical second lines (subtle dashed) at the chosen positions
+        # REMOVED: No vertical gridlines - clean X-axis
+        # for sx in draw_x:
+        #     if -1 <= sx <= n:
+        #         ax.axvline(x=sx, color='gray', linestyle='--', linewidth=0.8, alpha=0.25, zorder=3)
+        # Set x-ticks with second labels (show integer seconds like lower plot)
+        # Compute which seconds correspond to these x positions
+        if len(draw_x) > 0 and len(seconds) > 0:
+            # Map draw_x back to seconds
+            second_labels = []
+            for dx in draw_x:
+                # Find closest second
+                if x_scale > 0:
+                    sec = int(round(dx / x_scale))
+                    second_labels.append(str(sec))
+                else:
+                    second_labels.append('')
+            # DISABLE X-TICKS COMPLETELY TO PREVENT VERTICAL LINES
+            # ax.set_xticks(draw_x)
+            # ax.set_xticklabels(second_labels)
+            # Instead, manually place text labels without tick marks
+            for i, (dx, lbl) in enumerate(zip(draw_x, second_labels)):
+                if -1 <= dx <= n and lbl:
+                    ax.text(dx, -0.03 * max_height, lbl, ha='center', va='top', fontsize=10)
+        else:
+            # ax.set_xticks(draw_x)
+            # ax.set_xticklabels([''] * len(draw_x))
+            pass
+    else:
+        # fallback: vertical lines at transporter positions
+        # ax.set_xticks(x_positions)
+        # ax.set_xticklabels([''] * len(x_positions))
+        # Grid removed - no vertical lines
+        pass
+
+    # --- Horizontal helper lines: only at measurement levels we have (e.g., Z_slow_dry, Z_fast_end, Z_total)
+    measure_levels = set()
+    for r in rows:
+        try:
+            measure_levels.add(float(r['Z_slow_dry']))
+            measure_levels.add(float(r['Z_fast_end']))
+            measure_levels.add(float(r['Z_total']))
+        except Exception:
+            continue
+    # Ensure 0 is included
+    measure_levels.add(0.0)
+    measure_levels = sorted(measure_levels)
+    # Draw horizontal lines at these measurement levels
+    ylim_top = max_height * 1.05 if max_height > 0 else 1
+    for y in measure_levels:
+        ax.hlines(y, xmin=-1, xmax=n, colors='gray', linestyles='-', linewidth=0.6, alpha=0.25, zorder=2)
+
+    # Ensure y-ticks include measurement levels (merge with default yticks)
+    existing_yticks = list(ax.get_yticks())
+    combined_yticks = sorted(set(existing_yticks) | set(measure_levels))
+    ax.set_yticks(combined_yticks)
+
+    # Tick positions already set earlier - just ensure no tick marks are drawn
+    ax.tick_params(axis='both', which='major', length=0, width=0)
+    
+    # Hide top and right spines, make bottom and left black
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_edgecolor('black')
+    ax.spines['bottom'].set_linewidth(0.8)
+    ax.spines['left'].set_edgecolor('black')
+    ax.spines['left'].set_linewidth(0.8)
+
+    # Apply consistent font family and size (matching lower X-speed chart)
+    import matplotlib as mpl
+    mpl_family = mpl.rcParams.get('font.family', None)
+    mpl_size = mpl.rcParams.get('font.size', None)
+    # If family is a list, take the first
+    if isinstance(mpl_family, (list, tuple)) and mpl_family:
+        mpl_family = mpl_family[0]
+    # No axis labels - keep clean like lower plot which has them outside the matplotlib figure
+    if mpl_size:
+        ax.tick_params(axis='both', which='major', labelsize=mpl_size, length=0, width=0)
+        # Legend with matching font
+        handles = [
+            patches.Patch(color=slow_color, label='Slow speed zone'),
+            patches.Patch(color=fast_color, label='Fast speed zone'),
+        ]
+        ax.legend(handles=handles, loc='upper right', fontsize=mpl_size)
+    else:
+        # Legend
+        handles = [
+            patches.Patch(color=slow_color, label='Slow speed zone'),
+            patches.Patch(color=fast_color, label='Fast speed zone'),
+        ]
+        ax.legend(handles=handles, loc='upper right')
 
     plt.tight_layout()
     chart_path = os.path.join(reports_dir, 'transporter_vertical_speed_profile.png')
@@ -854,6 +1031,7 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
     wet_color = (26, 188, 156)      # teal
     top_color = (127, 140, 141)     # darker gray
 
+
     for r in rows:
         t = r['Transporter']
         ZT = r['Z_total']
@@ -864,32 +1042,28 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
 
         pdf.add_page()
         pdf.chapter_title(f'Transporter {t} - Physics Profile')
-        # (Transporter color swatch removed per request - no top-right color box)
-        # Render description (left-aligned). The Z bar will be drawn below the text,
-        # also left-aligned to keep the page compact.
         pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
         description = (
-            'Single vertical bar shows configured vertical movement profile. '
-            'Left half bottom = slow zone at DRY stations (type 0). '
-            'Right half bottom = slow zone at WET stations (type 1). '
-            'Top full-width segment = slow zone near top end.'
+            'The charts on this page illustrate transporter movement durations (horizontal axis represents time). '
+            'The upper chart displays different lift and sink movements at dry and wet stations. '
+            'The lower chart shows the duration of three different horizontal transfer distances. '
+            'The total duration of a transporter task is additionally affected by station-specific dropping times '
+            'and potential equipment delays.'
         )
         text_width_full = pdf.w - pdf.l_margin - pdf.r_margin
         pdf.set_xy(pdf.l_margin, pdf.get_y())
         pdf.multi_cell(text_width_full, 6, description)
         pdf.ln(2)
 
-        # Now draw the narrow Z-profile bar below the description, left-aligned
+        # Draw the Z-profile bar as before
         left = pdf.l_margin + 2
         bar_width = 12
         top = pdf.get_y() + 4
         max_bar_height = max(100, pdf.h * 0.45)
         bar_height = min(max_bar_height, pdf.h - top - 70)
-        # Apply configurable vertical scale safely
         bar_height = bar_height * float(Z_BAR_VERTICAL_SCALE)
         scale = bar_height / ZT if ZT > 0 else 1.0
 
-        # Determine fill color from color_map if available
         fill_color = top_color
         if color_map and t in color_map:
             try:
@@ -898,14 +1072,166 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
                 fill_color = (rcol, gcol, bcol)
             except Exception:
                 pass
-
-        # Draw full bar filled with transporter color
         pdf.set_draw_color(*border)
         pdf.set_fill_color(*fill_color)
         pdf.rect(left, top, bar_width, bar_height, 'F')
         pdf.rect(left, top, bar_width, bar_height, 'D')
 
-    # (Description was rendered above; continue with annotations)
+        # --- NEW: Speed vs Time plot for x-movement (horizontal) ---
+        # Read transporter x-physics from CSV
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import tempfile
+        import pandas as pd
+        # Find transporter row in physics CSV
+        candidates = [
+            os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
+            os.path.join(output_dir, 'initialization', 'transporters.csv'),
+        ]
+        path = next((p for p in candidates if os.path.exists(p)), None)
+        if path:
+            df = pd.read_csv(path)
+            tid_col = None
+            for key in ['Transporter_id', 'Transporter', 'Id']:
+                if key in df.columns:
+                    tid_col = key
+                    break
+            if tid_col is None:
+                tid_col = df.columns[0]
+            row = df[df[tid_col] == t]
+            if row.empty:
+                row = df[df[tid_col].astype(str) == str(t)]
+            if not row.empty:
+                row = row.iloc[0]
+                # Get physics params
+                max_speed = float(row.get('Max_speed (mm/s)', 0.0))
+                acc_time = float(row.get('Acceleration_time (s)', 0.0))
+                dec_time = float(row.get('Deceleration_time (s)', 0.0))
+                # Only plot if all params are positive
+                if max_speed > 0 and acc_time > 0 and dec_time > 0:
+                    def speed_profile(distance):
+                        # Returns (t, v) arrays for the move
+                        accel = max_speed / acc_time
+                        decel = max_speed / dec_time
+                        t_accel_full = max_speed / accel
+                        t_decel_full = max_speed / decel
+                        s_accel_full = 0.5 * accel * t_accel_full ** 2
+                        s_decel_full = 0.5 * decel * t_decel_full ** 2
+                        
+                        if distance < s_accel_full + s_decel_full:
+                            # Triangular profile - doesn't reach max_speed
+                            # v_peak^2 = 2 * accel * s_accel
+                            # v_peak^2 = 2 * decel * s_decel
+                            # s_accel + s_decel = distance
+                            # Solve: v_peak = sqrt(2 * distance * accel * decel / (accel + decel))
+                            v_peak = np.sqrt(2 * distance * accel * decel / (accel + decel))
+                            t_accel = v_peak / accel
+                            t_decel = v_peak / decel
+                            t_total = t_accel + t_decel
+                            t = np.linspace(0, t_total, 100)
+                            v = np.where(t < t_accel, 
+                                        accel * t, 
+                                        v_peak - decel * (t - t_accel))
+                            v = np.clip(v, 0, v_peak)
+                        else:
+                            # Trapezoidal profile
+                            s_const = distance - s_accel_full - s_decel_full
+                            t_const = s_const / max_speed
+                            t1 = np.linspace(0, t_accel_full, 40)
+                            t2 = np.linspace(t_accel_full, t_accel_full + t_const, 20)
+                            t3 = np.linspace(t_accel_full + t_const, t_accel_full + t_const + t_decel_full, 40)
+                            v1 = accel * t1
+                            v2 = np.full_like(t2, max_speed)
+                            v3 = max_speed - decel * (t3 - (t_accel_full + t_const))
+                            t = np.concatenate([t1, t2, t3])
+                            v = np.concatenate([v1, v2, v3])
+                            v = np.clip(v, 0, max_speed)
+                        return t, v
+
+                    # increase figure size to make the X-graph taller; was (5.5,2.2)
+                    fig, ax = plt.subplots(figsize=(8.5, 4.2))
+                    # Use transporter color for all curves
+                    transporter_color = fill_color  # Using the same color as the Z-profile bar
+                    # Convert RGB tuple (0-255) to hex for matplotlib
+                    if isinstance(transporter_color, tuple) and len(transporter_color) == 3:
+                        transporter_hex = '#{:02x}{:02x}{:02x}'.format(
+                            int(transporter_color[0]), 
+                            int(transporter_color[1]), 
+                            int(transporter_color[2])
+                        )
+                    else:
+                        transporter_hex = '#3498db'  # fallback blue
+                    
+                    dists = [500, 2500, 5000]
+                    labels = ['500 mm move', '2500 mm move', '5000 mm move']
+                    all_tmax = []
+                    all_vmax = []
+                    for i, dist in enumerate(dists):
+                        tvals, vvals = speed_profile(dist)
+                        all_tmax.append(np.max(tvals) if len(tvals) else 0)
+                        all_vmax.append(np.max(vvals) if len(vvals) else 0)
+                        ax.plot(tvals, vvals, color=transporter_hex, label=labels[i], alpha=0.7 + i*0.15, linewidth=2)
+
+                    # Determine axis bounds: origin at (0,0) in lower-left
+                    import math
+                    max_t = max(all_tmax) if all_tmax else 0
+                    max_v = max(all_vmax) if all_vmax else 0
+                    # Ceil to next full second for nicer integer ticks
+                    max_t_ceiled = max(1, int(math.ceil(max_t)))
+                    max_v_ceiled = max(1, int(math.ceil(max_v)))
+                    # Add small margin to ensure rightmost gridline is visible
+                    ax.set_xlim(0, max_t_ceiled + 0.5)
+                    ax.set_ylim(0, max_v_ceiled)
+
+                    # Set x-axis ticks to full-second integer ticks
+                    xticks = np.arange(0, max_t_ceiled + 1, 1)
+                    ax.set_xticks(xticks)
+
+                    # Ensure spine/axis placement is the conventional lower-left origin
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['right'].set_visible(False)
+                    ax.xaxis.set_ticks_position('bottom')
+                    ax.yaxis.set_ticks_position('left')
+
+                    # No tick marks - only labels
+                    ax.tick_params(axis='x', which='major', length=0, width=0)
+                    ax.tick_params(axis='y', which='major', length=0, width=0)
+                    ax.minorticks_off()
+
+                    # Use consistent font sizes optimized for visual appearance in PDF
+                    # These sizes are tuned to match the upper Z-graph visual appearance
+                    ax.set_xlabel('Time (s)', fontsize=10)
+                    ax.set_ylabel('Speed (mm/s)', fontsize=10)
+                    ax.tick_params(axis='both', which='major', labelsize=10)
+
+                    # No standalone title per request; legend removed
+                    ax.grid(alpha=0.3)
+                    
+                    # Add distance labels at end of each curve (right-aligned near endpoint, above X-axis)
+                    for i, (dist, label_text) in enumerate(zip(dists, ['500 mm', '2500 mm', '5000 mm'])):
+                        tvals, vvals = speed_profile(dist)
+                        if len(tvals) > 0:
+                            # Get endpoint coordinates
+                            t_end = tvals[-1]
+                            # Place text above X-axis (positive Y), slightly left of endpoint
+                            ax.text(t_end - 0.3, max_v_ceiled * 0.05, label_text, 
+                                   ha='right', va='bottom', fontsize=10, color='black',
+                                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='none', alpha=0.8))
+                    
+                    plt.tight_layout()
+                    # Save to temp file and insert into PDF
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpf:
+                        fig.savefig(tmpf.name, dpi=120, bbox_inches='tight')
+                        plt.close(fig)
+                        img_x = left + bar_width + 15
+                        img_y = top + bar_height + 15
+                        img_w = pdf.w - pdf.l_margin - img_x - 2
+                        # triple the previous image height to make the X-graph three times taller, then reduce by 10%
+                        img_h = 38 * 3 * 0.9  # mm (reduced by 10%)
+                        # Place image full width below Z-bar with increased margin
+                        pdf.set_xy(pdf.l_margin, top + bar_height + 15)
+                        pdf.image(tmpf.name, x=pdf.l_margin, y=top + bar_height + 15, w=pdf.w - pdf.l_margin - pdf.r_margin, h=img_h)
+        # --- END NEW ---
 
         # Restore horizontal change-point marker lines (thin black lines) without any
         # textual annotations or legend — user did not ask to remove the lines.
@@ -935,7 +1261,7 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
                     # Small font for the labels; don't change main cursor vertically
                     label_x = left + bar_width + 6
                     label_h = 4
-                    pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 2))
+                    pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 1))
                     pdf.set_text_color(0, 0, 0)
                     pdf.set_xy(label_x, y_pos - (label_h / 2))
                     pdf.cell(0, label_h, label_txt, ln=0, align='L')
@@ -1022,6 +1348,23 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
             # Vertical axis (height) aligned with Z bar
             pdf.line(axis_x, axis_bottom, axis_x, axis_top)
 
+            # Horizontal helper lines across the axes at measurement levels (behind curves)
+            try:
+                pdf.set_line_width(0.2)
+                pdf.set_draw_color(200, 200, 200)
+                for val in (ZD, ZW, Z_fast_end, ZT):
+                    if val is None:
+                        continue
+                    y_pos = top + bar_height - (val * scale)
+                    if y_pos < top:
+                        y_pos = top
+                    if y_pos > top + bar_height:
+                        y_pos = top + bar_height
+                    # draw faint horizontal line across the time-axis area
+                    pdf.line(axis_x, y_pos, axis_x + axis_width, y_pos)
+            except Exception:
+                pass
+
             # Vertical ticks aligned with the bar's marker lines
             for val in (ZD, ZW, Z_fast_end, ZT):
                 try:
@@ -1037,14 +1380,15 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
                 except Exception:
                     continue
 
-            # Horizontal axis (time) at axis_bottom, 0.5s divisions
+            # Horizontal axis (time) at axis_bottom - BLACK color
+            pdf.set_draw_color(0, 0, 0)
             pdf.set_line_width(0.5)
             pdf.line(axis_x, axis_bottom, axis_x + axis_width, axis_bottom)
             # choose mm per 0.5s
             mm_per_half_sec = 10
             # limit by axis_width
             num_div = int(axis_width // mm_per_half_sec)
-            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 2))
+            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 1))
             # Determine effective total seconds for axis labels
             # compute axis seconds: prefer data_max_time, round up to nearest whole second
             axis_min_seconds = (num_div * 0.5) if num_div > 0 else 0.0
@@ -1056,11 +1400,18 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
             num_seconds = int(max(1, total_seconds_for_axis))
             # map seconds to positions across axis_width
             pdf.set_text_color(0, 0, 0)
-            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 2))
+            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 1))
+            # Draw faint vertical grid lines at each full second across the axes
             for s in range(0, num_seconds + 1, tick_seconds):
                 frac = s / float(max(1, num_seconds))
                 x_tick = axis_x + frac * axis_width
-                pdf.line(x_tick, axis_bottom, x_tick, axis_bottom - 3)
+                # grid line (light gray) - keep for time reference
+                pdf.set_draw_color(200, 200, 200)
+                pdf.set_line_width(0.2)
+                pdf.line(x_tick, axis_bottom, x_tick, axis_top)
+                # tick mark REMOVED per user request - no black marks on X-axis
+                # Label only (black text)
+                pdf.set_draw_color(0, 0, 0)
                 txt = f"{s:d}"
                 pdf.set_xy(x_tick - 6, axis_bottom + 1)
                 pdf.cell(12, 4, txt, ln=0, align='C')
@@ -1069,7 +1420,7 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
             # Axis titles
             # NOTE: per request, do not render the Y-axis 'Height (mm)' label to reduce clutter
             pdf.set_text_color(0, 0, 0)
-            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 2))
+            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 1))
             pdf.set_xy(axis_x + axis_width/2 - 10, axis_bottom + 6)
             pdf.cell(0, 4, 'Time (s)', ln=0)
             pdf.set_line_width(0.0)
@@ -1383,32 +1734,33 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
                                     return x_start
 
                                 # Draw labels per-profile (left edge anchored at computed x)
+                                # Raise labels higher (y - 6 instead of y - 2) to prevent overlap with grid lines
                                 if 'type1 lift' in lbl_map:
                                     et = end_time_map.get('type1 lift', effective_total_seconds)
                                     lx = compute_anchor_x_for_label(et)
                                     lx = fit_text_x(lx, lbl_map['type1 lift'])
-                                    pdf.set_xy(lx, y_lift - 2)
+                                    pdf.set_xy(lx, y_lift - 6)
                                     pdf.cell(0, 4, lbl_map['type1 lift'], ln=0, align='L')
 
                                 if 'type0 lift' in lbl_map:
                                     et = end_time_map.get('type0 lift', effective_total_seconds)
                                     lx = compute_anchor_x_for_label(et)
                                     lx = fit_text_x(lx, lbl_map['type0 lift'])
-                                    pdf.set_xy(lx, y_lift - 2)
+                                    pdf.set_xy(lx, y_lift - 6)
                                     pdf.cell(0, 4, lbl_map['type0 lift'], ln=0, align='L')
 
                                 if 'type1 sink' in lbl_map:
                                     et = end_time_map.get('type1 sink', effective_total_seconds)
                                     lx = compute_anchor_x_for_label(et)
                                     lx = fit_text_x(lx, lbl_map['type1 sink'])
-                                    pdf.set_xy(lx, y_sink - 2)
+                                    pdf.set_xy(lx, y_sink + 2)
                                     pdf.cell(0, 4, lbl_map['type1 sink'], ln=0, align='L')
 
                                 if 'type0 sink' in lbl_map:
                                     et = end_time_map.get('type0 sink', effective_total_seconds)
                                     lx = compute_anchor_x_for_label(et)
                                     lx = fit_text_x(lx, lbl_map['type0 sink'])
-                                    pdf.set_xy(lx, y_sink - 2)
+                                    pdf.set_xy(lx, y_sink + 2)
                                     pdf.cell(0, 4, lbl_map['type0 sink'], ln=0, align='L')
 
                                 pdf.set_x(pdf.l_margin)
@@ -2078,6 +2430,7 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.ln(h + 3)
     
     # Tehtävien jakautuminen nostimien kesken
+    pdf.add_page()
     pdf.section_title('Task Distribution')
     pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6,
@@ -2094,7 +2447,6 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.ln(h + 10)
 
     # --- Transporter per-batch time analysis ---
-    pdf.add_page()
     pdf.section_title('Transporter Occupation by Batches')
     pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6,
@@ -2112,6 +2464,177 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.ln(h + 10)
 
     # --- Station Usage and following sections start on a new page ---
+    pdf.add_page()
+    pdf.chapter_title('Stations')
+    
+    # --- Stations Configuration Table ---
+    stations_csv = os.path.join(output_dir, '..', '..', 'initialization', 'stations.csv')
+    task_areas_csv = os.path.join(output_dir, '..', '..', 'initialization', 'transporters _task_areas.csv')
+    
+    if os.path.exists(stations_csv):
+        stations_df = pd.read_csv(stations_csv)
+        
+        # Load transporter task areas
+        task_areas = {}
+        if os.path.exists(task_areas_csv):
+            task_areas_df = pd.read_csv(task_areas_csv)
+            for _, tr in task_areas_df.iterrows():
+                tr_id = int(tr['Transporter_id'])
+                task_areas[tr_id] = {
+                    'lift_min_100': int(tr['Min_Lift_Station_100']),
+                    'lift_max_100': int(tr['Max_Lift_Station_100']),
+                    'sink_min_100': int(tr['Min_Sink_Station_100']),
+                    'sink_max_100': int(tr['Max_Sink_Station_100']),
+                }
+        
+        # Helper function to convert hex color to RGB tuple
+        def hex_to_rgb(hex_color):
+            """Convert hex color (#RRGGBB) to RGB tuple (R, G, B)"""
+            if hex_color.startswith('#'):
+                hex_color = hex_color[1:]
+            return (
+                int(hex_color[0:2], 16),
+                int(hex_color[2:4], 16),
+                int(hex_color[4:6], 16)
+            )
+        
+        pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
+        pdf.multi_cell(0, 6,
+            "The table below shows the configuration of all stations in the production line, including their "
+            "positions, processing times, and equipment delays. 'X' symbols indicate transporter work zones "
+            "with colors matching each transporter.")
+        pdf.ln(5)
+        
+        # Table configuration
+        pdf.set_font('Arial', 'B', 9)
+        pdf.set_fill_color(200, 200, 200)
+        
+        # Column widths - spans content width (210mm - 20mm left margin - 10mm right margin = 180mm total)
+        col_widths = [15, 15, 10, 10, 10, 10, 56, 18, 18, 18]
+        headers = ['Number', 'Group', 'L1', 'S1', 'L2', 'S2', 'Name', 'X Pos', 'Drop (s)', 'Device (s)']
+        
+        # Header row with colored transporter columns
+        for i, header in enumerate(headers):
+            # Color transporter headers to match their colors
+            if header == 'L1' or header == 'S1':
+                if color_map and 1 in color_map:
+                    r, g, b = hex_to_rgb(color_map[1])
+                    pdf.set_text_color(r, g, b)
+            elif header == 'L2' or header == 'S2':
+                if color_map and 2 in color_map:
+                    r, g, b = hex_to_rgb(color_map[2])
+                    pdf.set_text_color(r, g, b)
+            
+            pdf.cell(col_widths[i], 7, header, 1, 0, 'C', True)
+            
+            # Reset text color after colored headers
+            if header in ['L1', 'S1', 'L2', 'S2']:
+                pdf.set_text_color(0, 0, 0)
+        pdf.ln()
+        
+        # Data rows
+        pdf.set_font('Arial', '', 9)
+        for idx, row in stations_df.iterrows():
+            station_num = int(row['Number'])
+            
+            # Determine transporter zone symbols (all use 'X')
+            l1_has_mark = False  # Transporter 1 lift
+            s1_has_mark = False  # Transporter 1 sink
+            l2_has_mark = False  # Transporter 2 lift
+            s2_has_mark = False  # Transporter 2 sink
+            
+            if 1 in task_areas:
+                if task_areas[1]['lift_min_100'] <= station_num <= task_areas[1]['lift_max_100']:
+                    l1_has_mark = True
+                if task_areas[1]['sink_min_100'] <= station_num <= task_areas[1]['sink_max_100']:
+                    s1_has_mark = True
+            
+            if 2 in task_areas:
+                if task_areas[2]['lift_min_100'] <= station_num <= task_areas[2]['lift_max_100']:
+                    l2_has_mark = True
+                if task_areas[2]['sink_min_100'] <= station_num <= task_areas[2]['sink_max_100']:
+                    s2_has_mark = True
+            
+            # Alternate row background: white (False) and light gray (True)
+            fill = idx % 2 == 1
+            if fill:
+                pdf.set_fill_color(245, 245, 245)
+            
+            # Regular columns
+            pdf.cell(col_widths[0], 6, str(station_num), 1, 0, 'C', fill)
+            pdf.cell(col_widths[1], 6, str(int(row['Group'])), 1, 0, 'C', fill)
+            
+            # Transporter zone columns with colored and bold 'X'
+            # L1 - Transporter 1 lift
+            if l1_has_mark and color_map and 1 in color_map:
+                r, g, b = hex_to_rgb(color_map[1])
+                pdf.set_text_color(r, g, b)
+                pdf.set_font('Arial', 'B', 9)  # Bold for X
+                pdf.cell(col_widths[2], 6, 'X', 1, 0, 'C', fill)
+                pdf.set_font('Arial', '', 9)  # Reset to regular
+                pdf.set_text_color(0, 0, 0)  # Reset to black
+            else:
+                pdf.cell(col_widths[2], 6, '', 1, 0, 'C', fill)
+            
+            # S1 - Transporter 1 sink
+            if s1_has_mark and color_map and 1 in color_map:
+                r, g, b = hex_to_rgb(color_map[1])
+                pdf.set_text_color(r, g, b)
+                pdf.set_font('Arial', 'B', 9)  # Bold for X
+                pdf.cell(col_widths[3], 6, 'X', 1, 0, 'C', fill)
+                pdf.set_font('Arial', '', 9)  # Reset to regular
+                pdf.set_text_color(0, 0, 0)
+            else:
+                pdf.cell(col_widths[3], 6, '', 1, 0, 'C', fill)
+            
+            # L2 - Transporter 2 lift
+            if l2_has_mark and color_map and 2 in color_map:
+                r, g, b = hex_to_rgb(color_map[2])
+                pdf.set_text_color(r, g, b)
+                pdf.set_font('Arial', 'B', 9)  # Bold for X
+                pdf.cell(col_widths[4], 6, 'X', 1, 0, 'C', fill)
+                pdf.set_font('Arial', '', 9)  # Reset to regular
+                pdf.set_text_color(0, 0, 0)
+            else:
+                pdf.cell(col_widths[4], 6, '', 1, 0, 'C', fill)
+            
+            # S2 - Transporter 2 sink
+            if s2_has_mark and color_map and 2 in color_map:
+                r, g, b = hex_to_rgb(color_map[2])
+                pdf.set_text_color(r, g, b)
+                pdf.set_font('Arial', 'B', 9)  # Bold for X
+                pdf.cell(col_widths[5], 6, 'X', 1, 0, 'C', fill)
+                pdf.set_font('Arial', '', 9)  # Reset to regular
+                pdf.set_text_color(0, 0, 0)
+            else:
+                pdf.cell(col_widths[5], 6, '', 1, 0, 'C', fill)
+            
+            # Rest of the columns
+            pdf.cell(col_widths[6], 6, str(row['Name']), 1, 0, 'L', fill)
+            pdf.cell(col_widths[7], 6, f"{int(row['X Position'])}", 1, 0, 'R', fill)
+            
+            # Drop (s) - bold if non-zero
+            drop_time = float(row['Dropping_Time'])
+            if drop_time != 0:
+                pdf.set_font('Arial', 'B', 9)
+                pdf.cell(col_widths[8], 6, f"{drop_time:.1f}", 1, 0, 'R', fill)
+                pdf.set_font('Arial', '', 9)
+            else:
+                pdf.cell(col_widths[8], 6, f"{drop_time:.1f}", 1, 0, 'R', fill)
+            
+            # Device (s) - bold if non-zero
+            device_delay = float(row['Device_delay'])
+            if device_delay != 0:
+                pdf.set_font('Arial', 'B', 9)
+                pdf.cell(col_widths[9], 6, f"{device_delay:.1f}", 1, 0, 'R', fill)
+                pdf.set_font('Arial', '', 9)
+            else:
+                pdf.cell(col_widths[9], 6, f"{device_delay:.1f}", 1, 0, 'R', fill)
+            
+            pdf.ln()
+        
+        pdf.ln(10)
+    
     pdf.add_page()
     pdf.section_title('Station Usage Frequency')
     pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
