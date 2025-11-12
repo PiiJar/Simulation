@@ -778,6 +778,14 @@ def load_transporter_info(output_dir):
         for col in ['Model', 'Min_Lift_Station', 'Max_Lift_Station', 'Min_Sink_Station', 'Max_Sink_Station', 'Avoid']:
             if col in r.index:
                 row[col] = r.get(col)
+        # optional Color column in initialization CSV (hex string '#RRGGBB')
+        if 'Color' in r.index:
+            try:
+                cval = r.get('Color')
+                if isinstance(cval, str) and cval.strip():
+                    row['Color'] = cval.strip()
+            except Exception:
+                pass
         rows.append(row)
 
     # Merge start positions if present
@@ -796,28 +804,31 @@ def assign_transporter_colors(transporters):
 
     Returns dict {transporter_id: '#RRGGBB'}
     """
-    # Use matplotlib tab20 colormap for up to 20 distinct colors, fallback to generated colors
-    try:
-        import matplotlib.cm as cm
-        import matplotlib.colors as mcolors
-        cmap = cm.get_cmap('tab20')
-        ids = [int(t['Transporter']) for t in transporters]
-        ids_sorted = sorted(ids)
-        n = max(len(ids_sorted), 1)
-        color_map = {}
-        for i, tid in enumerate(ids_sorted):
-            rgba = cmap(i % 20)
-            hexc = mcolors.to_hex(rgba)
-            color_map[tid] = hexc
-        return color_map
-    except Exception:
-        # Fallback: generate deterministic colors via simple hash
-        color_map = {}
-        base_colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#e74c3c', '#34495e']
-        ids = [int(t['Transporter']) for t in transporters]
-        for i, tid in enumerate(sorted(ids)):
-            color_map[tid] = base_colors[i % len(base_colors)]
-        return color_map
+    # Predefined palette for up to 10 transporters.
+    # Avoid red (#e74c3c) and avoid very light colors that draw poorly on white background.
+    palette = [
+        '#1f77b4',  # muted blue
+        '#2ca02c',  # green
+        '#ff7f0e',  # orange
+        '#9467bd',  # purple
+        '#8c564b',  # brown
+        '#e377c2',  # pink (not too light)
+        '#7f7f7f',  # gray
+        '#bcbd22',  # olive
+        '#17becf',  # teal
+        '#393b79',  # dark indigo
+    ]
+
+    color_map = {}
+    ids = sorted(int(t['Transporter']) for t in transporters)
+    # If transporters include explicit Color entries, prefer them
+    provided_colors = {int(t['Transporter']): t.get('Color') for t in transporters if t.get('Color')}
+    for i, tid in enumerate(ids):
+        if tid in provided_colors and provided_colors[tid]:
+            color_map[tid] = provided_colors[tid]
+        else:
+            color_map[tid] = palette[i % len(palette)]
+    return color_map
 
 
 def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
@@ -827,6 +838,10 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
     - Bottom right half: slow zone for wet stations (type 1)
     - Top full-width slow zone (Z_slow_end)
     """
+    # Configurable vertical scale for Z-bar and associated axes/graph.
+    # Value <1.0 shrinks the visual elements; 1.0 keeps original size.
+    Z_BAR_VERTICAL_SCALE = 0.64
+
     rows = _load_transporter_physics(output_dir)
     if not rows:
         return
@@ -870,6 +885,8 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
         top = pdf.get_y() + 4
         max_bar_height = max(100, pdf.h * 0.45)
         bar_height = min(max_bar_height, pdf.h - top - 70)
+        # Apply configurable vertical scale safely
+        bar_height = bar_height * float(Z_BAR_VERTICAL_SCALE)
         scale = bar_height / ZT if ZT > 0 else 1.0
 
         # Determine fill color from color_map if available
@@ -1148,21 +1165,81 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
                             # type0 lift (bottom->top)
                             p_lift_0 = build_profile(ZD)
                             profiles.append((p_lift_0, 'type0 lift'))
-                            # type0 sink (top->bottom): reverse positions and times so motion starts at top
-                            if p_lift_0[0] and p_lift_0[1]:
-                                total0 = p_lift_0[0][-1]
-                                times_rev0 = [total0 - t for t in reversed(p_lift_0[0])]
-                                pos_rev0 = list(reversed(p_lift_0[1]))
-                                profiles.append(((times_rev0, pos_rev0), 'type0 sink'))
+                            # type0 sink (top->bottom): build explicitly so sink starts fast
+                            if ZT > 0:
+                                try:
+                                    # change_point is the position (mm from bottom) where the sink should switch to slow
+                                    change_point_dry = ZD
+                                    # build sink profile starting at ZT down to 0, switching to slow when <= change_point
+                                    def build_sink_profile(change_point):
+                                        pts_t = []
+                                        pts_p = []
+                                        # fast segment: from ZT down to change_point
+                                        if change_point < ZT:
+                                            length_fast = ZT - change_point
+                                            n_fast = max(4, int(min(80, length_fast/5)))
+                                            for i in range(n_fast):
+                                                p = ZT - i * (length_fast / (n_fast - 1))
+                                                pts_p.append(p)
+                                        # slow segment: from change_point down to 0
+                                        if change_point > 0:
+                                            length_slow = change_point
+                                            n_slow = max(4, int(min(80, length_slow/5)))
+                                            for i in range(n_slow):
+                                                p = change_point - i * (length_slow / (n_slow - 1))
+                                                pts_p.append(p)
+                                        # ensure monotonic (descending) and unique
+                                        # compute times based on speeds
+                                        if not pts_p:
+                                            return [], []
+                                        times = [0.0]
+                                        for prev, cur in zip(pts_p, pts_p[1:]):
+                                            seg = abs(prev - cur)
+                                            speed = fast_speed if prev > change_point else slow_speed
+                                            dt = seg / (speed if speed > 0 else 1.0)
+                                            times.append(times[-1] + dt)
+                                        return times, pts_p
+
+                                    times0, pos0 = build_sink_profile(change_point_dry)
+                                    profiles.append(((times0, pos0), 'type0 sink'))
+                                except Exception:
+                                    pass
                             # type1 lift
                             p_lift_1 = build_profile(ZW)
                             profiles.append((p_lift_1, 'type1 lift'))
-                            # type1 sink (top->bottom)
-                            if p_lift_1[0] and p_lift_1[1]:
-                                total1 = p_lift_1[0][-1]
-                                times_rev1 = [total1 - t for t in reversed(p_lift_1[0])]
-                                pos_rev1 = list(reversed(p_lift_1[1]))
-                                profiles.append(((times_rev1, pos_rev1), 'type1 sink'))
+                            # type1 sink (top->bottom): build explicitly so sink starts fast
+                            if ZT > 0:
+                                try:
+                                    change_point_wet = ZW
+                                    def build_sink_profile(change_point):
+                                        pts_t = []
+                                        pts_p = []
+                                        if change_point < ZT:
+                                            length_fast = ZT - change_point
+                                            n_fast = max(4, int(min(80, length_fast/5)))
+                                            for i in range(n_fast):
+                                                p = ZT - i * (length_fast / (n_fast - 1))
+                                                pts_p.append(p)
+                                        if change_point > 0:
+                                            length_slow = change_point
+                                            n_slow = max(4, int(min(80, length_slow/5)))
+                                            for i in range(n_slow):
+                                                p = change_point - i * (length_slow / (n_slow - 1))
+                                                pts_p.append(p)
+                                        if not pts_p:
+                                            return [], []
+                                        times = [0.0]
+                                        for prev, cur in zip(pts_p, pts_p[1:]):
+                                            seg = abs(prev - cur)
+                                            speed = fast_speed if prev > change_point else slow_speed
+                                            dt = seg / (speed if speed > 0 else 1.0)
+                                            times.append(times[-1] + dt)
+                                        return times, pts_p
+
+                                    times1, pos1 = build_sink_profile(change_point_wet)
+                                    profiles.append(((times1, pos1), 'type1 sink'))
+                                except Exception:
+                                    pass
 
                             # map to PDF coords and draw
                             default_hex = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
@@ -1174,6 +1251,8 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
                                     max_time_in_profiles = max(max_time_in_profiles, max(tvals))
                             axis_min_seconds = (num_div * 0.5) if num_div > 0 else 0.0
                             effective_total_seconds = max(max_time_in_profiles, axis_min_seconds, 1e-6)
+                            # collect midpoints for smarter label placement after drawing
+                            midpoints = {}
                             for idx, (prof, lbl) in enumerate(profiles):
                                 times, poss = prof
                                 if not times or not poss:
@@ -1201,6 +1280,140 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
                                     if prev is not None:
                                         pdf.line(prev[0], prev[1], x, y)
                                     prev = (x, y)
+                                # store midpoint for this profile for deferred labeling
+                                try:
+                                    map_lbl = {
+                                        'type0 lift': 'Dry Lift',
+                                        'type0 sink': 'Dry Sink',
+                                        'type1 lift': 'Wet Lift',
+                                        'type1 sink': 'Wet Sink'
+                                    }
+                                    label_text = map_lbl.get(lbl, lbl)
+                                    mid_idx = max(0, min(len(times) - 1, len(times) // 2))
+                                    time_mid = times[mid_idx]
+                                    pos_mid = poss[mid_idx]
+                                    frac_mid = min(max(time_mid / float(effective_total_seconds or 1.0), 0.0), 1.0)
+                                    x_mid = axis_x + frac_mid * axis_width
+                                    y_mid = axis_bottom - (pos_mid * scale)
+                                    midpoints[lbl] = (x_mid, y_mid, label_text)
+                                except Exception:
+                                    pass
+                            # place labels after plotting all profiles using deterministic rules:
+                            # - Lifts: vertical position = ZW (upper speed-change height)
+                            # - Sinks: vertical position = ZD (lower speed-change height)
+                            # - Horizontal anchor: profile_end_time - 2.0 seconds (clamped to axis)
+                            try:
+                                pdf.set_font(BODY_FONT_NAME, '', max(7, BODY_FONT_SIZE - 3))
+                                pdf.set_text_color(0, 0, 0)
+
+                                # determine profile end time from drawn profiles
+                                profile_end_time = 0.0
+                                for prof, _lbl in profiles:
+                                    tvals, _ = prof
+                                    if tvals:
+                                        profile_end_time = max(profile_end_time, max(tvals))
+                                # fallback to effective_total_seconds if nothing found
+                                profile_end_time = max(profile_end_time, float(effective_total_seconds or 0.0))
+
+                                anchor_time = profile_end_time - 2.0
+                                if anchor_time < 0.5:
+                                    anchor_time = 0.5
+
+                                def time_to_x_coord(tval):
+                                    frac = min(max(float(tval) / float(effective_total_seconds or 1.0), 0.0), 1.0)
+                                    return axis_x + frac * axis_width
+
+                                def z_to_y_coord(zval):
+                                    # map mm to y coordinate on the axis
+                                    try:
+                                        y = axis_bottom - (float(zval) * scale)
+                                    except Exception:
+                                        y = axis_bottom
+                                    # clamp into axis vertical range
+                                    if y < axis_top:
+                                        y = axis_top
+                                    if y > axis_bottom:
+                                        y = axis_bottom
+                                    return y
+
+                                # prepare label text lookup (use midpoints text if available)
+                                lbl_map = {}
+                                for k, v in midpoints.items():
+                                    # v = (x_mid, y_mid, label_text)
+                                    lbl_map[k] = v[2]
+
+                                # Draw each label using its own profile end time as anchor (end_time - 2s)
+                                min_x = axis_x + 2
+                                max_x = axis_x + axis_width - 4
+                                y_lift = z_to_y_coord(ZW)
+                                y_sink = z_to_y_coord(ZD)
+
+                                # Build a map of label -> profile end time (seconds)
+                                end_time_map = {}
+                                for prof, lbl in profiles:
+                                    tvals, _p = prof
+                                    label_key = lbl
+                                    if tvals:
+                                        end_time_map[label_key] = max(tvals)
+                                    else:
+                                        end_time_map[label_key] = float(effective_total_seconds or 0.0)
+
+                                def compute_anchor_x_for_label(end_time_val):
+                                    # desired anchor time
+                                    at = float(end_time_val or 0.0) - 2.0
+                                    if at < 0.5:
+                                        at = 0.5
+                                    ax = time_to_x_coord(at)
+                                    # clamp to axis bounds
+                                    if ax < min_x:
+                                        ax = min_x
+                                    if ax > max_x:
+                                        ax = max_x
+                                    return ax
+
+                                # helper to ensure text fits in axis: if text overruns right edge, shift left
+                                def fit_text_x(x_start, text):
+                                    try:
+                                        tw = pdf.get_string_width(text)
+                                    except Exception:
+                                        tw = len(text) * 2.5
+                                    # if text would overflow right bound, move left so it fits
+                                    if x_start + tw > max_x:
+                                        x_start = max(min_x, max_x - tw)
+                                    return x_start
+
+                                # Draw labels per-profile (left edge anchored at computed x)
+                                if 'type1 lift' in lbl_map:
+                                    et = end_time_map.get('type1 lift', effective_total_seconds)
+                                    lx = compute_anchor_x_for_label(et)
+                                    lx = fit_text_x(lx, lbl_map['type1 lift'])
+                                    pdf.set_xy(lx, y_lift - 2)
+                                    pdf.cell(0, 4, lbl_map['type1 lift'], ln=0, align='L')
+
+                                if 'type0 lift' in lbl_map:
+                                    et = end_time_map.get('type0 lift', effective_total_seconds)
+                                    lx = compute_anchor_x_for_label(et)
+                                    lx = fit_text_x(lx, lbl_map['type0 lift'])
+                                    pdf.set_xy(lx, y_lift - 2)
+                                    pdf.cell(0, 4, lbl_map['type0 lift'], ln=0, align='L')
+
+                                if 'type1 sink' in lbl_map:
+                                    et = end_time_map.get('type1 sink', effective_total_seconds)
+                                    lx = compute_anchor_x_for_label(et)
+                                    lx = fit_text_x(lx, lbl_map['type1 sink'])
+                                    pdf.set_xy(lx, y_sink - 2)
+                                    pdf.cell(0, 4, lbl_map['type1 sink'], ln=0, align='L')
+
+                                if 'type0 sink' in lbl_map:
+                                    et = end_time_map.get('type0 sink', effective_total_seconds)
+                                    lx = compute_anchor_x_for_label(et)
+                                    lx = fit_text_x(lx, lbl_map['type0 sink'])
+                                    pdf.set_xy(lx, y_sink - 2)
+                                    pdf.cell(0, 4, lbl_map['type0 sink'], ln=0, align='L')
+
+                                pdf.set_x(pdf.l_margin)
+                            except Exception:
+                                pass
                             # restore color
                             pdf.set_draw_color(0,0,0)
                 except Exception:
