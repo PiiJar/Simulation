@@ -10,7 +10,8 @@
       "z_position": 0,
       "dropping_time": 0,
       "station_type": 0,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": true
     },
     {
       "number": 102,
@@ -22,7 +23,8 @@
       "z_position": 0,
       "dropping_time": 0,
       "station_type": 0,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 103,
@@ -34,7 +36,8 @@
       "z_position": 0,
       "dropping_time": 0,
       "station_type": 0,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 104,
@@ -46,7 +49,8 @@
       "z_position": 0,
       "dropping_time": 0,
       "station_type": 0,
-      "device_delay": 3.0
+      "device_delay": 3.0,
+      "start_station": false
     },
     {
       "number": 105,
@@ -58,7 +62,8 @@
       "z_position": 0,
       "dropping_time": 0,
       "station_type": 0,
-      "device_delay": 3.0
+      "device_delay": 3.0,
+      "start_station": false
     },
     {
       "number": 106,
@@ -70,7 +75,8 @@
       "z_position": 0,
       "dropping_time": 0,
       "station_type": 0,
-      "device_delay": 3.0
+      "device_delay": 3.0,
+      "start_station": false
     },
     {
       "number": 107,
@@ -82,7 +88,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 108,
@@ -94,7 +101,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 109,
@@ -106,7 +114,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 110,
@@ -118,7 +127,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 111,
@@ -130,7 +140,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 112,
@@ -142,7 +153,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 113,
@@ -154,7 +166,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 114,
@@ -166,7 +179,8 @@
       "z_position": 0,
       "dropping_time": 0,
       "station_type": 0,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 115,
@@ -178,7 +192,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 116,
@@ -190,7 +205,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 117,
@@ -202,7 +218,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 118,
@@ -214,7 +231,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 119,
@@ -226,7 +244,8 @@
       "z_position": 0,
       "dropping_time": 0,
       "station_type": 0,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 120,
@@ -238,7 +257,8 @@
       "z_position": 0,
       "dropping_time": 0,
       "station_type": 0,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     },
     {
       "number": 121,
@@ -250,7 +270,8 @@
       "z_position": 0,
       "dropping_time": 10,
       "station_type": 1,
-      "device_delay": 0.0
+      "device_delay": 0.0,
+      "start_station": false
     }
   ],
   "metadata": {

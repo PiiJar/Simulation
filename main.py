@@ -13,6 +13,7 @@ from extract_transporter_tasks import extract_transporter_tasks, create_detailed
 from repair_report_data import repair_report_data
 from visualize_matrix import visualize_matrix
 from simulation_logger import init_logger
+from generate_goals import generate_goals
 
 
 def main():
@@ -22,6 +23,18 @@ def main():
     output_dir = create_simulation_directory()
     logger = init_logger(output_dir)
     logger.log('STEP', 'Initialization started')
+    # Luo goals.json ja production.csv ENSIN
+    try:
+        generate_goals(output_dir)
+        logger.log('STEP', 'Goals and production.csv generated')
+    except Exception as e:
+        error_msg = f'Goals generation failed: {str(e)}'
+        logger.log('ERROR', error_msg)
+        print(f"❌ {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return
+    # Sitten luo batch treatment programs production.csv:n pohjalta
     generate_batch_treatment_programs(output_dir)
     logger.log('STEP', 'Initializtion ready')
 

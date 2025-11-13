@@ -132,7 +132,7 @@ def generate_simulation_report(output_dir):
     pdf.ln(10)
     # Syötetaulukot (stationit ja käsittelyohjelmat)
     stations_path = os.path.join(output_dir, 'initialization', 'stations.csv')
-    programs_path = os.path.join(output_dir, 'initialization', 'treatment_programs.csv')
+    programs_path = os.path.join(reports_dir, 'treatment_programs.csv')
     
     # Luo treatment_programs.csv yhdistämällä kaikki treatment_program_*.csv
     init_dir = os.path.join(output_dir, 'initialization')
