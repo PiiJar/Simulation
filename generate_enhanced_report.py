@@ -18,6 +18,7 @@ from fpdf import FPDF
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.ticker as mtick
+from load_customer_json import get_customer_plant_legacy_format
 from PIL import Image
 import math
 
@@ -2117,10 +2118,11 @@ def generate_enhanced_simulation_report(output_dir):
     reports_dir = os.path.join(output_dir, 'reports')
     
     try:
-        df_cp = pd.read_csv(os.path.join(init_dir, 'customer_and_plant.csv'))
+        df_cp = get_customer_plant_legacy_format(init_dir)
         customer = str(df_cp.iloc[0]['Customer'])
         plant = str(df_cp.iloc[0]['Plant'])
-    except Exception:
+    except Exception as e:
+        print(f"Warning: Could not load customer.json: {e}")
         customer = 'Customer'
         plant = 'Plant'
     

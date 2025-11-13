@@ -2,6 +2,7 @@ import os
 import shutil
 from datetime import datetime
 from glob import glob
+from load_customer_json import load_customer_json
 
 def create_simulation_directory(base_dir="output"):
     """
@@ -9,16 +10,16 @@ def create_simulation_directory(base_dir="output"):
     Returns the path to the created simulation directory.
     """
  
-     # Read Customer and Plant information
+    # Read Customer and Plant information from customer.json
     customer = "Customer"
     plant = "Plant"
-    customer_plant_path = os.path.join("initialization", "customer_and_plant.csv")
-    if os.path.exists(customer_plant_path):
-        import pandas as pd
-        df_cp = pd.read_csv(customer_plant_path)
-        if not df_cp.empty:
-            customer = str(df_cp.iloc[0]["Customer"]).strip().replace(" ", "_")
-            plant = str(df_cp.iloc[0]["Plant"]).strip().replace(" ", "_")
+    try:
+        customer_data, plant_data, _ = load_customer_json("initialization")
+        # Format: "900135_-_Factory_X" (ID-NAME format for directory)
+        customer = f"{customer_data.get('id', 'Customer')}_-_{customer_data.get('name', 'Unknown')}".replace(" ", "_")
+        plant = plant_data.get('name', 'Plant').replace(" ", "_").replace("-", "_")
+    except (FileNotFoundError, KeyError) as e:
+        print(f"Warning: Could not load customer.json, using defaults: {e}")
     
     # Create a timestamp-based directory
     now = datetime.now()

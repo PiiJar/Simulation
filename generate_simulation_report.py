@@ -28,15 +28,16 @@ def generate_simulation_report(output_dir):
     # Otsikko ja metadata
     now = datetime.now()
     date_str = now.strftime('%Y-%m-%d %H:%M:%S')
-    # Haetaan asiakas ja laitos initialization/customer_and_plant.csv-tiedostosta
+    # Haetaan asiakas ja laitos customer.json-tiedostosta
     init_dir = os.path.join(output_dir, 'initialization')
     asiakas = ''
     laitos = ''
     try:
-        df_cp = pd.read_csv(os.path.join(init_dir, 'customer_and_plant.csv'))
+        df_cp = get_customer_plant_legacy_format(init_dir)
         asiakas = str(df_cp.iloc[0]['Customer'])
         laitos = str(df_cp.iloc[0]['Plant'])
-    except Exception:
+    except Exception as e:
+        print(f"Warning: Could not load customer.json: {e}")
         asiakas = '[Asiakas ei saatavilla]'
         laitos = '[Laitos ei saatavilla]'
     kansio_nimi = os.path.basename(os.path.abspath(output_dir))

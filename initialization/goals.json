@@ -1,0 +1,166 @@
+{
+  "simulation_goals": {
+    "description": "Production goals for simulation run - typically 24-hour production period",
+    "calculation_basis": "Derived from annual production targets in customer.json",
+    "simulation_period": {
+      "duration_hours": 24.0,
+      "description": "Simulation represents approximately one day of production"
+    },
+    "annual_context": {
+      "weeks_per_year": 48,
+      "days_per_week": 5,
+      "shifts_per_day": 2,
+      "hours_per_shift": 8.0,
+      "total_annual_hours": 3840.0,
+      "working_days_per_year": 240,
+      "description": "Reference: production schedule from customer.json plant data"
+    }
+  },
+  "product_targets": [
+    {
+      "product_id": "PROD-001",
+      "product_name": "Steel Component A",
+      "treatment_program": 1,
+      "pieces_per_batch": 10,
+      "annual_target": 50000,
+      "production_share_percent": 62.5,
+      "daily_target_pieces": 208,
+      "daily_target_batches": 21,
+      "minimum_process_time_seconds": null,
+      "process_time_calculated": false,
+      "calculation": {
+        "note": "Annual target 50000 pieces / 240 working days = 208.33 pieces/day",
+        "batches_per_day": "208.33 pieces / 10 pieces_per_batch = 20.83 batches/day (rounded to 21)",
+        "minimum_process_time": "Sum of treatment program minimum stage times + average transfer times (calculated during preprocessing)"
+      }
+    },
+    {
+      "product_id": "PROD-002",
+      "product_name": "Steel Component B",
+      "treatment_program": 1,
+      "pieces_per_batch": 6,
+      "annual_target": 30000,
+      "production_share_percent": 37.5,
+      "daily_target_pieces": 125,
+      "daily_target_batches": 21,
+      "minimum_process_time_seconds": null,
+      "process_time_calculated": false,
+      "calculation": {
+        "note": "Annual target 30000 pieces / 240 working days = 125 pieces/day",
+        "batches_per_day": "125 pieces / 6 pieces_per_batch = 20.83 batches/day (rounded to 21)",
+        "minimum_process_time": "Sum of treatment program minimum stage times + average transfer times (calculated during preprocessing)"
+      }
+    }
+  ],
+  "totals": {
+    "total_annual_pieces": 80000,
+    "total_daily_pieces": 333,
+    "total_daily_batches": 42,
+    "production_share_validation": {
+      "PROD-001": "62.5%",
+      "PROD-002": "37.5%",
+      "total": "100.0%"
+    }
+  },
+  "target_pace": {
+    "simulation_duration_hours": 24.0,
+    "total_batches": 42,
+    "batches_per_hour": 1.75,
+    "average_batch_interval_minutes": 34.29,
+    "average_batch_interval_seconds": 2057.14,
+    "calculation": {
+      "batches_per_hour": "42 batches / 24 hours = 1.75 batches/hour",
+      "interval_minutes": "60 minutes / 1.75 batches = 34.29 minutes/batch",
+      "interval_seconds": "3600 seconds / 1.75 batches = 2057.14 seconds/batch"
+    },
+    "interpretation": {
+      "description": "On average, a new batch should start every 34.29 minutes to meet daily target",
+      "practical_note": "Actual intervals may vary based on treatment program duration and transporter capacity"
+    },
+    "per_product_pace": {
+      "PROD-001": {
+        "daily_batches": 21,
+        "batches_per_hour": 0.875,
+        "average_interval_minutes": 68.57,
+        "average_interval_seconds": 4114.29,
+        "calculation": "21 batches / 24 hours = 0.875 batches/hour; 60 min / 0.875 = 68.57 min"
+      },
+      "PROD-002": {
+        "daily_batches": 21,
+        "batches_per_hour": 0.875,
+        "average_interval_minutes": 68.57,
+        "average_interval_seconds": 4114.29,
+        "calculation": "21 batches / 24 hours = 0.875 batches/hour; 60 min / 0.875 = 68.57 min"
+      }
+    }
+  },
+  "metadata": {
+    "version": "1.0",
+    "created": "2025-11-13",
+    "description": "Simulation production goals - defines target quantities for simulation period",
+    "usage": {
+      "initialization": "This file is created during simulation initialization based on customer.json data",
+      "location": "Copied to output/{simulation_dir}/initialization/goals.json",
+      "purpose": "Defines how many batches of each product to simulate for target period"
+    },
+    "fields": {
+      "simulation_goals": {
+        "simulation_period": "Duration of simulation in hours (typically 24 for one day)",
+        "annual_context": "Reference data from plant production schedule"
+      },
+      "product_targets": {
+        "product_id": "Reference to product in customer.json",
+        "treatment_program": "Treatment program number (links to treatment_program_XXX.csv)",
+        "pieces_per_batch": "Number of product pieces that fit in one batch/carrier",
+        "annual_target": "Annual production target from customer.json",
+        "production_share_percent": "This product's percentage of total annual production",
+        "daily_target_pieces": "Target pieces per working day (annual_target / working_days_per_year)",
+        "daily_target_batches": "Target batches per day (daily_target_pieces / pieces_per_batch)",
+        "minimum_process_time_seconds": "Minimum time to complete one batch in seconds - calculated during preprocessing",
+        "process_time_calculated": "Boolean flag indicating if minimum_process_time has been calculated"
+      },
+      "target_pace": {
+        "simulation_duration_hours": "Duration of simulation in hours",
+        "total_batches": "Total number of batches to process during simulation",
+        "batches_per_hour": "Average number of batches per hour (total_batches / duration_hours)",
+        "average_batch_interval_minutes": "Average time between batch starts in minutes (60 / batches_per_hour)",
+        "average_batch_interval_seconds": "Average time between batch starts in seconds (3600 / batches_per_hour)",
+        "per_product_pace": "Individual pace targets for each product type"
+      }
+    },
+    "calculation_logic": {
+      "working_days_per_year": "weeks_per_year × days_per_week (from plant production_schedule)",
+      "daily_target_pieces": "annual_target ÷ working_days_per_year",
+      "daily_target_batches": "daily_target_pieces ÷ pieces_per_batch (rounded up)",
+      "production_share_percent": "(product_annual_target ÷ sum_all_annual_targets) × 100",
+      "batches_per_hour": "total_daily_batches ÷ simulation_duration_hours",
+      "batch_interval_minutes": "60 ÷ batches_per_hour",
+      "batch_interval_seconds": "3600 ÷ batches_per_hour",
+      "minimum_process_time": {
+        "description": "Calculated during preprocessing phase from treatment program data",
+        "formula": "sum(stage_minimum_times) + sum(average_transfer_times)",
+        "components": {
+          "stage_minimum_times": "Minimum required time at each treatment stage (from treatment_program_XXX.csv)",
+          "average_transfer_times": "Average time to transfer batch between stations (from transporter physics and station positions)"
+        },
+        "when_calculated": "During preprocess_for_cpsat.py after treatment programs and transporter data are loaded",
+        "update_method": "Use update_goals_process_times() function to update goals.json with calculated values"
+      }
+    },
+    "notes": [
+      "This file defines GOALS, not actual production runs",
+      "Actual production.csv may have different batch counts based on optimization",
+      "Production share percentages must sum to 100%",
+      "Daily targets are calculated from annual targets divided by working days",
+      "Batch counts are rounded to whole numbers",
+      "Simulation period can be adjusted (e.g., 8h for single shift, 16h for two shifts, 24h for full day)",
+      "minimum_process_time fields are initially null and populated during preprocessing phase",
+      "minimum_process_time represents theoretical minimum time - actual times may be longer due to constraints"
+    ],
+    "example_usage": {
+      "scenario_1": "24-hour simulation with 42 batches total (21 PROD-001 + 21 PROD-002)",
+      "scenario_2": "8-hour simulation (single shift) could use 14 batches (7 PROD-001 + 7 PROD-002)",
+      "scenario_3": "Weekly simulation (120h) could use 210 batches proportionally distributed"
+    }
+  }
+}
