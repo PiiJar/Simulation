@@ -130,8 +130,10 @@ def calculate_kpi_metrics(output_dir):
     station_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_station_schedule.csv'))
     transporter_phases = pd.read_csv(os.path.join(output_dir, 'reports', 'transporter_phases.csv'))
     
-    # Lue asematiedot (numerot, ryhmät, nimet)
-    stations_df = pd.read_csv(os.path.join(output_dir, 'initialization', 'stations.csv'))
+    # Lue asematiedot (numerot, ryhmät, nimet) JSON-tiedostosta
+    from load_stations_json import load_stations_from_json
+    init_dir = os.path.join(output_dir, 'initialization')
+    stations_df = load_stations_from_json(init_dir)
     station_info = stations_df.set_index('Number')[['Group', 'Name']].to_dict('index')
     
     # Makespan (kokonaisaika)
@@ -1917,7 +1919,11 @@ def create_station_usage_chart(output_dir, reports_dir):
     """Luo asemaryhmien ajallinen käyttöastekaavio"""
     station_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_station_schedule.csv'))
     batch_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv'))
-    stations_df = pd.read_csv(os.path.join(output_dir, 'initialization', 'stations.csv'))
+    
+    # Load stations from JSON
+    from load_stations_json import load_stations_from_json
+    init_dir = os.path.join(output_dir, 'initialization')
+    stations_df = load_stations_from_json(init_dir)
     
     # Laske makespan
     makespan = batch_schedule['ExitTime'].max()
@@ -2468,24 +2474,25 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.chapter_title('Stations')
     
     # --- Stations Configuration Table ---
-    stations_csv = os.path.join(output_dir, '..', '..', 'initialization', 'stations.csv')
-    task_areas_csv = os.path.join(output_dir, '..', '..', 'initialization', 'transporters _task_areas.csv')
+    init_dir_abs = os.path.join(output_dir, '..', '..', 'initialization')
+    task_areas_csv = os.path.join(init_dir_abs, 'transporters _task_areas.csv')
     
-    if os.path.exists(stations_csv):
-        stations_df = pd.read_csv(stations_csv)
-        
-        # Load transporter task areas
-        task_areas = {}
-        if os.path.exists(task_areas_csv):
-            task_areas_df = pd.read_csv(task_areas_csv)
-            for _, tr in task_areas_df.iterrows():
-                tr_id = int(tr['Transporter_id'])
-                task_areas[tr_id] = {
-                    'lift_min_100': int(tr['Min_Lift_Station_100']),
-                    'lift_max_100': int(tr['Max_Lift_Station_100']),
-                    'sink_min_100': int(tr['Min_Sink_Station_100']),
-                    'sink_max_100': int(tr['Max_Sink_Station_100']),
-                }
+    # Load stations from JSON
+    from load_stations_json import load_stations_from_json
+    stations_df = load_stations_from_json(init_dir_abs)
+    
+    # Load transporter task areas
+    task_areas = {}
+    if os.path.exists(task_areas_csv):
+        task_areas_df = pd.read_csv(task_areas_csv)
+        for _, tr in task_areas_df.iterrows():
+            tr_id = int(tr['Transporter_id'])
+            task_areas[tr_id] = {
+                'lift_min_100': int(tr['Min_Lift_Station_100']),
+                'lift_max_100': int(tr['Max_Lift_Station_100']),
+                'sink_min_100': int(tr['Min_Sink_Station_100']),
+                'sink_max_100': int(tr['Max_Sink_Station_100']),
+            }
         
         # Helper function to convert hex color to RGB tuple
         def hex_to_rgb(hex_color):
@@ -2501,8 +2508,8 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
         pdf.multi_cell(0, 6,
             "The table below shows the configuration of all stations in the production line, including their "
-            "positions, processing times, and equipment delays. 'X' symbols indicate transporter work zones "
-            "with colors matching each transporter.")
+            "tank assignments, positions, processing times, and equipment delays. 'X' symbols indicate transporter work zones "
+            "with colors matching each transporter. Stations with the same Group number are interchangeable in the process.")
         pdf.ln(5)
         
         # Table configuration
@@ -2510,8 +2517,9 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.set_fill_color(200, 200, 200)
         
         # Column widths - spans content width (210mm - 20mm left margin - 10mm right margin = 180mm total)
-        col_widths = [15, 15, 10, 10, 10, 10, 56, 18, 18, 18]
-        headers = ['Number', 'Group', 'L1', 'S1', 'L2', 'S2', 'Name', 'X Pos', 'Drop (s)', 'Device (s)']
+        # Added Tank column, adjusted widths
+        col_widths = [14, 12, 12, 10, 10, 10, 10, 50, 16, 16, 16]
+        headers = ['Station', 'Tank', 'Group', 'L1', 'S1', 'L2', 'S2', 'Name', 'X Pos', 'Drop (s)', 'Device (s)']
         
         # Header row with colored transporter columns
         for i, header in enumerate(headers):
@@ -2536,6 +2544,8 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.set_font('Arial', '', 9)
         for idx, row in stations_df.iterrows():
             station_num = int(row['Number'])
+            tank_num = int(row['Tank'])
+            group_num = int(row['Group'])
             
             # Determine transporter zone symbols (all use 'X')
             l1_has_mark = False  # Transporter 1 lift
@@ -2562,7 +2572,8 @@ def generate_enhanced_simulation_report(output_dir):
             
             # Regular columns
             pdf.cell(col_widths[0], 6, str(station_num), 1, 0, 'C', fill)
-            pdf.cell(col_widths[1], 6, str(int(row['Group'])), 1, 0, 'C', fill)
+            pdf.cell(col_widths[1], 6, str(tank_num), 1, 0, 'C', fill)
+            pdf.cell(col_widths[2], 6, str(group_num), 1, 0, 'C', fill)
             
             # Transporter zone columns with colored and bold 'X'
             # L1 - Transporter 1 lift
@@ -2570,26 +2581,15 @@ def generate_enhanced_simulation_report(output_dir):
                 r, g, b = hex_to_rgb(color_map[1])
                 pdf.set_text_color(r, g, b)
                 pdf.set_font('Arial', 'B', 9)  # Bold for X
-                pdf.cell(col_widths[2], 6, 'X', 1, 0, 'C', fill)
+                pdf.cell(col_widths[3], 6, 'X', 1, 0, 'C', fill)
                 pdf.set_font('Arial', '', 9)  # Reset to regular
                 pdf.set_text_color(0, 0, 0)  # Reset to black
             else:
-                pdf.cell(col_widths[2], 6, '', 1, 0, 'C', fill)
+                pdf.cell(col_widths[3], 6, '', 1, 0, 'C', fill)
             
             # S1 - Transporter 1 sink
             if s1_has_mark and color_map and 1 in color_map:
                 r, g, b = hex_to_rgb(color_map[1])
-                pdf.set_text_color(r, g, b)
-                pdf.set_font('Arial', 'B', 9)  # Bold for X
-                pdf.cell(col_widths[3], 6, 'X', 1, 0, 'C', fill)
-                pdf.set_font('Arial', '', 9)  # Reset to regular
-                pdf.set_text_color(0, 0, 0)
-            else:
-                pdf.cell(col_widths[3], 6, '', 1, 0, 'C', fill)
-            
-            # L2 - Transporter 2 lift
-            if l2_has_mark and color_map and 2 in color_map:
-                r, g, b = hex_to_rgb(color_map[2])
                 pdf.set_text_color(r, g, b)
                 pdf.set_font('Arial', 'B', 9)  # Bold for X
                 pdf.cell(col_widths[4], 6, 'X', 1, 0, 'C', fill)
@@ -2598,8 +2598,8 @@ def generate_enhanced_simulation_report(output_dir):
             else:
                 pdf.cell(col_widths[4], 6, '', 1, 0, 'C', fill)
             
-            # S2 - Transporter 2 sink
-            if s2_has_mark and color_map and 2 in color_map:
+            # L2 - Transporter 2 lift
+            if l2_has_mark and color_map and 2 in color_map:
                 r, g, b = hex_to_rgb(color_map[2])
                 pdf.set_text_color(r, g, b)
                 pdf.set_font('Arial', 'B', 9)  # Bold for X
@@ -2609,27 +2609,38 @@ def generate_enhanced_simulation_report(output_dir):
             else:
                 pdf.cell(col_widths[5], 6, '', 1, 0, 'C', fill)
             
+            # S2 - Transporter 2 sink
+            if s2_has_mark and color_map and 2 in color_map:
+                r, g, b = hex_to_rgb(color_map[2])
+                pdf.set_text_color(r, g, b)
+                pdf.set_font('Arial', 'B', 9)  # Bold for X
+                pdf.cell(col_widths[6], 6, 'X', 1, 0, 'C', fill)
+                pdf.set_font('Arial', '', 9)  # Reset to regular
+                pdf.set_text_color(0, 0, 0)
+            else:
+                pdf.cell(col_widths[6], 6, '', 1, 0, 'C', fill)
+            
             # Rest of the columns
-            pdf.cell(col_widths[6], 6, str(row['Name']), 1, 0, 'L', fill)
-            pdf.cell(col_widths[7], 6, f"{int(row['X Position'])}", 1, 0, 'R', fill)
+            pdf.cell(col_widths[7], 6, str(row['Name']), 1, 0, 'L', fill)
+            pdf.cell(col_widths[8], 6, f"{int(row['X Position'])}", 1, 0, 'R', fill)
             
             # Drop (s) - bold if non-zero
             drop_time = float(row['Dropping_Time'])
             if drop_time != 0:
                 pdf.set_font('Arial', 'B', 9)
-                pdf.cell(col_widths[8], 6, f"{drop_time:.1f}", 1, 0, 'R', fill)
+                pdf.cell(col_widths[9], 6, f"{drop_time:.1f}", 1, 0, 'R', fill)
                 pdf.set_font('Arial', '', 9)
             else:
-                pdf.cell(col_widths[8], 6, f"{drop_time:.1f}", 1, 0, 'R', fill)
+                pdf.cell(col_widths[9], 6, f"{drop_time:.1f}", 1, 0, 'R', fill)
             
             # Device (s) - bold if non-zero
             device_delay = float(row['Device_delay'])
             if device_delay != 0:
                 pdf.set_font('Arial', 'B', 9)
-                pdf.cell(col_widths[9], 6, f"{device_delay:.1f}", 1, 0, 'R', fill)
+                pdf.cell(col_widths[10], 6, f"{device_delay:.1f}", 1, 0, 'R', fill)
                 pdf.set_font('Arial', '', 9)
             else:
-                pdf.cell(col_widths[9], 6, f"{device_delay:.1f}", 1, 0, 'R', fill)
+                pdf.cell(col_widths[10], 6, f"{device_delay:.1f}", 1, 0, 'R', fill)
             
             pdf.ln()
         
@@ -2778,15 +2789,14 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.section_title('Simulation Configuration')
     pdf.set_font('Arial', '', 9)
     
-    # Stations-taulukko (tiivistetty)
-    stations_path = os.path.join(init_dir, 'stations.csv')
-    if os.path.exists(stations_path):
-        stations_df = pd.read_csv(stations_path)
-        pdf.set_font('Arial', 'B', 9)
-        pdf.cell(0, 6, 'Stations Configuration', 0, 1)
-        pdf.set_font('Arial', '', 8)
-        pdf.multi_cell(0, 5, f"Total stations: {len(stations_df)}")
-        pdf.ln(3)
+    # Stations-taulukko (tiivistetty) - Load from JSON
+    from load_stations_json import load_stations_from_json
+    stations_df = load_stations_from_json(init_dir)
+    pdf.set_font('Arial', 'B', 9)
+    pdf.cell(0, 6, 'Stations Configuration', 0, 1)
+    pdf.set_font('Arial', '', 8)
+    pdf.multi_cell(0, 5, f"Total stations: {len(stations_df)}")
+    pdf.ln(3)
     
     # Transporters-info
     transporter_phases = pd.read_csv(os.path.join(output_dir, 'reports', 'transporter_phases.csv'))

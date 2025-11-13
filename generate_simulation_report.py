@@ -21,7 +21,7 @@ def generate_simulation_report(output_dir):
                 vals = (parts + [None]*len(cols))[:len(cols)]
                 rows.append(dict(zip(cols, vals)))
         df = pd.DataFrame(rows)
-        for c in ['Number','X Position','Dropping_Time','Device_delay']:
+        for c in ['Number','Tank','Group','X Position','Dropping_Time','Device_delay']:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors='coerce')
         return df
@@ -144,52 +144,53 @@ def generate_simulation_report(output_dir):
         combined_df = pd.concat(dfs, ignore_index=True)
         combined_df.to_csv(programs_path, index=False)
     
-    if os.path.exists(stations_path):
-        df_st = _read_csv_lenient(stations_path)
-        # Poista Type-sarake jos löytyy
-        if 'Station_type' in df_st.columns:
-            df_st = df_st.drop(columns=['Station_type'])
-        # Lisää Transporter-sarake
-        # Käytä cp_sat-esi-prosessoituja transporter-alueita legacy-tiedoston sijaan
-        transporters_path = os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv')
-        if os.path.exists(transporters_path):
-            df_trans = pd.read_csv(transporters_path)
-            transporter_list = []
-            for _, row in df_st.iterrows():
-                number = row['Number']
-                lifts = []
-                sinks = []
-                for _, t_row in df_trans.iterrows():
-                    tid = int(t_row['Transporter_id'])
-                    if int(t_row['Min_Lift_Station']) <= number <= int(t_row['Max_Lift_Station']):
-                        lifts.append(tid)
-                    if int(t_row['Min_Sink_Station']) <= number <= int(t_row['Max_Sink_Station']):
-                        sinks.append(tid)
-                parts = []
-                for tid in sorted(set(lifts + sinks)):
-                    has_lift = tid in lifts
-                    has_sink = tid in sinks
-                    if has_lift and has_sink:
-                        parts.append(f"{tid}L-{tid}S")
-                    elif has_lift:
-                        parts.append(f"{tid}L")
-                    elif has_sink:
-                        parts.append(f"{tid}S")
-                transporter_str = " / ".join(parts)
-                transporter_list.append(transporter_str)
-            df_st.insert(df_st.columns.get_loc('Name'), 'Transporter', transporter_list)
-        pdf.set_font('Arial', 'B', 14)
-        pdf.cell(0, 10, 'Stations', ln=1, align='L')
-        pdf.set_font('Arial', '', 10)
-        # Add English explanation below the Stations heading
-        stations_expl = (
-            "The Stations table lists all surface treatment line stations and their key properties. "
-            "Columns show the station number, group, name, x-coordinate, draining and device delays, and hoist/lift restrictions. "
-            "Device delay combines all possible equipment delays affecting lift and sink times, such as covers or transfer devices.\n\n"
-            "The Transporter column indicates which hoists (L = lift, S = sink) can operate at each station. "
-            "For example, '1L-1S / 2L' means the station can be both lifted and sunk by hoist 1, and lifted by hoist 2. "
-            "The column uses the format '<hoist>L-<hoist>S / <hoist>L...', where L = lift and S = sink permission for each hoist."
-        )
+    # Load stations from JSON
+    from load_stations_json import load_stations_from_json
+    df_st = load_stations_from_json(init_dir)
+    # Poista Type-sarake jos löytyy
+    if 'Station_type' in df_st.columns:
+        df_st = df_st.drop(columns=['Station_type'])
+    # Lisää Transporter-sarake
+    # Käytä cp_sat-esi-prosessoituja transporter-alueita legacy-tiedoston sijaan
+    transporters_path = os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv')
+    if os.path.exists(transporters_path):
+        df_trans = pd.read_csv(transporters_path)
+        transporter_list = []
+        for _, row in df_st.iterrows():
+            number = row['Number']
+            lifts = []
+            sinks = []
+            for _, t_row in df_trans.iterrows():
+                tid = int(t_row['Transporter_id'])
+                if int(t_row['Min_Lift_Station']) <= number <= int(t_row['Max_Lift_Station']):
+                    lifts.append(tid)
+                if int(t_row['Min_Sink_Station']) <= number <= int(t_row['Max_Sink_Station']):
+                    sinks.append(tid)
+            parts = []
+            for tid in sorted(set(lifts + sinks)):
+                has_lift = tid in lifts
+                has_sink = tid in sinks
+                if has_lift and has_sink:
+                    parts.append(f"{tid}L-{tid}S")
+                elif has_lift:
+                    parts.append(f"{tid}L")
+                elif has_sink:
+                    parts.append(f"{tid}S")
+            transporter_str = " / ".join(parts)
+            transporter_list.append(transporter_str)
+        df_st.insert(df_st.columns.get_loc('Name'), 'Transporter', transporter_list)
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'Stations', ln=1, align='L')
+    pdf.set_font('Arial', '', 10)
+    # Add English explanation below the Stations heading
+    stations_expl = (
+        "The Stations table lists all surface treatment line stations and their key properties. "
+        "Columns show the station number, group, name, x-coordinate, draining and device delays, and hoist/lift restrictions. "
+        "Device delay combines all possible equipment delays affecting lift and sink times, such as covers or transfer devices.\n\n"
+        "The Transporter column indicates which hoists (L = lift, S = sink) can operate at each station. "
+        "For example, '1L-1S / 2L' means the station can be both lifted and sunk by hoist 1, and lifted by hoist 2. "
+        "The column uses the format '<hoist>L-<hoist>S / <hoist>L...', where L = lift and S = sink permission for each hoist."
+    )
     pdf.multi_cell(0, 6, stations_expl)
     pdf.ln(8)  # Add vertical space before the table
     original_colnames = list(df_st.columns)

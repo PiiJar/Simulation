@@ -25,7 +25,7 @@ def visualize_matrix(output_dir):
                 vals = (parts + [None]*len(cols))[:len(cols)]
                 rows.append(dict(zip(cols, vals)))
         df = pd.DataFrame(rows)
-        for c in ['Number','X Position','Dropping_Time','Device_delay']:
+        for c in ['Number','Tank','Group','X Position','Dropping_Time','Device_delay']:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors='coerce')
         return df
@@ -34,12 +34,12 @@ def visualize_matrix(output_dir):
     os.makedirs(reports_dir, exist_ok=True)
     log_file = os.path.join(logs_dir, "simulation_log.csv")
     matrix_file = os.path.join(logs_dir, "line_matrix.csv")
-    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
+    init_dir = os.path.join(output_dir, "initialization")
 
-    for file_path in [matrix_file, stations_file]:
-        if not os.path.exists(file_path):
-            logger.log_error(f"Required file not found: {file_path}")
-            raise FileNotFoundError(f"Required file not found: {file_path}")
+    matrix_exists = os.path.exists(matrix_file)
+    if not matrix_exists:
+        logger.log_error(f"Required file not found: {matrix_file}")
+        raise FileNotFoundError(f"Required file not found: {matrix_file}")
 
     # Read data
     df = pd.read_csv(matrix_file)
@@ -53,7 +53,10 @@ def visualize_matrix(output_dir):
         for time_col in ["EntryTime", "ExitTime"]:
             if time_col in df.columns:
                 df[time_col] = df[time_col] - min_time
-    stations_df = _read_csv_lenient(stations_file)
+    
+    # Load stations from JSON
+    from load_stations_json import load_stations_from_json
+    stations_df = load_stations_from_json(init_dir)
     if 'Number' in stations_df.columns:
         stations_df['Number'] = stations_df['Number'].astype(int)
     logger.log_data(f"Loaded stretched matrix: {len(df)} stages, {len(stations_df)} stations")

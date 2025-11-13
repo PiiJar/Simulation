@@ -64,12 +64,18 @@ def preprocess_for_cpsat(output_dir):
                 rows.append(dict(zip(cols, vals)))
         df = pd.DataFrame(rows)
         # Coerce common numeric columns
-        for c in ['Number', 'X Position', 'Dropping_Time', 'Device_delay']:
+        for c in ['Number', 'Tank', 'Group', 'X Position', 'Dropping_Time', 'Device_delay']:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors='coerce')
+        # Convert to integers where appropriate
+        for c in ['Number', 'Tank', 'Group']:
+            if c in df.columns:
+                df[c] = df[c].fillna(0).astype(int)
         return df
 
-    stations = _read_csv_lenient(os.path.join(init_dir, "stations.csv"))
+    # Load stations from JSON
+    from load_stations_json import load_stations_from_json
+    stations = load_stations_from_json(init_dir)
 
     # Uudet määrittelyt: tehtäväalueet ja fysiikka
     task_areas_path = os.path.join(init_dir, "transporters _task_areas.csv")

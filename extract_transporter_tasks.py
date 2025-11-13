@@ -17,7 +17,7 @@ def _read_csv_lenient(path: str):
             vals = (parts + [None]*len(cols))[:len(cols)]
             rows.append(dict(zip(cols, vals)))
     df = pd.DataFrame(rows)
-    for c in ['Number','X Position','Dropping_Time','Device_delay']:
+    for c in ['Number','Tank','Group','X Position','Dropping_Time','Device_delay']:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce')
     return df
@@ -72,12 +72,11 @@ def extract_transporter_tasks(output_dir):
     # Lataa asema- ja nostintiedot nostinvalintaa varten
     stations_file = os.path.join(output_dir, "initialization", "stations.csv")
     # Käytetään CP-SAT esiprosessoituja nostimia legacy-tiedoston sijaan
+    init_dir = os.path.join(output_dir, "initialization")
     transporters_file = os.path.join(output_dir, "cp_sat", "cp_sat_transporters.csv")
-    production_file = os.path.join(output_dir, "initialization", "production.csv")
-    start_positions_file = os.path.join(output_dir, "initialization", "transporters_start_positions.csv")
+    production_file = os.path.join(init_dir, "production.csv")
+    start_positions_file = os.path.join(init_dir, "transporters_start_positions.csv")
     
-    if not os.path.exists(stations_file):
-        raise FileNotFoundError(f"stations.csv ei löydy: {stations_file}")
     if not os.path.exists(transporters_file):
         raise FileNotFoundError(f"cp_sat_transporters.csv ei löydy: {transporters_file}")
     if not os.path.exists(production_file):
@@ -85,7 +84,9 @@ def extract_transporter_tasks(output_dir):
     if not os.path.exists(start_positions_file):
         raise FileNotFoundError(f"Transporters_start_positions.csv ei löydy: {start_positions_file}")
 
-    stations_df = _read_csv_lenient(stations_file)
+    # Load stations from JSON
+    from load_stations_json import load_stations_from_json
+    stations_df = load_stations_from_json(init_dir)
     transporters_df = pd.read_csv(transporters_file)
     production_df = pd.read_csv(production_file)
     start_positions_df = pd.read_csv(start_positions_file)
@@ -409,11 +410,13 @@ def create_detailed_movements(output_dir):
     
     # Lataa nostintiedot alkupaikkojen määrittämiseksi (CP-SAT esiprosessoidut)
     transporters_file = os.path.join(output_dir, "cp_sat", "cp_sat_transporters.csv")
-    stations_file = os.path.join(output_dir, "initialization", "stations.csv")
-    production_file = os.path.join(output_dir, "initialization", "production.csv")
+    init_dir = os.path.join(output_dir, "initialization")
+    production_file = os.path.join(init_dir, "production.csv")
     
     transporters_df = pd.read_csv(transporters_file)
-    stations_df = _read_csv_lenient(stations_file)
+    # Load stations from JSON
+    from load_stations_json import load_stations_from_json
+    stations_df = load_stations_from_json(init_dir)
     production_df = pd.read_csv(production_file)
     
     # Laske nostimien alkupaikat tiedostosta (dynaaminen, ei kovakoodauksia)
