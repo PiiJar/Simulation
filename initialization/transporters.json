@@ -1,0 +1,145 @@
+{
+  "transporters": [
+    {
+      "id": 1,
+      "model": "2D",
+      "start_station": 101,
+      "physics": {
+        "x_acceleration_time_s": 2.0,
+        "x_deceleration_time_s": 2.0,
+        "x_max_speed_mm_s": 300,
+        "y_acceleration_time_s": 0.0,
+        "y_deceleration_time_s": 0.0,
+        "y_max_speed_mm_s": 0,
+        "z_total_distance_mm": 1500,
+        "z_slow_distance_dry_mm": 300,
+        "z_slow_distance_wet_mm": 1000,
+        "z_slow_end_distance_mm": 50,
+        "z_slow_speed_mm_s": 100,
+        "z_fast_speed_mm_s": 200,
+        "avoid_distance_mm": 2000
+      },
+      "task_areas": {
+        "line_100": {
+          "min_lift_station": 101,
+          "max_lift_station": 111,
+          "min_sink_station": 101,
+          "max_sink_station": 114
+        },
+        "line_200": {
+          "min_lift_station": 0,
+          "max_lift_station": 0,
+          "min_sink_station": 0,
+          "max_sink_station": 0
+        },
+        "line_300": {
+          "min_lift_station": 0,
+          "max_lift_station": 0,
+          "min_sink_station": 0,
+          "max_sink_station": 0
+        },
+        "line_400": {
+          "min_lift_station": 0,
+          "max_lift_station": 0,
+          "min_sink_station": 0,
+          "max_sink_station": 0
+        }
+      }
+    },
+    {
+      "id": 2,
+      "model": "2D",
+      "start_station": 118,
+      "physics": {
+        "x_acceleration_time_s": 2.0,
+        "x_deceleration_time_s": 2.0,
+        "x_max_speed_mm_s": 300,
+        "y_acceleration_time_s": 0.0,
+        "y_deceleration_time_s": 0.0,
+        "y_max_speed_mm_s": 0,
+        "z_total_distance_mm": 1500,
+        "z_slow_distance_dry_mm": 300,
+        "z_slow_distance_wet_mm": 1000,
+        "z_slow_end_distance_mm": 50,
+        "z_slow_speed_mm_s": 100,
+        "z_fast_speed_mm_s": 200,
+        "avoid_distance_mm": 2000
+      },
+      "task_areas": {
+        "line_100": {
+          "min_lift_station": 112,
+          "max_lift_station": 118,
+          "min_sink_station": 111,
+          "max_sink_station": 118
+        },
+        "line_200": {
+          "min_lift_station": 0,
+          "max_lift_station": 0,
+          "min_sink_station": 0,
+          "max_sink_station": 0
+        },
+        "line_300": {
+          "min_lift_station": 0,
+          "max_lift_station": 0,
+          "min_sink_station": 0,
+          "max_sink_station": 0
+        },
+        "line_400": {
+          "min_lift_station": 0,
+          "max_lift_station": 0,
+          "min_sink_station": 0,
+          "max_sink_station": 0
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "description": "Transporter configuration including physics, task areas, and start positions",
+    "version": "1.0",
+    "fields": {
+      "id": "Unique transporter identifier",
+      "model": "Transporter model type (e.g., '2D' for two-dimensional movement)",
+      "start_station": "Station number where transporter begins operation",
+      "physics": {
+        "x_acceleration_time_s": "Time in seconds to reach maximum speed in X direction (horizontal along line)",
+        "x_deceleration_time_s": "Time in seconds to decelerate from maximum speed to stop in X direction",
+        "x_max_speed_mm_s": "Maximum X-axis travel speed in millimeters per second",
+        "y_acceleration_time_s": "Time in seconds to reach maximum speed in Y direction (horizontal perpendicular to line, 0 for 2D)",
+        "y_deceleration_time_s": "Time in seconds to decelerate from maximum speed to stop in Y direction (0 for 2D)",
+        "y_max_speed_mm_s": "Maximum Y-axis travel speed in millimeters per second (0 for 2D transporters)",
+        "z_total_distance_mm": "Total vertical (Z-axis) travel distance in millimeters",
+        "z_slow_distance_dry_mm": "Vertical distance requiring slow speed when dry (no load) in mm",
+        "z_slow_distance_wet_mm": "Vertical distance requiring slow speed when wet (with load) in mm",
+        "z_slow_end_distance_mm": "Final slow approach distance before stopping in mm",
+        "z_slow_speed_mm_s": "Slow vertical movement speed in mm/s",
+        "z_fast_speed_mm_s": "Fast vertical movement speed in mm/s",
+        "avoid_distance_mm": "Minimum allowed distance in X direction (horizontal along line) between this transporter and other transporters, in millimeters (0 = no restriction). This is used for collision avoidance when multiple transporters share the same X-axis track."
+      },
+      "task_areas": {
+        "description": "Defines operational boundaries for each production line",
+        "line_xxx": {
+          "min_lift_station": "Lowest station number where transporter can lift loads",
+          "max_lift_station": "Highest station number where transporter can lift loads",
+          "min_sink_station": "Lowest station number where transporter can lower loads",
+          "max_sink_station": "Highest station number where transporter can lower loads"
+        },
+        "notes": [
+          "2D transporters typically serve only one line (one line_xxx with non-zero values)",
+          "3D transporters can serve multiple lines (multiple line_xxx with non-zero values)",
+          "Station numbers with value 0 indicate the line is not operational or not assigned to this transporter"
+        ]
+      }
+    },
+    "units": {
+      "time": "seconds (s)",
+      "speed": "millimeters per second (mm/s)",
+      "distance": "millimeters (mm)"
+    },
+    "notes": [
+      "Station numbers with value 0 indicate the line is not operational or not assigned to this transporter",
+      "Task areas define operational zones - transporters cannot operate outside their assigned min/max ranges",
+      "Physics parameters are critical for accurate movement time calculations in simulation",
+      "2D transporters serve a single line, 3D transporters can serve multiple lines"
+    ]
+  }
+}

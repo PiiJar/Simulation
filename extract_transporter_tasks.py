@@ -75,23 +75,20 @@ def extract_transporter_tasks(output_dir):
     init_dir = os.path.join(output_dir, "initialization")
     transporters_file = os.path.join(output_dir, "cp_sat", "cp_sat_transporters.csv")
     production_file = os.path.join(init_dir, "production.csv")
-    start_positions_file = os.path.join(init_dir, "transporters_start_positions.csv")
     
     if not os.path.exists(transporters_file):
         raise FileNotFoundError(f"cp_sat_transporters.csv ei löydy: {transporters_file}")
     if not os.path.exists(production_file):
         raise FileNotFoundError(f"Production.csv ei löydy: {production_file}")
-    if not os.path.exists(start_positions_file):
-        raise FileNotFoundError(f"Transporters_start_positions.csv ei löydy: {start_positions_file}")
 
-    # Load stations from JSON
+    # Load stations and transporter start positions from JSON
     from load_stations_json import load_stations_from_json
+    from load_transporters_json import load_transporters_from_json
+    
     stations_df = load_stations_from_json(init_dir)
+    _, _, start_positions_df = load_transporters_from_json(init_dir)
     transporters_df = pd.read_csv(transporters_file)
     production_df = pd.read_csv(production_file)
-    start_positions_df = pd.read_csv(start_positions_file)
-    # Strip whitespace from column names to avoid KeyError due to leading spaces
-    start_positions_df.columns = start_positions_df.columns.str.strip()
     
     # Luo batch-treatment_program -> start_station mapping
     production_df["Batch"] = production_df["Batch"].astype(int)
@@ -101,10 +98,9 @@ def extract_transporter_tasks(output_dir):
         for _, row in production_df.iterrows()
     }
 
-    # Lue nostimien alkupaikat tiedostosta
+    # Lue nostimien alkupaikat JSON:sta
     transporter_start_positions = {}
     for _, row in start_positions_df.iterrows():
-        # Use correct column names from CSV: 'Transporter' and 'Start_station'
         transporter_start_positions[int(row['Transporter'])] = int(row['Start_station'])
     
     # Aputyökalut: turvalliset hakijat
@@ -420,9 +416,10 @@ def create_detailed_movements(output_dir):
     production_df = pd.read_csv(production_file)
     
     # Laske nostimien alkupaikat tiedostosta (dynaaminen, ei kovakoodauksia)
-    start_positions_file = os.path.join(output_dir, "initialization", "transporters_start_positions.csv")
-    start_positions_df = pd.read_csv(start_positions_file)
-    start_positions_df.columns = start_positions_df.columns.str.strip()
+    # Load transporter start positions from JSON
+    from load_transporters_json import load_transporters_from_json
+    _, _, start_positions_df = load_transporters_from_json(init_dir)
+    
     transporter_start_positions = {}
     for _, row in start_positions_df.iterrows():
         transporter_start_positions[int(row['Transporter'])] = int(row['Start_station'])

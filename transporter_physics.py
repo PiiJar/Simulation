@@ -16,36 +16,71 @@ def _num(val, default=0.0):
 def calculate_physics_transfer_time(from_station_row, to_station_row, transporter_row):
     """
     Laskee siirtoajan asemien välillä fysiikkapohjaisesti.
-    from_station_row, to_station_row: pandas DataFrame -rivit, joissa on X-koordinaatit
+    Tukee sekä 2D (X) että 3D (X+Y) liikettä.
+    from_station_row, to_station_row: pandas DataFrame -rivit, joissa on X ja Y koordinaatit
     transporter_row: pandas DataFrame -rivi, jossa on transporter-parametrit
     """
     x1 = _num(from_station_row.get('X Position'), 0.0)
     x2 = _num(to_station_row.get('X Position'), 0.0)
-    distance = abs(x2 - x1)
-    # Lue oikeat sarakkeet Transporters.csv:n otsikon mukaan
-    max_speed = _num(transporter_row.get('Max_speed (mm/s)'), 0.0)
-    acc_time = _num(transporter_row.get('Acceleration_time (s)'), 0.0)
-    dec_time = _num(transporter_row.get('Deceleration_time (s)'), 0.0)
-    if distance == 0 or max_speed == 0 or acc_time == 0 or dec_time == 0:
-        return 0.0
-    # Kiihtyvyys ja hidastus (mm/s^2)
-    accel = max_speed / acc_time
-    decel = max_speed / dec_time
-    t_accel = max_speed / accel
-    t_decel = max_speed / decel
-    s_accel = 0.5 * accel * t_accel ** 2
-    s_decel = 0.5 * decel * t_decel ** 2
-    if distance < s_accel + s_decel:
-        # Kolmion muotoinen nopeusprofiili (ei saavuteta maksiminopeutta)
-        # Oikea kaava: t_accel = sqrt(distance / accel), t_decel = sqrt(distance / decel)
-        t_accel = np.sqrt(distance / accel)
-        t_decel = np.sqrt(distance / decel)
-        return round(t_accel + t_decel, 1)
-    else:
-        # Trapezoidinen profiili
-        s_const = distance - s_accel - s_decel
-        t_const = s_const / max_speed
-        return round(t_accel + t_const + t_decel, 1)
+    y1 = _num(from_station_row.get('Y Position'), 0.0)
+    y2 = _num(to_station_row.get('Y Position'), 0.0)
+    
+    x_distance = abs(x2 - x1)
+    y_distance = abs(y2 - y1)
+    
+    # X-suunnan aika
+    x_max_speed = _num(transporter_row.get('X_max_speed (mm/s)'), 0.0)
+    x_acc_time = _num(transporter_row.get('X_acceleration_time (s)'), 0.0)
+    x_dec_time = _num(transporter_row.get('X_deceleration_time (s)'), 0.0)
+    
+    x_time = 0.0
+    if x_distance > 0 and x_max_speed > 0 and x_acc_time > 0 and x_dec_time > 0:
+        x_accel = x_max_speed / x_acc_time
+        x_decel = x_max_speed / x_dec_time
+        t_accel = x_max_speed / x_accel
+        t_decel = x_max_speed / x_decel
+        s_accel = 0.5 * x_accel * t_accel ** 2
+        s_decel = 0.5 * x_decel * t_decel ** 2
+        
+        if x_distance < s_accel + s_decel:
+            # Kolmion muotoinen nopeusprofiili
+            t_accel = np.sqrt(x_distance / x_accel)
+            t_decel = np.sqrt(x_distance / x_decel)
+            x_time = t_accel + t_decel
+        else:
+            # Trapezoidinen profiili
+            s_const = x_distance - s_accel - s_decel
+            t_const = s_const / x_max_speed
+            x_time = t_accel + t_const + t_decel
+    
+    # Y-suunnan aika (vain 3D-nostimille)
+    y_max_speed = _num(transporter_row.get('Y_max_speed (mm/s)'), 0.0)
+    y_acc_time = _num(transporter_row.get('Y_acceleration_time (s)'), 0.0)
+    y_dec_time = _num(transporter_row.get('Y_deceleration_time (s)'), 0.0)
+    
+    y_time = 0.0
+    if y_distance > 0 and y_max_speed > 0 and y_acc_time > 0 and y_dec_time > 0:
+        y_accel = y_max_speed / y_acc_time
+        y_decel = y_max_speed / y_dec_time
+        t_accel = y_max_speed / y_accel
+        t_decel = y_max_speed / y_decel
+        s_accel = 0.5 * y_accel * t_accel ** 2
+        s_decel = 0.5 * y_decel * t_decel ** 2
+        
+        if y_distance < s_accel + s_decel:
+            # Kolmion muotoinen nopeusprofiili
+            t_accel = np.sqrt(y_distance / y_accel)
+            t_decel = np.sqrt(y_distance / y_decel)
+            y_time = t_accel + t_decel
+        else:
+            # Trapezoidinen profiili
+            s_const = y_distance - s_accel - s_decel
+            t_const = s_const / y_max_speed
+            y_time = t_accel + t_const + t_decel
+    
+    # X ja Y liikkeet tapahtuvat samanaikaisesti, joten kokonaisaika on pidempi kahdesta
+    total_time = max(x_time, y_time)
+    return round(total_time, 1)
 
 def calculate_lift_time(station_row, transporter_row):
     """Nostoajan arviointi.

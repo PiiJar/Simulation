@@ -574,14 +574,15 @@ class CpSatPhase2Optimizer:
 
     def add_cross_transporter_avoid_constraints(self):
         """
-        Vältä kahden eri nostimen samanaikainen toiminta liian lähekkäin.
+        Vältä kahden eri nostimen samanaikainen toiminta liian lähekkäin X-suunnassa.
 
         Sääntö: jos kahden tehtävän (eri transportereilla) päätepisteiden pienin etäisyys
-        asemakoordinaateissa (X Position) on alle avoid_pair = max(Avoid_i, Avoid_j),
+        X-akselin suunnassa (X Position) on alle avoid_pair = max(Avoid_distance_i, Avoid_distance_j) millimetriä,
         niiden aikavälit eivät saa mennä päällekkäin.
 
         Huom: konservatiivinen approksimaatio – tarkistetaan vain from/to päätepisteiden
-        etäisyydet, ei koko liikeradan lähentymistä.
+        etäisyydet X-suunnassa, ei koko liikeradan lähentymistä.
+        HUOM: Avoid-etäisyys koskee vain X-suunnan liikettä (horizontal along line).
         """
         # Aikamarginaali sekunteina (perusmarginaali). Oletus 3 s.
         import math  # käytetään dynaamisen marginaalin pyöristyksessä
@@ -600,12 +601,13 @@ class CpSatPhase2Optimizer:
         except Exception:
             dyn_per_mm_sec = 0.0
 
-        # Kerää Avoid-arvot
+        # Kerää Avoid_distance-arvot (millimetreinä)
         avoid_by_t: Dict[int, int] = {}
         if "Transporter_id" in self.transporters_df.columns:
             for _, r in self.transporters_df.iterrows():
                 t = int(r.get("Transporter_id"))
-                avoid_val = int(pd.to_numeric(r.get("Avoid", 0), errors="coerce") if "Avoid" in r else 0)
+                # Käytetään nyt Avoid_distance (mm) -saraketta millimetreinä
+                avoid_val = int(pd.to_numeric(r.get("Avoid_distance (mm)", 0), errors="coerce"))
                 avoid_by_t[t] = max(0, avoid_val)
 
         # Apufunktio asemien X-koordinaatille
