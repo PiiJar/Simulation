@@ -69,9 +69,12 @@ def generate_simulation_report(output_dir):
     if os.path.exists(first_page_img):
         try:
             # Yritä muuntaa PNG → JPEG (poistaa mahdollisen alfa-kanavan, nopeampi upotus)
+            # Tallenna vain reports/images/ kansioon
             try:
                 from PIL import Image  # type: ignore
-                jpg_path = os.path.join(reports_dir, 'matrix_timeline_page_1.jpg')
+                images_dir = os.path.join(reports_dir, 'images')
+                jpg_path = os.path.join(images_dir, 'matrix_timeline_page_1.jpg')
+                
                 with Image.open(first_page_img) as im:
                     if im.mode in ('RGBA', 'LA'):
                         bg = Image.new('RGB', im.size, (255, 255, 255))
@@ -79,7 +82,10 @@ def generate_simulation_report(output_dir):
                         im_to_save = bg
                     else:
                         im_to_save = im.convert('RGB')
+                    
+                    # Tallenna vain images-kansioon
                     im_to_save.save(jpg_path, format='JPEG', quality=85)
+                
                 cover_image_path = jpg_path
             except Exception:
                 cover_image_path = first_page_img

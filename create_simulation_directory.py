@@ -76,8 +76,9 @@ def create_simulation_directory(base_dir="output"):
             f.write(f"{timestamp},INIT,Documentation file: {os.path.basename(file)}\n")
         f.write(f"{timestamp},STEP,STEP 1 COMPLETED: SIMULATION DIRECTORY READY\n")
 
-    # Create reports directory
+    # Create reports directory and subdirectories
     reports_dir = os.path.join(full_path, "reports")
-    os.makedirs(reports_dir, exist_ok=True)
+    images_dir = os.path.join(reports_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
 
     return full_path

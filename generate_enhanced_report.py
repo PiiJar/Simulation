@@ -2215,8 +2215,10 @@ def generate_enhanced_simulation_report(output_dir):
     
     if os.path.exists(first_page_img):
         try:
-            # Muunna JPEG:ksi ja laske korkeus
-            jpg_path = os.path.join(reports_dir, 'matrix_timeline_page_1.jpg')
+            # Muunna JPEG:ksi ja tallenna vain reports/images/ kansioon
+            images_dir = os.path.join(reports_dir, 'images')
+            jpg_path = os.path.join(images_dir, 'matrix_timeline_page_1.jpg')
+            
             with Image.open(first_page_img) as im:
                 if im.mode in ('RGBA', 'LA'):
                     bg = Image.new('RGB', im.size, (255, 255, 255))
@@ -2224,6 +2226,8 @@ def generate_enhanced_simulation_report(output_dir):
                     im_to_save = bg
                 else:
                     im_to_save = im.convert('RGB')
+                
+                # Tallenna vain images-kansioon
                 im_to_save.save(jpg_path, format='JPEG', quality=85)
                 
                 # Laske kuvan korkeus PDF:ssä (kasvatettu 80%)
@@ -2232,7 +2236,7 @@ def generate_enhanced_simulation_report(output_dir):
                 h = (img_h / img_w) * w
                 image_end_y = pdf.get_y() + h
             
-            # Keskitä kuva
+            # Keskitä kuva - käytä images-kansion tiedostoa
             x_offset = (pdf.w - w) / 2
             pdf.image(jpg_path, x=x_offset, y=pdf.get_y(), w=w)
         except Exception as e:

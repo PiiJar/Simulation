@@ -47,12 +47,35 @@ def visualize_matrix(output_dir):
     for col in ["Batch", "Treatment_program", "Stage", "Station"]:
         if col in df.columns:
             df[col] = df[col].astype(int)
-    # Siirrä x-akselin nollakohta origoon (vähennä pienin EntryTime kaikista ajoista)
-    if "EntryTime" in df.columns:
-        min_time = df["EntryTime"].min()
-        for time_col in ["EntryTime", "ExitTime"]:
-            if time_col in df.columns:
-                df[time_col] = df[time_col] - min_time
+    
+    # NOTE: No time normalization needed - simulation starts at time 0
+    # All times (batches and transporters) are already aligned to same timeline
+    
+    # Calculate ramp-up and ramp-down times from line_matrix (not cp_sat_batch_schedule)
+    # This ensures consistency with the visualized data
+    ramp_up_end = None
+    ramp_down_start = None
+    ramp_down_end = None
+    
+    try:
+        if not df.empty:
+            # Find first batch's last stage entry time (ramp-up end)
+            first_batch = df[df['Batch'] == df['Batch'].min()]
+            last_stage_of_first = first_batch[first_batch['Stage'] == first_batch['Stage'].max()].iloc[0]
+            ramp_up_end = last_stage_of_first['EntryTime']
+            
+            # Find when last batch started (ramp-down start)
+            last_batch_num = df['Batch'].max()
+            last_batch = df[df['Batch'] == last_batch_num]
+            first_stage_of_last = last_batch[last_batch['Stage'] == last_batch['Stage'].min()].iloc[0]
+            ramp_down_start = first_stage_of_last['EntryTime']
+            
+            # Find when the last finishing batch ends (ramp-down end)
+            ramp_down_end = df['ExitTime'].max()
+            
+            logger.log_data(f"Production phases (from line_matrix): ramp_up=[0 to {ramp_up_end}s], steady=[{ramp_up_end}s to {ramp_down_start}s], ramp_down=[{ramp_down_start}s to {ramp_down_end}s]")
+    except Exception as e:
+        logger.log_error(f"Could not calculate ramp times from line_matrix: {e}")
     
     # Load stations from JSON
     from load_stations_json import load_stations_from_json
@@ -61,9 +84,8 @@ def visualize_matrix(output_dir):
         stations_df['Number'] = stations_df['Number'].astype(int)
     logger.log_data(f"Loaded stretched matrix: {len(df)} stages, {len(stations_df)} stations")
 
-    # X-AKSELI ALKAA AINA NOLLASTA, ei pienimmästä EntryTime:sta
+    # X-axis starts at zero
     max_time = df["ExitTime"].max() if "ExitTime" in df.columns else 0
-    min_time = 0  # KIINTEÄ NOLLA-ALKUPISTE
 
     PAGE_SECONDS = 5400
     n_pages = int(max_time // PAGE_SECONDS) + 1 if max_time > 0 else 1
@@ -104,6 +126,21 @@ def visualize_matrix(output_dir):
         page_start = page * PAGE_SECONDS
         page_end = page_start + PAGE_SECONDS
         fig, ax = plt.subplots(figsize=(16, 10))
+        
+        # Draw ramp-up and ramp-down background areas (light gray)
+        if ramp_up_end is not None and ramp_down_start is not None and ramp_down_end is not None:
+            # Ramp-up area (from 0 to ramp_up_end)
+            if page_start < ramp_up_end:
+                ramp_up_vis_start = max(page_start, 0)
+                ramp_up_vis_end = min(page_end, ramp_up_end)
+                ax.axvspan(ramp_up_vis_start, ramp_up_vis_end, alpha=0.15, color='gray', zorder=0, label='Ramp-up' if page == 0 else '')
+            
+            # Ramp-down area (from ramp_down_start to ramp_down_end)
+            if page_end > ramp_down_start:
+                ramp_down_vis_start = max(page_start, ramp_down_start)
+                ramp_down_vis_end = min(page_end, ramp_down_end)
+                ax.axvspan(ramp_down_vis_start, ramp_down_vis_end, alpha=0.15, color='gray', zorder=0, label='Ramp-down' if page_start <= ramp_down_start < page_end else '')
+        
         movement_file = os.path.join(logs_dir, "transporters_movement.csv")
         if os.path.exists(movement_file):
             move_df = pd.read_csv(movement_file)
