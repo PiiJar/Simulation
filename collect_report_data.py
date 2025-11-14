@@ -9,6 +9,7 @@ import os
 import json
 from datetime import datetime
 from load_customer_json import load_customer_json
+import pandas as pd
 
 
 def collect_report_data(output_dir: str):
@@ -28,11 +29,216 @@ def collect_report_data(output_dir: str):
     # Initialize report data structure
     report_data = {
         "simulation_info": {},
+        "simulation": {},  # Quick access metrics for cards
         "files": {},
         "batch_statistics": [],
         "transporter_statistics": [],
-        "station_utilization": []
+        "station_utilization": [],
+        "treatment_programs": {
+            "used_programs": [],
+            "programs": {}
+        }
     }
+
+    # Load station metadata early for use when summarizing treatment programs
+    station_group_map = {}
+    station_numbers_sorted = []
+    stations_json_path = os.path.join(init_dir, 'stations.json')
+    if os.path.exists(stations_json_path):
+        try:
+            with open(stations_json_path, 'r', encoding='utf-8') as f:
+                stations_payload = json.load(f)
+            station_entries = stations_payload.get('stations', [])
+            for entry in station_entries:
+                station_number = entry.get('number')
+                station_group = entry.get('group', station_number)
+                if station_number is None:
+                    continue
+                try:
+                    number = int(station_number)
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    group = int(station_group) if station_group is not None else number
+                except (TypeError, ValueError):
+                    group = number
+                station_group_map[number] = group
+            station_numbers_sorted = sorted(station_group_map.keys())
+        except Exception as e:
+            print(f"⚠️  Warning: Could not load stations metadata: {e}")
+    else:
+        print(f"⚠️  Warning: stations.json not found at {stations_json_path}")
+
+    def parse_time_to_seconds(time_str):
+        """Convert HH:MM:SS time string to seconds."""
+        if pd.isna(time_str):
+            return 0
+        try:
+            parts = str(time_str).split(':')
+            if len(parts) == 3:
+                hours, minutes, seconds = map(float, parts)
+                return hours * 3600 + minutes * 60 + seconds
+        except Exception:
+            pass
+        return 0
+
+    def calculate_stage_transfer_times(stage: int, min_station: int, max_station: int, df_transfer):
+        """
+        Calculate average transfer times for a specific stage.
+        
+        Args:
+            stage: Stage number
+            min_station: Minimum station number for this stage
+            max_station: Maximum station number for this stage
+            df_transfer: DataFrame with transfer task data
+            
+        Returns:
+            dict with 'transfer_in', 'transfer_out', 'total_in', 'total_out', 'sum_total'
+        """
+        # Find the previous stage's station (where batches come from)
+        # Look for transfers TO current stage stations
+        transfers_to_stage = df_transfer[
+            df_transfer['To_Station'].between(min_station, max_station)
+        ]
+        
+        if len(transfers_to_stage) > 0:
+            # Get unique from_stations (where batches come from)
+            from_stations = transfers_to_stage['From_Station'].unique()
+            
+            # Transfers IN: from previous stage to current stage
+            transfers_in = df_transfer[
+                (df_transfer['From_Station'].isin(from_stations)) &
+                (df_transfer['To_Station'].between(min_station, max_station))
+            ]
+            
+            avg_transfer_in = transfers_in['TransferTime'].mean() if len(transfers_in) > 0 else 0
+            avg_total_in = transfers_in['TotalTaskTime'].mean() if len(transfers_in) > 0 else 0
+        else:
+            avg_transfer_in = 0
+            avg_total_in = 0
+        
+        # Find the next stage's station (where batches go to)
+        transfers_from_stage = df_transfer[
+            df_transfer['From_Station'].between(min_station, max_station)
+        ]
+        
+        if len(transfers_from_stage) > 0:
+            # Get unique to_stations (where batches go to)
+            to_stations = transfers_from_stage['To_Station'].unique()
+            
+            # Transfers OUT: from current stage to next stage
+            transfers_out = df_transfer[
+                (df_transfer['From_Station'].between(min_station, max_station)) &
+                (df_transfer['To_Station'].isin(to_stations))
+            ]
+            
+            avg_transfer_out = transfers_out['TransferTime'].mean() if len(transfers_out) > 0 else 0
+            avg_total_out = transfers_out['TotalTaskTime'].mean() if len(transfers_out) > 0 else 0
+        else:
+            avg_transfer_out = 0
+            avg_total_out = 0
+        
+        return {
+            'transfer_in': avg_transfer_in,
+            'transfer_out': avg_transfer_out,
+            'total_in': avg_total_in,
+            'total_out': avg_total_out,
+            'sum_total': avg_total_in + avg_total_out
+        }
+
+    def summarize_treatment_program(program_number: int, avg_transfer_time: float = 0, avg_total_task_time: float = 0, df_transfer = None):
+        candidates = [
+            os.path.join(init_dir, f'treatment_program_{program_number:03d}.csv')
+        ]
+        df_tp = None
+        source_path = None
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                try:
+                    df_tp = pd.read_csv(candidate)
+                    source_path = candidate
+                    break
+                except Exception as e:
+                    print(f"⚠️  Warning: Could not read treatment program file {candidate}: {e}")
+                    return None
+        if df_tp is None or df_tp.empty:
+            print(f"⚠️  Warning: Treatment program {program_number} definition is missing or empty")
+            return None
+
+        steps = []
+        for _, row in df_tp.iterrows():
+            stage_val = row.get('Stage')
+            min_stat_val = row.get('MinStat')
+            max_stat_val = row.get('MaxStat')
+            min_time_val = row.get('MinTime')
+
+            stage = int(stage_val) if pd.notna(stage_val) else None
+            min_station = int(pd.to_numeric(min_stat_val, errors='coerce')) if pd.notna(min_stat_val) else None
+            max_station = int(pd.to_numeric(max_stat_val, errors='coerce')) if pd.notna(max_stat_val) else None
+            minimum_treatment_time = parse_time_to_seconds(min_time_val)
+
+            lower = min_station
+            upper = max_station
+            if min_station is not None and max_station is not None and min_station > max_station:
+                lower, upper = max_station, min_station
+
+            group_counts = {}
+            if lower is not None and upper is not None and station_numbers_sorted:
+                for station_number in station_numbers_sorted:
+                    if station_number < lower:
+                        continue
+                    if station_number > upper:
+                        break
+                    group_number = station_group_map.get(station_number)
+                    if group_number is None:
+                        continue
+                    group_counts.setdefault(group_number, []).append(station_number)
+
+            min_group = station_group_map.get(min_station) if min_station is not None else None
+            max_group = station_group_map.get(max_station) if max_station is not None else None
+
+            parallel_groups = [
+                {
+                    'group': group_key,
+                    'station_numbers': sorted(numbers),
+                    'count': len(numbers)
+                }
+                for group_key, numbers in sorted(group_counts.items())
+            ]
+
+            min_group_parallel_count = len(group_counts.get(min_group, [])) if min_group is not None else 0
+            
+            # Calculate stage-specific transfer times if df_transfer is available
+            if df_transfer is not None:
+                stage_transfers = calculate_stage_transfer_times(stage, min_station, max_station, df_transfer)
+                stage_total_task = stage_transfers['sum_total']
+            else:
+                # Fallback to global average
+                stage_total_task = 2 * avg_total_task_time
+            
+            # Calculate minimum_cycle_time (bottleneck analysis)
+            # Formula: (minimum_treatment_time + stage_specific_transfer_times) / min_group_parallel_count
+            if min_group_parallel_count > 0:
+                minimum_cycle_time = (minimum_treatment_time + stage_total_task) / min_group_parallel_count
+            else:
+                minimum_cycle_time = 0
+
+            steps.append({
+                'stage': stage,
+                'min_station': min_station,
+                'max_station': max_station,
+                'min_station_group': min_group,
+                'parallel_groups': parallel_groups,
+                'min_group_parallel_count': min_group_parallel_count,
+                'minimum_treatment_time_seconds': round(minimum_treatment_time, 2),
+                'minimum_cycle_time_seconds': round(minimum_cycle_time, 2)
+            })
+
+        return {
+            'program_number': program_number,
+            'source_file': os.path.relpath(source_path, output_dir) if source_path else None,
+            'steps': steps
+        }
     
     # --- Simulation Info ---
     # Load customer and plant data
@@ -116,21 +322,49 @@ def collect_report_data(output_dir: str):
         production_path = os.path.join(init_dir, 'production.csv')
         total_batches = 0
         product_counts = {}
-        
+
+        # Load transfer task statistics first (needed for cycle time calculations)
+        avg_transfer_time = 0
+        avg_total_task_time = 0
+        try:
+            transfer_tasks_path = os.path.join(output_dir, 'cp_sat', 'cp_sat_transfer_tasks.csv')
+            if os.path.exists(transfer_tasks_path):
+                df_transfer = pd.read_csv(transfer_tasks_path)
+                if 'TransferTime' in df_transfer.columns and 'TotalTaskTime' in df_transfer.columns:
+                    avg_transfer_time = df_transfer['TransferTime'].mean()
+                    avg_total_task_time = df_transfer['TotalTaskTime'].mean()
+                    report_data["transfer_task_statistics"] = {
+                        "avg_transfer_time_seconds": round(avg_transfer_time, 2),
+                        "avg_total_task_time_seconds": round(avg_total_task_time, 2),
+                        "total_transfer_tasks": len(df_transfer)
+                    }
+                    print(f"✅ Transfer task statistics: avg_transfer={avg_transfer_time:.2f}s, avg_total={avg_total_task_time:.2f}s")
+        except Exception as e:
+            print(f"⚠️  Warning: Could not calculate transfer task statistics: {e}")
+
         if os.path.exists(production_path):
             df_production = pd.read_csv(production_path)
             total_batches = len(df_production)
-            
+
+            # Capture the distinct treatment programs encountered in production.csv
+            if 'Treatment_program' in df_production.columns:
+                treatment_program_set = sorted(df_production['Treatment_program'].dropna().astype(int).unique())
+                report_data['treatment_programs']['used_programs'] = [int(hp) for hp in treatment_program_set]
+                for treatment_program in treatment_program_set:
+                    summary = summarize_treatment_program(int(treatment_program), avg_transfer_time, avg_total_task_time, df_transfer)
+                    if summary is not None:
+                        report_data['treatment_programs']['programs'][int(treatment_program)] = summary
+
             # Count by Treatment_program (which corresponds to product)
             # Map treatment program to product ID from customer.json
             if 'Treatment_program' in df_production.columns:
                 for idx, row in df_production.iterrows():
                     treatment_program = row['Treatment_program']
-                    
+
                     # Find matching product by treatment_program
                     product_id = None
                     product_name = f"Treatment Program {treatment_program}"
-                    
+
                     for pid, pinfo in products_dict.items():
                         # Check if this product uses this treatment program
                         # For now, use treatment program number as identifier
@@ -139,7 +373,7 @@ def collect_report_data(output_dir: str):
                             product_id = pid
                             product_name = pinfo.get("name", f"Product {pid}")
                             break
-                    
+
                     # Count this product
                     if product_id:
                         if product_id not in product_counts:
@@ -205,6 +439,30 @@ def collect_report_data(output_dir: str):
                 report_data["simulation_info"]["steady_state_time"] = seconds_to_hms(ramp_down_start - ramp_up_end)
                 report_data["simulation_info"]["ramp_down_time"] = seconds_to_hms(ramp_down_end - ramp_down_start)
                 report_data["simulation_info"]["total_production_time"] = seconds_to_hms(ramp_down_end)
+                
+                # Populate quick access simulation metrics for cards
+                report_data["simulation"]["duration_seconds"] = int(ramp_down_end)
+                report_data["simulation"]["total_batches"] = total_batches
+                
+                # Calculate steady-state average cycle time from actual batch completions
+                try:
+                    batch_schedule_path = os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv')
+                    if os.path.exists(batch_schedule_path):
+                        df_schedule = pd.read_csv(batch_schedule_path)
+                        batch_end_times = df_schedule.groupby('Batch')['ExitTime'].max().sort_index()
+                        
+                        # Find batches that complete during steady-state
+                        steady_batches = batch_end_times[(batch_end_times > ramp_up_end) & (batch_end_times <= ramp_down_start)]
+                        
+                        if len(steady_batches) > 1:
+                            first_batch_time = steady_batches.iloc[0]
+                            last_batch_time = steady_batches.iloc[-1]
+                            time_diff = last_batch_time - first_batch_time
+                            avg_cycle_time = time_diff / (len(steady_batches) - 1)
+                            
+                            report_data["simulation"]["steady_state_avg_cycle_time_seconds"] = round(avg_cycle_time, 2)
+                except Exception as e:
+                    print(f"⚠️  Warning: Could not calculate steady-state cycle time: {e}")
                 
                 # --- Production Throughput Calculations ---
                 # Calculate scaled production estimates for different time periods
@@ -439,6 +697,8 @@ def collect_report_data(output_dir: str):
                 report_data["simulation_info"]["steady_state_time"] = "00:00:00"
                 report_data["simulation_info"]["ramp_down_time"] = "00:00:00"
                 report_data["simulation_info"]["total_production_time"] = "00:00:00"
+                report_data["simulation"]["duration_seconds"] = 0
+                report_data["simulation"]["total_batches"] = 0
         else:
             # Directory doesn't exist
             report_data["simulation_info"]["ramp_up_time_seconds"] = 0
@@ -448,6 +708,8 @@ def collect_report_data(output_dir: str):
             report_data["simulation_info"]["steady_state_time"] = "00:00:00"
             report_data["simulation_info"]["ramp_down_time"] = "00:00:00"
             report_data["simulation_info"]["total_production_time"] = "00:00:00"
+            report_data["simulation"]["duration_seconds"] = 0
+            report_data["simulation"]["total_batches"] = 0
             
     except Exception as e:
         print(f"Warning: Could not calculate production phase times: {e}")
@@ -458,11 +720,12 @@ def collect_report_data(output_dir: str):
         report_data["simulation_info"]["steady_state_time"] = "00:00:00"
         report_data["simulation_info"]["ramp_down_time"] = "00:00:00"
         report_data["simulation_info"]["total_production_time"] = "00:00:00"
+        report_data["simulation"]["duration_seconds"] = 0
+        report_data["simulation"]["total_batches"] = 0
     
     # --- Transporter Statistics (Hoist Utilization) ---
     # Calculate transporter phase times from movement logs
     try:
-        import pandas as pd
         logs_dir = os.path.join(output_dir, "logs")
         movement_file = os.path.join(logs_dir, "transporters_movement.csv")
         

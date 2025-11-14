@@ -46,6 +46,16 @@ def get_status_color(actual, target):
         return ('#dc3545', '#ffffff')  # Red, white text
 
 
+def format_time(seconds):
+    """
+    Format seconds to HH:MM:SS.
+    """
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 def draw_card_row(draw, y_pos, label, left_value, right_value, card_width, margin_x, 
                   body_font, small_font, draw_divider=True):
     """
@@ -511,6 +521,240 @@ def create_workload_balance_card(output_dir: str, report_data: dict):
     return img
 
 
+def create_slowest_phases_card(output_dir: str, report_data: dict):
+    """
+    Create Slowest Phases card showing the 3 phases with longest cycle times.
+    Color-coded based on comparison with target takt time.
+    
+    Args:
+        output_dir: Simulation output directory
+        report_data: Report data from report_data.json
+    """
+    card_width, card_height = calculate_card_dimensions()
+    
+    # Get all phases with cycle times from all treatment programs
+    all_phases = []
+    treatment_programs = report_data.get('treatment_programs', {}).get('programs', {})
+    
+    for prog_num, prog_data in treatment_programs.items():
+        steps = prog_data.get('steps', [])
+        for step in steps:
+            cycle_time = step.get('minimum_cycle_time_seconds', 0)
+            if cycle_time > 0:  # Only include phases with valid cycle time
+                all_phases.append({
+                    'treatment_program': int(prog_num),
+                    'stage': step.get('stage'),
+                    'min_station': step.get('min_station'),
+                    'max_station': step.get('max_station'),
+                    'cycle_time_seconds': cycle_time
+                })
+    
+    # Sort by cycle time (longest first) and take top 3
+    all_phases.sort(key=lambda x: x['cycle_time_seconds'], reverse=True)
+    top_3_phases = all_phases[:3]
+    
+    # Calculate target takt time from batches_per_hour
+    scaled_production = report_data.get('simulation_info', {}).get('scaled_production_estimates', {})
+    batches_per_hour = scaled_production.get('batches_per_hour', 0)
+    target_takt_time_seconds = (3600 / batches_per_hour) if batches_per_hour > 0 else 0
+    
+    # Determine header color based on worst phase
+    if len(top_3_phases) > 0 and target_takt_time_seconds > 0:
+        worst_cycle_time = top_3_phases[0]['cycle_time_seconds']
+        diff = target_takt_time_seconds - worst_cycle_time
+        
+        if diff < 15:  # Cycle time within 15 seconds of target (critical bottleneck)
+            header_color = '#dc3545'  # Red
+        elif diff < 60:  # Difference < 1 minute (warning)
+            header_color = '#fd7e14'  # Orange
+        else:  # Good margin
+            header_color = '#28a745'  # Green
+        header_text_color = '#ffffff'
+    else:
+        header_color = '#4a4a4a'  # Gray
+        header_text_color = '#ffffff'
+    
+    # Create image
+    img = Image.new('RGB', (card_width, card_height), color='#f5f5f5')
+    draw = ImageDraw.Draw(img)
+    
+    # Load fonts
+    try:
+        header_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 56)
+        body_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 28)
+        small_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 24)
+    except Exception:
+        header_font = ImageFont.load_default()
+        body_font = ImageFont.load_default()
+        small_font = ImageFont.load_default()
+    
+    # Draw header
+    header_height = int(card_height * 0.20)
+    draw.rectangle([(0, 0), (card_width, header_height)], fill=header_color)
+    header_text = "Slowest Phases"
+    draw.text((card_width // 2, header_height // 2), header_text, 
+              fill=header_text_color, font=header_font, anchor='mm')
+    
+    # Content area
+    content_y = header_height + 20
+    margin_x = 30
+    
+    if len(top_3_phases) == 0:
+        no_data_text = "No cycle time data"
+        bbox = draw.textbbox((0, 0), no_data_text, font=body_font)
+        text_width = bbox[2] - bbox[0]
+        draw.text(((card_width - text_width) // 2, content_y + 100), 
+                  no_data_text, fill='#666666', font=body_font)
+    else:
+        y_pos = content_y
+        for phase in top_3_phases:
+            prog = phase['treatment_program']
+            stage = phase['stage']
+            min_st = phase['min_station']
+            max_st = phase['max_station']
+            cycle_seconds = phase['cycle_time_seconds']
+            
+            # Determine color for this row
+            if target_takt_time_seconds > 0:
+                diff = target_takt_time_seconds - cycle_seconds
+                if diff < 15:  # Cycle time within 15 seconds of target (critical bottleneck)
+                    value_color = '#dc3545'  # Red
+                elif diff < 60:  # Difference < 1 minute (warning)
+                    value_color = '#fd7e14'  # Orange
+                else:  # Good margin
+                    value_color = '#28a745'  # Green
+            else:
+                value_color = '#111111'  # Black (default)
+            
+            # Row label: "Program: X, Phase: Y"
+            label = f"Program: {prog}, Phase: {stage}"
+            
+            # Draw label (gray, small font)
+            draw.text((margin_x, y_pos), label, fill='#888888', font=small_font)
+            
+            # Draw values with color-coded cycle time
+            detail_y = y_pos + 32
+            stations_text = f"Stations: {min_st}-{max_st}"
+            cycle_text = f"Cycle: {format_time(cycle_seconds)}"
+            
+            draw.text((margin_x, detail_y), stations_text, fill='#111111', font=body_font)
+            draw.text((margin_x + card_width // 2, detail_y), cycle_text, fill=value_color, font=body_font)
+            
+            y_pos += 100
+    
+    # Save card
+    reports_dir = os.path.join(output_dir, 'reports')
+    images_dir = os.path.join(reports_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    card_path = os.path.join(images_dir, 'card_slowest_phases.png')
+    img.save(card_path, 'PNG', dpi=(300, 300))
+    print(f"✅ Created Slowest Phases card: {card_path}")
+    return card_path
+
+
+def create_simple_metric_card(output_dir, report_data, metric_type):
+    """
+    Create a simple metric card with dark blue header and large value.
+    
+    metric_type can be:
+    - 'total_simulation_time': Total simulation time in HH:MM:SS
+    - 'batches_processed': Total number of batches
+    - 'avg_cycle_time': Average cycle time in HH:MM:SS
+    """
+    # Card configuration
+    mm_to_px = 300 / 25.4  # 300 DPI
+    card_size_mm = 60
+    card_size_px = int(card_size_mm * mm_to_px)
+    
+    # Create card
+    card = Image.new('RGB', (card_size_px, card_size_px), color='white')
+    draw = ImageDraw.Draw(card)
+    
+    # Load fonts
+    try:
+        header_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 56)
+        large_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 84)
+    except:
+        header_font = ImageFont.load_default()
+        large_font = ImageFont.load_default()
+    
+    # Define metric-specific content
+    if metric_type == 'total_simulation_time':
+        header_text = "Total Simulation Time"
+        # Get simulation duration from report_data
+        sim_duration = report_data.get('simulation', {}).get('duration_seconds', 0)
+        value_text = format_time(sim_duration)
+        filename = "card_total_simulation_time.png"
+        
+    elif metric_type == 'batches_processed':
+        header_text = "Batches Processed"
+        # Get total batches from report_data
+        batches = report_data.get('simulation', {}).get('total_batches', 0)
+        value_text = str(batches)
+        filename = "card_batches_processed.png"
+        
+    elif metric_type == 'avg_cycle_time':
+        header_text = "Avg. Cycle Time"
+        # Get steady-state average cycle time from report_data (pre-calculated)
+        avg_seconds = report_data.get('simulation', {}).get('steady_state_avg_cycle_time_seconds', 0)
+        
+        # Fallback if not available
+        if avg_seconds == 0:
+            scaled_estimates = report_data.get('simulation_info', {}).get('scaled_production_estimates', {})
+            batches_per_hour = scaled_estimates.get('batches_per_hour', 0)
+            
+            if batches_per_hour > 0:
+                avg_seconds = 3600 / batches_per_hour
+            else:
+                # Final fallback: exclude ramp-up time
+                total_batches = report_data.get('simulation', {}).get('total_batches', 1)
+                sim_duration = report_data.get('simulation', {}).get('duration_seconds', 0)
+                ramp_up_time = report_data.get('simulation_info', {}).get('ramp_up_time_seconds', 0)
+                
+                if total_batches > 1:
+                    avg_seconds = (sim_duration - ramp_up_time) / (total_batches - 1)
+                else:
+                    avg_seconds = sim_duration
+        
+        value_text = format_time(avg_seconds)
+        filename = "card_avg_cycle_time.png"
+    else:
+        raise ValueError(f"Unknown metric_type: {metric_type}")
+    
+    # Dark blue header
+    header_height = 200
+    header_color = (25, 55, 95)  # Dark blue
+    draw.rectangle([(0, 0), (card_size_px, header_height)], fill=header_color)
+    
+    # Header text (white)
+    bbox = draw.textbbox((0, 0), header_text, font=header_font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    text_x = (card_size_px - text_width) // 2
+    text_y = (header_height - text_height) // 2
+    draw.text((text_x, text_y), header_text, fill='white', font=header_font)
+    
+    # Large value centered in remaining space
+    bbox = draw.textbbox((0, 0), value_text, font=large_font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    
+    remaining_height = card_size_px - header_height
+    text_x = (card_size_px - text_width) // 2
+    text_y = header_height + (remaining_height - text_height) // 2
+    
+    draw.text((text_x, text_y), value_text, fill='black', font=large_font)
+    
+    # Save card
+    images_dir = os.path.join(output_dir, "reports", "images")
+    os.makedirs(images_dir, exist_ok=True)
+    output_path = os.path.join(images_dir, filename)
+    card.save(output_path)
+    print(f"✅ Created {metric_type} card: {output_path}")
+    
+    return output_path
+
+
 def generate_all_cards(output_dir: str):
     """
     Generate all production status cards.
@@ -534,6 +778,10 @@ def generate_all_cards(output_dir: str):
     cards.append(create_annual_production_card(output_dir, report_data))
     cards.append(create_performance_card(output_dir, report_data))
     cards.append(create_workload_balance_card(output_dir, report_data))
+    cards.append(create_slowest_phases_card(output_dir, report_data))
+    cards.append(create_simple_metric_card(output_dir, report_data, 'total_simulation_time'))
+    cards.append(create_simple_metric_card(output_dir, report_data, 'batches_processed'))
+    cards.append(create_simple_metric_card(output_dir, report_data, 'avg_cycle_time'))
     
     return cards
 
