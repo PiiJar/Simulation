@@ -107,10 +107,11 @@ def create_annual_production_card(output_dir: str, report_data: dict):
     
     # Try to load fonts (larger sizes for better readability in PDF)
     try:
+        # Use same sizing/style as Performance card info area for consistency
         header_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 56)
-        title_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 32)
-        body_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 28)
-        small_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 24)
+        title_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 38)
+        body_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 38)
+        small_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 34)
     except Exception:
         # Fallback to default font
         header_font = ImageFont.load_default()
@@ -159,36 +160,40 @@ def create_annual_production_card(output_dir: str, report_data: dict):
     # Draw header (20% of card height)
     header_height = int(card_height * 0.20)
     draw.rectangle([(0, 0), (card_width, header_height)], fill=header_color)
-    
+
     # Draw header text (centered both horizontally and vertically)
-    header_text = "Annual Production"
+    header_text = "Production"
     header_x = card_width // 2
     header_y = header_height // 2
     draw.text((header_x, header_y), header_text, fill=header_text_color, font=header_font, anchor='mm')
-    
+
     # Content area starts after header
     content_y = header_height + 20
     margin_x = 30  # Increased left margin for better readability
-    
-    # Draw product rows (max 5 products)
-    products_list = list(by_product.items())[:5]  # Max 5 products
 
+    # Move 'Annual:' into the info area with same alignment/spacing as Performance card
+    top_margin_extra = 24
+    y_pos = content_y + top_margin_extra
+    draw.text((margin_x, y_pos), "Annual:", fill='#000000', font=title_font)
+    y_pos += 72
+
+    # Draw up to 5 product rows as: ProductName S/T: simulated/target
+    products_list = list(by_product.items())[:5]
     if len(products_list) == 0:
-        # No data message
         no_data_text = "No production data"
         bbox = draw.textbbox((0, 0), no_data_text, font=body_font)
         text_width = bbox[2] - bbox[0]
         text_x = (card_width - text_width) // 2
-        text_y = content_y + 100
+        text_y = y_pos + 20
         draw.text((text_x, text_y), no_data_text, fill='#666666', font=body_font)
     else:
-        y_pos = content_y
         for idx, (product_id, product_data) in enumerate(products_list):
             product_name = product_data.get('name', product_id)
-            if len(product_name) > 20:
-                product_name = product_name[:17] + '...'
+            # Always truncate product name to max 10 chars (add ellipsis if longer)
+            if len(product_name) > 10:
+                product_name = product_name[:10] + '...'
 
-            actual_pieces = product_data.get('pieces', 0)
+            actual_pieces = int(product_data.get('pieces', 0))
 
             target_pieces = None
             if os.path.exists(customer_json_path):
@@ -199,18 +204,21 @@ def create_annual_production_card(output_dir: str, report_data: dict):
                         targets = plant.get('production_targets', {}).get('annual', [])
                         for target in targets:
                             if target.get('product_id') == product_id:
-                                target_pieces = target.get('target_quantity', 0)
+                                target_pieces = int(target.get('target_quantity', 0))
                                 break
                 except Exception:
                     pass
 
-            left_text = f"Simulated: {actual_pieces:,}"
-            right_text = f"Target: {target_pieces:,}" if target_pieces is not None else "Target: —"
-            
-            # Use standardized row drawing
-            draw_divider = (idx < len(products_list) - 1)  # Divider for all except last row
-            y_pos = draw_card_row(draw, y_pos, product_name, left_text, right_text,
-                                 card_width, margin_x, body_font, small_font, draw_divider)
+            # Compose S/T text
+            if target_pieces is not None and target_pieces > 0:
+                st_text = f"{actual_pieces:,}/{target_pieces:,}"
+            else:
+                st_text = f"{actual_pieces:,}/—"
+
+            # Draw product label and S/T using black text and larger fonts
+            draw.text((margin_x, y_pos), f"{product_name} S/T:", fill='#000000', font=small_font)
+            draw.text((margin_x + card_width // 2, y_pos), st_text, fill='#000000', font=body_font)
+            y_pos += 72
     
     # Save card
     images_dir = os.path.join(output_dir, 'reports', 'images')
@@ -295,9 +303,10 @@ def create_performance_card(output_dir: str, report_data: dict):
 
     try:
         header_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 56)
-        title_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 32)
-        body_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 28)
-        small_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 24)
+        title_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 38)
+        # Further increase sizes for info area per user's follow-up
+        body_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 38)
+        small_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 34)
     except Exception:
         header_font = ImageFont.load_default()
         title_font = ImageFont.load_default()
@@ -339,10 +348,13 @@ def create_performance_card(output_dir: str, report_data: dict):
     content_y = header_height + 20
     margin_x = 30  # Increased left margin for better readability
 
-    # Draw ramp times as rows
-    y_pos = content_y
-    y_pos = draw_card_row(draw, y_pos, "Ramp Times", f"Up: {ramp_up_time}", f"Down: {ramp_down_time}",
-                         card_width, margin_x, body_font, small_font, draw_divider=True)
+    # Per-user request: remove ramp times row entirely.
+    # Draw 'Batches:' title at top of info area, adding a small top margin
+    top_margin_extra = 24
+    y_pos = content_y + top_margin_extra
+    draw.text((margin_x, y_pos), "Batches:", fill='#000000', font=title_font)
+    # Add extra spacing under the 'Batches:' title as requested
+    y_pos += 72
     
     shifts_per_day = schedule.get('shifts_per_day', 2)
     hours_per_shift = schedule.get('hours_per_shift', 8.0)
@@ -355,19 +367,26 @@ def create_performance_card(output_dir: str, report_data: dict):
         ('Week', days_per_week, shifts_per_day * days_per_week * hours_per_shift),
         ('Year', weeks_per_year, shifts_per_day * days_per_week * weeks_per_year * hours_per_shift)
     ]
+
+    # Draw four rows with format: "<Period> (<duration>h) S/T: <simulated>/<target>"
     for idx, (period, multiplier, duration_hours) in enumerate(period_info):
         period_key = period.lower()
-        target_value = target_counts.get(period_key, 0)
-        actual_value = actual_counts.get(period_key, 0)
+        target_value = int(target_counts.get(period_key, 0)) if target_counts.get(period_key, 0) else None
+        actual_value = int(actual_counts.get(period_key, 0)) if actual_counts.get(period_key, 0) else 0
 
-        label = f"{period} (Batches/{duration_hours:.0f}h)"
-        actual_text = f"Simulated: {actual_value:,}"
-        title_target = f"Target: {int(target_value):,}" if target_value > 0 else "Target: —"
-        
-        # Use standardized row drawing
-        draw_divider = (idx < len(period_info) - 1)  # Divider for all except last row
-        y_pos = draw_card_row(draw, y_pos, label, actual_text, title_target,
-                             card_width, margin_x, body_font, small_font, draw_divider)
+        # Compose label and S/T text
+        label_text = f"{period} ({duration_hours:.0f}h) S/T:"
+        if target_value is not None and target_value > 0:
+            st_text = f"{actual_value:,}/{target_value:,}"
+        else:
+            st_text = f"{actual_value:,}/—"
+
+        # Draw label (black) and S/T (black) using larger fonts
+        draw.text((margin_x, y_pos), label_text, fill='#000000', font=small_font)
+        draw.text((margin_x + card_width // 2, y_pos), st_text, fill='#000000', font=body_font)
+
+        # Move down for next row
+        y_pos += 72
 
     images_dir = os.path.join(output_dir, 'reports', 'images')
     os.makedirs(images_dir, exist_ok=True)
