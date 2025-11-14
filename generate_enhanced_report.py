@@ -2285,7 +2285,35 @@ def generate_enhanced_simulation_report(output_dir):
         "Key performance indicators from the simulation run. "
         "These metrics provide a high-level overview of production efficiency, "
         "resource utilization, and throughput.")
-    pdf.ln(8)
+    pdf.ln(5)
+    
+    # Add production status cards (3 across)
+    cards_dir = os.path.join(output_dir, 'reports', 'images')
+    card_files = [
+        'card_annual_production.png',
+        'card_performance.png',
+        'card_workload_balance.png'
+    ]
+    
+    cards_exist = all(os.path.exists(os.path.join(cards_dir, cf)) for cf in card_files)
+    
+    if cards_exist:
+        y_start = pdf.get_y()
+        # Use same layout as KPI boxes: 3 cards across with consistent spacing
+        card_width_mm = 55  # Same width as KPI boxes
+        card_height_mm = 55  # Square cards
+        x_spacing = 62  # Same spacing as KPI boxes (55mm + 7mm gap)
+        x_start = pdf.l_margin
+        
+        for idx, card_file in enumerate(card_files):
+            card_path = os.path.join(cards_dir, card_file)
+            x = x_start + idx * x_spacing
+            pdf.image(card_path, x=x, y=y_start, w=card_width_mm, h=card_height_mm)
+        
+        # Move below the cards
+        pdf.set_y(y_start + card_height_mm + 8)
+    
+    pdf.ln(3)
     
     # KPI-laatikot uudessa järjestyksessä
     kpi_data = []

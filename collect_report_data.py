@@ -459,31 +459,139 @@ def collect_report_data(output_dir: str):
         report_data["simulation_info"]["ramp_down_time"] = "00:00:00"
         report_data["simulation_info"]["total_production_time"] = "00:00:00"
     
+    # --- Transporter Statistics (Hoist Utilization) ---
+    # Calculate transporter phase times from movement logs
+    try:
+        import pandas as pd
+        logs_dir = os.path.join(output_dir, "logs")
+        movement_file = os.path.join(logs_dir, "transporters_movement.csv")
+        
+        if os.path.exists(movement_file):
+            df = pd.read_csv(movement_file)
+            
+            # Ensure required columns exist
+            required_cols = ['Transporter', 'Phase', 'Start_Time', 'End_Time']
+            if all(col in df.columns for col in required_cols):
+                # Convert to numeric
+                df['Start_Time'] = pd.to_numeric(df['Start_Time'], errors='coerce')
+                df['End_Time'] = pd.to_numeric(df['End_Time'], errors='coerce')
+                df['Phase'] = pd.to_numeric(df['Phase'], errors='coerce')
+                
+                # Remove rows with NaN values
+                df = df.dropna(subset=['Transporter', 'Phase', 'Start_Time', 'End_Time'])
+                
+                # Process each transporter
+                for transporter in sorted(df['Transporter'].unique()):
+                    transporter_df = df[df['Transporter'] == transporter].copy()
+                    
+                    # Find first phase 2 start and last phase 4 end
+                    phase_2_starts = transporter_df[transporter_df['Phase'] == 2]['Start_Time']
+                    phase_4_ends = transporter_df[transporter_df['Phase'] == 4]['End_Time']
+                    
+                    if len(phase_2_starts) == 0 or len(phase_4_ends) == 0:
+                        continue  # Skip if no phase 2 or 4
+                    
+                    first_phase_2_start = phase_2_starts.min()
+                    last_phase_4_end = phase_4_ends.max()
+                    
+                    # Filter only this time period
+                    period_df = transporter_df[
+                        (transporter_df['Start_Time'] >= first_phase_2_start) &
+                        (transporter_df['End_Time'] <= last_phase_4_end)
+                    ]
+                    
+                    # Calculate phase sums
+                    phase_sums = {}
+                    for phase in [0, 1, 2, 3, 4]:
+                        phase_data = period_df[period_df['Phase'] == phase]
+                        total_duration = (phase_data['End_Time'] - phase_data['Start_Time']).sum()
+                        phase_sums[f'phase_{phase}_seconds'] = int(total_duration)
+                    
+                    # Total time
+                    total_time = last_phase_4_end - first_phase_2_start
+                    
+                    # Calculate utilization (percentage of non-idle time)
+                    idle_time = phase_sums.get('phase_0_seconds', 0)
+                    working_time = total_time - idle_time
+                    utilization = (working_time / total_time * 100) if total_time > 0 else 0
+                    
+                    transporter_stat = {
+                        'transporter_id': int(transporter),
+                        'total_time_seconds': int(total_time),
+                        'utilization_percent': round(utilization, 2),
+                        'idle_time_seconds': idle_time,
+                        'working_time_seconds': int(working_time),
+                        **phase_sums
+                    }
+                    
+                    report_data["transporter_statistics"].append(transporter_stat)
+                
+                # --- Calculate average time per batch for each transporter ---
+                # This shows how much time each transporter spends on average per batch (active phases only)
+                df['PhaseDuration'] = df['End_Time'] - df['Start_Time']
+                active_phases = df[df['Phase'].isin([1, 2, 3, 4])].copy()
+                
+                if not active_phases.empty and 'Batch' in active_phases.columns:
+                    # Sum occupation time per transporter-batch pair
+                    batch_occupation = active_phases.groupby(['Transporter', 'Batch'])['PhaseDuration'].sum().reset_index()
+                    batch_occupation.rename(columns={'PhaseDuration': 'TotalOccupationTime'}, inplace=True)
+                    
+                    # Calculate average occupation time per batch for each transporter
+                    avg_occupation = batch_occupation.groupby('Transporter')['TotalOccupationTime'].mean().reset_index()
+                    avg_occupation.rename(columns={'TotalOccupationTime': 'AvgOccupationPerBatch'}, inplace=True)
+                    
+                    # Add to transporter statistics
+                    for stat in report_data["transporter_statistics"]:
+                        t_id = stat['transporter_id']
+                        avg_row = avg_occupation[avg_occupation['Transporter'] == t_id]
+                        if not avg_row.empty:
+                            avg_seconds = avg_row.iloc[0]['AvgOccupationPerBatch']
+                            stat['avg_time_per_batch_seconds'] = round(avg_seconds, 2)
+                            stat['avg_time_per_batch_minutes'] = round(avg_seconds / 60, 2)
+                
+                print(f"✅ Transporter statistics calculated for {len(report_data['transporter_statistics'])} transporters")
+            else:
+                print(f"⚠️  Warning: Missing required columns in {movement_file}")
+        else:
+            print(f"⚠️  Warning: Movement file not found: {movement_file}")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not calculate transporter statistics: {e}")
+    
     # --- File References ---
-    # Store relative paths from output_dir
-    # Images
-    matrix_timeline_1 = os.path.join(reports_dir, 'matrix_timeline_page_1.png')
-    if os.path.exists(matrix_timeline_1):
-        report_data["files"]["matrix_timeline_page_1"] = "reports/matrix_timeline_page_1.png"
+    # Store relative paths to key data files from output_dir
+    # These are the source data files that contain the actual simulation results
     
-    gantt_schedule = os.path.join(output_dir, 'cp_sat', 'schedule_gantt.png')
-    if os.path.exists(gantt_schedule):
-        report_data["files"]["gantt_schedule"] = "cp_sat/schedule_gantt.png"
+    # CP-SAT optimization results
+    batch_schedule = os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv')
+    if os.path.exists(batch_schedule):
+        report_data["files"]["batch_schedule"] = "cp_sat/cp_sat_batch_schedule.csv"
     
-    # Transporter pie charts
-    for i in [1, 2]:
-        pie_path = os.path.join(reports_dir, f'transporter_{i}_phases_pie.png')
-        if os.path.exists(pie_path):
-            report_data["files"][f"transporter_{i}_phases_pie"] = f"reports/transporter_{i}_phases_pie.png"
+    hoist_schedule = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv')
+    if os.path.exists(hoist_schedule):
+        report_data["files"]["hoist_schedule"] = "cp_sat/cp_sat_hoist_schedule.csv"
     
-    # CSV files
-    treatment_programs_csv = os.path.join(reports_dir, 'treatment_programs.csv')
-    if os.path.exists(treatment_programs_csv):
-        report_data["files"]["treatment_programs_csv"] = "reports/treatment_programs.csv"
+    station_schedule = os.path.join(output_dir, 'cp_sat', 'cp_sat_station_schedule.csv')
+    if os.path.exists(station_schedule):
+        report_data["files"]["station_schedule"] = "cp_sat/cp_sat_station_schedule.csv"
     
-    transporter_phases_csv = os.path.join(reports_dir, 'transporter_phases.csv')
-    if os.path.exists(transporter_phases_csv):
-        report_data["files"]["transporter_phases_csv"] = "reports/transporter_phases.csv"
+    # Initialization data
+    production_csv = os.path.join(init_dir, 'production.csv')
+    if os.path.exists(production_csv):
+        report_data["files"]["production"] = "initialization/production.csv"
+    
+    customer_json = os.path.join(init_dir, 'customer.json')
+    if os.path.exists(customer_json):
+        report_data["files"]["customer"] = "initialization/customer.json"
+    
+    stations_csv = os.path.join(init_dir, 'stations.csv')
+    if os.path.exists(stations_csv):
+        report_data["files"]["stations"] = "initialization/stations.csv"
+    
+    # Log files
+    logs_dir_path = os.path.join(output_dir, 'logs')
+    movement_file = os.path.join(logs_dir_path, 'transporters_movement.csv')
+    if os.path.exists(movement_file):
+        report_data["files"]["transporters_movement"] = "logs/transporters_movement.csv"
     
     # Save report data to JSON
     report_data_path = os.path.join(reports_dir, 'report_data.json')
