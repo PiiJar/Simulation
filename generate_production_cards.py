@@ -8,6 +8,9 @@ Card format: square (width = height)
 import os
 from PIL import Image, ImageDraw, ImageFont
 import json
+from datetime import timedelta
+
+from load_customer_json import load_customer_json
 
 
 def calculate_card_dimensions():
@@ -130,7 +133,7 @@ def create_annual_production_card(output_dir: str, report_data: dict):
     row_height = (card_height - header_height - 40) // 5  # Space for 5 rows
     
     products_list = list(by_product.items())[:5]  # Max 5 products
-    
+
     if len(products_list) == 0:
         # No data message
         no_data_text = "No production data"
@@ -142,18 +145,15 @@ def create_annual_production_card(output_dir: str, report_data: dict):
     else:
         for idx, (product_id, product_data) in enumerate(products_list):
             y_pos = content_y + (idx * row_height)
-            
-            # Product name
+
             product_name = product_data.get('name', product_id)
             if len(product_name) > 20:
                 product_name = product_name[:17] + '...'
-            
-            draw.text((margin_x, y_pos), product_name, fill='#333333', font=title_font)
-            
-            # Actual pieces (from simulation estimate)
+
+            draw.text((margin_x, y_pos), product_name, fill='#888888', font=small_font)
+
             actual_pieces = product_data.get('pieces', 0)
-            
-            # Target pieces (get from customer.json)
+
             target_pieces = None
             if os.path.exists(customer_json_path):
                 try:
@@ -167,14 +167,12 @@ def create_annual_production_card(output_dir: str, report_data: dict):
                                 break
                 except Exception:
                     pass
-            
-            # Draw target and actual on second line
-            if target_pieces is not None:
-                details_text = f"Target: {target_pieces:,} | Actual: {actual_pieces:,}"
-            else:
-                details_text = f"Actual: {actual_pieces:,}"
-            
-            draw.text((margin_x, y_pos + 25), details_text, fill='#666666', font=small_font)
+
+            detail_y = y_pos + 22
+            action_text = f"Simulated: {actual_pieces:,}"
+            target_text = f"Target: {target_pieces:,}" if target_pieces is not None else "Target: —"
+            draw.text((margin_x, detail_y), action_text, fill='#111111', font=body_font)
+            draw.text((margin_x + card_width // 2, detail_y), target_text, fill='#111111', font=body_font)
     
     # Save card
     images_dir = os.path.join(output_dir, 'reports', 'images')
@@ -182,6 +180,170 @@ def create_annual_production_card(output_dir: str, report_data: dict):
     card_path = os.path.join(images_dir, 'card_annual_production.png')
     img.save(card_path, format='PNG', quality=95)
     
+    print(f"✅ Created card: {card_path}")
+    return card_path
+
+
+def format_seconds(seconds):
+    """Format seconds as HH:MM:SS."""
+    try:
+        secs = int(seconds)
+    except (TypeError, ValueError):
+        return "00:00:00"
+
+    hours = secs // 3600
+    minutes = (secs % 3600) // 60
+    remaining_seconds = secs % 60
+    return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
+
+
+def get_production_schedule(output_dir: str):
+    """Load production schedule (shifts, hours, etc.) from customer.json."""
+    init_dir = os.path.join(output_dir, 'initialization')
+    try:
+        _, plant, _ = load_customer_json(init_dir)
+        return plant.get('production_schedule', {})
+    except Exception:
+        return {}
+
+
+def get_annual_target_batches(output_dir: str):
+    """Calculate annual target batch count based on customer.json data."""
+    init_dir = os.path.join(output_dir, 'initialization')
+    try:
+        _, plant, products = load_customer_json(init_dir)
+        targets = plant.get('production_targets', {}).get('annual', [])
+        product_map = {prod.get('id'): prod for prod in products}
+        total_batches = 0.0
+        for target in targets:
+            product_id = target.get('product_id')
+            target_qty = target.get('target_quantity', 0)
+            product = product_map.get(product_id, {})
+            pieces_per_batch = product.get('properties', {}).get('pieces_per_batch', 1)
+            if pieces_per_batch:
+                total_batches += target_qty / pieces_per_batch
+        return total_batches
+    except Exception:
+        return 0
+
+
+def calculate_period_targets(annual_batches: float, schedule: dict):
+    """Estimate target batch counts for shift/day/week/year using production schedule."""
+    shifts_per_day = schedule.get('shifts_per_day', 2) or 2
+    days_per_week = schedule.get('days_per_week', 5) or 5
+    weeks_per_year = schedule.get('weeks_per_year', 48) or 48
+
+    denominator = shifts_per_day * days_per_week * weeks_per_year
+    shift_target = annual_batches / denominator if denominator > 0 else 0
+
+    day_target = shift_target * shifts_per_day
+    week_target = day_target * days_per_week
+    year_target = annual_batches
+
+    return {
+        'shift': shift_target,
+        'day': day_target,
+        'week': week_target,
+        'year': year_target
+    }
+
+
+def create_performance_card(output_dir: str, report_data: dict):
+    """Create a Performance card summarizing line performance."""
+    card_width, card_height = calculate_card_dimensions()
+
+    img = Image.new('RGB', (card_width, card_height), color='#f5f5f5')
+    draw = ImageDraw.Draw(img)
+
+    try:
+        header_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 32)
+        title_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 20)
+        body_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 16)
+        small_font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 14)
+    except Exception:
+        header_font = ImageFont.load_default()
+        title_font = ImageFont.load_default()
+        body_font = ImageFont.load_default()
+        small_font = ImageFont.load_default()
+
+    sim_info = report_data.get('simulation_info', {})
+    scaled = sim_info.get('scaled_production_estimates', {})
+    ramp_up_seconds = sim_info.get('ramp_up_time_seconds')
+    ramp_down_seconds = sim_info.get('ramp_down_time_seconds')
+    ramp_up_time = sim_info.get('ramp_up_time') or format_seconds(ramp_up_seconds)
+    ramp_down_time = sim_info.get('ramp_down_time') or format_seconds(ramp_down_seconds)
+
+    schedule = get_production_schedule(output_dir)
+    shifts_per_day = schedule.get('shifts_per_day', 2)
+    hours_per_shift = schedule.get('hours_per_shift', 8.0)
+    day_duration = shifts_per_day * hours_per_shift
+    annual_batches = get_annual_target_batches(output_dir)
+    target_counts = calculate_period_targets(annual_batches, schedule)
+    header_detail = f"Shift duration: {timedelta(hours=hours_per_shift)}" \
+                    f" | Day duration: {timedelta(hours=day_duration)}"
+
+    actual_counts = {}
+    for period_key in ['shift', 'day', 'week', 'year']:
+        period_data = scaled.get(period_key, {})
+        by_product = period_data.get('by_product', {})
+        total_batches = sum(prod.get('batches', 0) for prod in by_product.values())
+        actual_counts[period_key] = total_batches
+
+    header_color, header_text_color = get_status_color(actual_counts['year'], target_counts['year'] if target_counts['year'] > 0 else None)
+
+    header_height = int(card_height * 0.20)
+    draw.rectangle([(0, 0), (card_width, header_height)], fill=header_color)
+    header_text = "Performance"
+    bbox = draw.textbbox((0, 0), header_text, font=header_font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    header_x = (card_width - text_width) // 2
+    header_y = (header_height - text_height) // 2
+    draw.text((header_x, header_y), header_text, fill=header_text_color, font=header_font)
+
+    content_y = header_height + 20
+    margin_x = 20
+
+    draw.text((margin_x, content_y), f"Ramp up: {ramp_up_time}", fill='#333333', font=body_font)
+    draw.text((margin_x, content_y + 28), f"Ramp down: {ramp_down_time}", fill='#333333', font=body_font)
+
+    table_start_y = content_y + 70
+    row_height = 60
+    shifts_per_day = schedule.get('shifts_per_day', 2)
+    hours_per_shift = schedule.get('hours_per_shift', 8.0)
+    days_per_week = schedule.get('days_per_week', 5)
+    weeks_per_year = schedule.get('weeks_per_year', 48)
+
+    period_info = [
+        ('Shift', shifts_per_day, hours_per_shift),
+        ('Day', 1, shifts_per_day * hours_per_shift),
+        ('Week', days_per_week, shifts_per_day * days_per_week * hours_per_shift),
+        ('Year', weeks_per_year, shifts_per_day * days_per_week * weeks_per_year * hours_per_shift)
+    ]
+
+    for idx, (period, multiplier, duration_hours) in enumerate(period_info):
+        y_pos = table_start_y + idx * row_height
+        period_key = period.lower()
+        target_value = target_counts.get(period_key, 0)
+        actual_value = actual_counts.get(period_key, 0)
+
+        label = f"{period} ({duration_hours:.1f}h)"
+        draw.text((margin_x, y_pos), label, fill='#888888', font=small_font)
+
+        detail_y = y_pos + 22
+        actual_text = f"Simulated: {actual_value:,}"
+        title_target = f"Target: {int(target_value):,}" if target_value > 0 else "Target: —"
+        draw.text((margin_x, detail_y), actual_text, fill='#111111', font=body_font)
+        draw.text((margin_x + card_width // 2, detail_y), title_target, fill='#111111', font=body_font)
+
+        divider_y = y_pos + row_height - 10
+        draw.line([(margin_x, divider_y), (card_width - margin_x, divider_y)], fill='#dddddd', width=1)
+
+    images_dir = os.path.join(output_dir, 'reports', 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    card_path = os.path.join(images_dir, 'card_performance.png')
+    img.save(card_path, format='PNG', quality=95)
+
     print(f"✅ Created card: {card_path}")
     return card_path
 
@@ -207,6 +369,7 @@ def generate_all_cards(output_dir: str):
     # Generate cards
     cards = []
     cards.append(create_annual_production_card(output_dir, report_data))
+    cards.append(create_performance_card(output_dir, report_data))
     
     return cards
 
