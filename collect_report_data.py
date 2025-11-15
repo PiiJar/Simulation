@@ -310,7 +310,8 @@ def collect_report_data(output_dir: str):
                 report_data["simulation_info"]["simulation_duration_hours"] = goals.get("simulation_duration_hours", 0.0)
                 # Extract target cycle time from goals
                 target_pace = goals.get("target_pace", {})
-                target_cycle_time_seconds = target_pace.get("average_batch_interval_seconds")
+                # Use the new annual target cycle time if available, otherwise fall back to average_batch_interval_seconds
+                target_cycle_time_seconds = target_pace.get("target_cycle_time_seconds") or target_pace.get("average_batch_interval_seconds")
         except Exception as e:
             print(f"Warning: Could not load goals.json: {e}")
             report_data["simulation_info"]["simulation_duration_hours"] = 0.0

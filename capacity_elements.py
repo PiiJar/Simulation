@@ -78,7 +78,8 @@ def create_capacity_background(report_data_path, max_time_minutes=12):
                 with open(goals_path, 'r') as f:
                     goals_data = json.load(f)
                     target_pace = goals_data.get('target_pace', {})
-                    target_cycle_time = target_pace.get('average_batch_interval_seconds', 10 * 60)
+                    # Use the new annual target cycle time if available, otherwise fall back to average_batch_interval_seconds
+                    target_cycle_time = target_pace.get('target_cycle_time_seconds') or target_pace.get('average_batch_interval_seconds', 10 * 60)
             except Exception as e:
                 print(f"Warning: Could not load target cycle time from goals.json: {e}")
         
