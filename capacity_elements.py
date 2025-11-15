@@ -70,8 +70,17 @@ def create_capacity_background(report_data_path, max_time_minutes=12):
         # Get simulated cycle time
         simulated_cycle_time = data.get('simulation', {}).get('steady_state_avg_cycle_time_seconds', 0)
         
-        # Hardcode target cycle time to 10 minutes
-        target_cycle_time = 10 * 60  # 10 minutes in seconds
+        # Get target cycle time from goals.json (not from report data)
+        target_cycle_time = 10 * 60  # Default fallback
+        goals_path = Path(report_data_path).parent.parent / 'initialization' / 'goals.json'
+        if goals_path.exists():
+            try:
+                with open(goals_path, 'r') as f:
+                    goals_data = json.load(f)
+                    target_pace = goals_data.get('target_pace', {})
+                    target_cycle_time = target_pace.get('average_batch_interval_seconds', 10 * 60)
+            except Exception as e:
+                print(f"Warning: Could not load target cycle time from goals.json: {e}")
         
         # Get maximum transporter avg time per batch (in minutes, convert to seconds)
         transporter_stats = data.get('transporter_statistics', [])

@@ -302,11 +302,15 @@ def collect_report_data(output_dir: str):
     
     # Load goals.json for simulation duration (from initialization directory)
     goals_path = os.path.join(init_dir, 'goals.json')
+    target_cycle_time_seconds = None
     if os.path.exists(goals_path):
         try:
             with open(goals_path, 'r') as f:
                 goals = json.load(f)
                 report_data["simulation_info"]["simulation_duration_hours"] = goals.get("simulation_duration_hours", 0.0)
+                # Extract target cycle time from goals
+                target_pace = goals.get("target_pace", {})
+                target_cycle_time_seconds = target_pace.get("average_batch_interval_seconds")
         except Exception as e:
             print(f"Warning: Could not load goals.json: {e}")
             report_data["simulation_info"]["simulation_duration_hours"] = 0.0
@@ -722,6 +726,10 @@ def collect_report_data(output_dir: str):
         report_data["simulation_info"]["total_production_time"] = "00:00:00"
         report_data["simulation"]["duration_seconds"] = 0
         report_data["simulation"]["total_batches"] = 0
+    
+    # Add target cycle time from goals.json (outside the try block)
+    if target_cycle_time_seconds is not None:
+        report_data["simulation"]["target_cycle_time_seconds"] = round(target_cycle_time_seconds, 2)
     
     # --- Transporter Statistics (Hoist Utilization) ---
     # Calculate transporter phase times from movement logs
