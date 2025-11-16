@@ -171,11 +171,13 @@ def collect_report_data(output_dir: str):
             min_stat_val = row.get('MinStat')
             max_stat_val = row.get('MaxStat')
             min_time_val = row.get('MinTime')
+            max_time_val = row.get('MaxTime')
 
             stage = int(stage_val) if pd.notna(stage_val) else None
             min_station = int(pd.to_numeric(min_stat_val, errors='coerce')) if pd.notna(min_stat_val) else None
             max_station = int(pd.to_numeric(max_stat_val, errors='coerce')) if pd.notna(max_stat_val) else None
             minimum_treatment_time = parse_time_to_seconds(min_time_val)
+            maximum_treatment_time = parse_time_to_seconds(max_time_val)
 
             lower = min_station
             upper = max_station
@@ -231,13 +233,37 @@ def collect_report_data(output_dir: str):
                 'parallel_groups': parallel_groups,
                 'min_group_parallel_count': min_group_parallel_count,
                 'minimum_treatment_time_seconds': round(minimum_treatment_time, 2),
+                'maximum_treatment_time_seconds': round(maximum_treatment_time, 2),
                 'minimum_cycle_time_seconds': round(minimum_cycle_time, 2)
             })
+
+        # Calculate total throughput times for the entire program
+        num_steps = len(steps)
+        total_transfer_time = num_steps * avg_total_task_time
+        
+        # Minimum total throughput = sum of minimum cycle times + total transfer time
+        total_minimum_cycle_time = sum(step['minimum_cycle_time_seconds'] for step in steps)
+        total_minimum_throughput = total_minimum_cycle_time + total_transfer_time
+        
+        # Maximum total throughput = sum of maximum treatment times + total transfer time
+        total_maximum_treatment_time = sum(step['maximum_treatment_time_seconds'] for step in steps)
+        total_maximum_throughput = total_maximum_treatment_time + total_transfer_time
 
         return {
             'program_number': program_number,
             'source_file': os.path.relpath(source_path, output_dir) if source_path else None,
-            'steps': steps
+            'steps': steps,
+            'total_minimum_throughput_seconds': round(total_minimum_throughput, 2),
+            'total_maximum_throughput_seconds': round(total_maximum_throughput, 2),
+            'throughput_calculation': {
+                'num_steps': num_steps,
+                'avg_task_time_per_step': round(avg_total_task_time, 2),
+                'total_transfer_time': round(total_transfer_time, 2),
+                'total_minimum_cycle_time': round(total_minimum_cycle_time, 2),
+                'total_maximum_treatment_time': round(total_maximum_treatment_time, 2),
+                'formula_minimum': f'sum(minimum_cycle_times) + (num_steps × avg_task_time) = {total_minimum_cycle_time:.2f} + {total_transfer_time:.2f} = {total_minimum_throughput:.2f}s',
+                'formula_maximum': f'sum(maximum_treatment_times) + (num_steps × avg_task_time) = {total_maximum_treatment_time:.2f} + {total_transfer_time:.2f} = {total_maximum_throughput:.2f}s'
+            }
         }
     
     # --- Simulation Info ---
@@ -254,6 +280,7 @@ def collect_report_data(output_dir: str):
         report_data["simulation_info"]["plant_id"] = plant.get("id", "")
         report_data["simulation_info"]["plant_name"] = plant.get("name", "")
         report_data["simulation_info"]["plant_location"] = plant.get("location", "")
+        report_data["simulation_info"]["available_containers"] = plant.get("available_containers", 50)
         
         # Get production schedule (shifts per day, hours per shift, etc.)
         production_schedule = plant.get("production_schedule", {})
@@ -864,6 +891,97 @@ def collect_report_data(output_dir: str):
     movement_file = os.path.join(logs_dir_path, 'transporters_movement.csv')
     if os.path.exists(movement_file):
         report_data["files"]["transporters_movement"] = "logs/transporters_movement.csv"
+    
+    # --- Capacity Constraints (Cycle Time Bottlenecks) ---
+    # Calculate three key constraints that limit production cycle time
+    capacity_constraints = {
+        "description": "Three primary constraints that limit production cycle time and determine capacity visualization",
+        "constraints": {}
+    }
+    
+    # 1. Transporter constraint: longest avg_time_per_batch from any transporter
+    transporter_constraint = 0
+    transporter_name = None
+    if report_data.get("transporter_statistics"):
+        for trans_stat in report_data["transporter_statistics"]:
+            avg_time_minutes = trans_stat.get("avg_time_per_batch_minutes", 0)
+            avg_time_seconds = avg_time_minutes * 60
+            if avg_time_seconds > transporter_constraint:
+                transporter_constraint = avg_time_seconds
+                transporter_name = trans_stat.get("transporter")
+    
+    capacity_constraints["constraints"]["transporter_limitation"] = {
+        "cycle_time_seconds": round(transporter_constraint, 2),
+        "cycle_time_minutes": round(transporter_constraint / 60, 2),
+        "limiting_transporter": transporter_name,
+        "description": "Longest average time per batch from any transporter (transporter capacity bottleneck)"
+    }
+    
+    # 2. Station constraint: longest minimum_cycle_time from any treatment program step
+    station_constraint = 0
+    station_program = None
+    station_stage = None
+    if report_data.get("treatment_programs", {}).get("programs"):
+        for prog_id, prog_data in report_data["treatment_programs"]["programs"].items():
+            for step in prog_data.get("steps", []):
+                min_cycle = step.get("minimum_cycle_time_seconds", 0)
+                if min_cycle > station_constraint:
+                    station_constraint = min_cycle
+                    station_program = prog_id
+                    station_stage = step.get("stage")
+    
+    capacity_constraints["constraints"]["station_limitation"] = {
+        "cycle_time_seconds": round(station_constraint, 2),
+        "cycle_time_minutes": round(station_constraint / 60, 2),
+        "limiting_program": station_program,
+        "limiting_stage": station_stage,
+        "description": "Longest minimum cycle time from any treatment program step (station capacity bottleneck)"
+    }
+    
+    # 3. Container constraint: longest program maximum throughput / available_containers
+    container_constraint = 0
+    container_program = None
+    max_program_throughput = 0
+    available_containers = report_data.get("simulation_info", {}).get("available_containers", 50)
+    
+    if report_data.get("treatment_programs", {}).get("programs"):
+        for prog_id, prog_data in report_data["treatment_programs"]["programs"].items():
+            max_throughput = prog_data.get("total_maximum_throughput_seconds", 0)
+            if max_throughput > max_program_throughput:
+                max_program_throughput = max_throughput
+                container_program = prog_id
+    
+    if available_containers > 0 and max_program_throughput > 0:
+        container_constraint = max_program_throughput / available_containers
+    
+    capacity_constraints["constraints"]["container_limitation"] = {
+        "cycle_time_seconds": round(container_constraint, 2),
+        "cycle_time_minutes": round(container_constraint / 60, 2),
+        "available_containers": available_containers,
+        "limiting_program": container_program,
+        "limiting_program_max_throughput_seconds": round(max_program_throughput, 2),
+        "description": f"Longest program maximum throughput divided by available containers (WIP capacity constraint)",
+        "calculation": f"{max_program_throughput:.2f}s / {available_containers} containers = {container_constraint:.2f}s per batch"
+    }
+    
+    # Summary: which constraint is the bottleneck?
+    constraints_list = [
+        ("transporter", transporter_constraint),
+        ("station", station_constraint),
+        ("container", container_constraint)
+    ]
+    bottleneck = max(constraints_list, key=lambda x: x[1])
+    
+    capacity_constraints["bottleneck"] = {
+        "type": bottleneck[0],
+        "cycle_time_seconds": round(bottleneck[1], 2),
+        "cycle_time_minutes": round(bottleneck[1] / 60, 2),
+        "description": f"The {bottleneck[0]} limitation is the primary bottleneck (longest cycle time)"
+    }
+    
+    capacity_constraints["visualization_note"] = "These three constraints determine the triangle points in capacity_background.png visualization"
+    
+    report_data["capacity_constraints"] = capacity_constraints
     
     # Save report data to JSON
     report_data_path = os.path.join(reports_dir, 'report_data.json')

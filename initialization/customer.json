@@ -13,6 +13,7 @@
     "id": "P001",
     "name": "Nammo Zinc-Phosphating",
     "customer_id": "900135",
+    "available_containers": 50,
     "location": {
       "city": "Helsinki",
       "country": "Finland",
@@ -87,6 +88,7 @@
         "id": "Unique plant identifier within customer organization",
         "name": "Plant name (used in directory naming and reporting)",
         "customer_id": "Reference to parent customer",
+        "available_containers": "Number of transport containers/carriers available for batch transport (affects WIP capacity)",
         "location": "Physical location of the plant",
         "production_schedule": {
           "weeks_per_year": "Number of production weeks per year (accounting for holidays/maintenance)",
@@ -137,6 +139,7 @@
       "Multiple products can be processed in the same simulation run",
       "Each product has a treatment_program which references treatment_program_XXX.csv files",
       "pieces_per_batch determines how many product units are loaded into one batch carrier",
+      "available_containers limits the maximum number of batches in-process (WIP capacity constraint)",
       "Annual production hours = weeks_per_year × days_per_week × shifts_per_day × hours_per_shift",
       "Product surface_area and weight may be used for chemical consumption calculations"
     ]

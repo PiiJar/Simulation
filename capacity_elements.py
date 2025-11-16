@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 import json
+import math
 
 def format_time(seconds):
     """Formats seconds into MM:SS string."""
@@ -9,20 +10,25 @@ def format_time(seconds):
     secs = int(seconds % 60)
     return f"{minutes:02d}:{secs:02d}"
 
-def create_capacity_background(report_data_path, max_time_minutes=12):
+def create_capacity_background(report_data_path, max_time_minutes=12, image_pixels=1600, dpi=100):
     """
     Creates the static background for the capacity visualization.
 
     This includes the axis lines, time-based grid circles, and the target cycle time circle.
     """
     max_time_seconds = max_time_minutes * 60
+    requested_max_seconds = max_time_minutes * 60
 
     # --- 1. Setup Polar Plot ---
-    fig, ax = plt.subplots(figsize=(12, 12), subplot_kw={'polar': True})
+    figsize_inches = image_pixels / dpi
+    fig, ax = plt.subplots(figsize=(figsize_inches, figsize_inches), dpi=dpi, subplot_kw={'polar': True})
+    
+    # Maximize plot area by removing whitespace margins
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
     
     # Configure the plot appearance
     ax.set_facecolor('white')
-    ax.set_ylim(0, max_time_seconds)
+    ax.set_ylim(0, requested_max_seconds)
     
     # Hide default grid and labels
     ax.grid(False)
@@ -32,35 +38,7 @@ def create_capacity_background(report_data_path, max_time_minutes=12):
     # Remove the outer circular boundary (spine)
     ax.spines['polar'].set_visible(False)
 
-    # --- 2. Draw the Three Main Axes with Scale Marks ---
-    angles_deg = [90, 210, 330]
-    angles_rad = [np.deg2rad(d) for d in angles_deg]
-    
-    # Define tick lengths as fixed visual distances
-    major_tick_visual_length = 15  # For 60-second (minute) marks
-    minor_tick_visual_length = 8   # For 15-second marks (shorter)
-    
-    for angle in angles_rad:
-        # Draw the main axis line
-        ax.plot([angle, angle], [0, max_time_seconds], color='black', linewidth=1.5)
-        
-        # Add scale marks (ticks) along each axis
-        # Major ticks every 60 seconds (1 minute)
-        for r in np.arange(60, max_time_seconds + 1, 60):
-            # Calculate angle offset that gives constant visual length
-            # Arc length = r * theta, so theta = arc_length / r
-            if r > 0:
-                angle_offset = major_tick_visual_length / r
-                ax.plot([angle - angle_offset, angle + angle_offset], 
-                       [r, r], color='black', linewidth=1.2)
-        
-        # Minor ticks every 15 seconds (shorter than major ticks)
-        for r in np.arange(15, max_time_seconds + 1, 15):
-            if r % 60 != 0:  # Skip major tick positions
-                if r > 0:
-                    angle_offset = minor_tick_visual_length / r
-                    ax.plot([angle - angle_offset, angle + angle_offset], 
-                           [r, r], color='grey', linewidth=0.8)
+    # We'll draw axes/ticks later after we know the required display maximum (data-driven)
 
     # --- 5. Load data and draw cycle time circles ---
     try:
@@ -83,85 +61,150 @@ def create_capacity_background(report_data_path, max_time_minutes=12):
             except Exception as e:
                 print(f"Warning: Could not load target cycle time from goals.json: {e}")
         
-        # Get maximum transporter avg time per batch (in minutes, convert to seconds)
-        transporter_stats = data.get('transporter_statistics', [])
-        max_transporter_time = 0
-        if transporter_stats:
-            max_transporter_time = max(t.get('avg_time_per_batch_minutes', 0) for t in transporter_stats) * 60
+        # Get capacity constraints (three key cycle time limitations)
+        capacity_constraints = data.get('capacity_constraints', {}).get('constraints', {})
         
-        # Get maximum minimum_cycle_time_seconds from all treatment program steps
-        max_station_cycle_time = 0
-        programs = data.get('treatment_programs', {}).get('programs', {})
-        if programs:
-            for program in programs.values():
-                steps = program.get('steps', [])
-                for step in steps:
-                    cycle_time = step.get('minimum_cycle_time_seconds', 0)
-                    if cycle_time > max_station_cycle_time:
-                        max_station_cycle_time = cycle_time
+        # Point 1: Transporter limitation
+        transporter_limitation = capacity_constraints.get('transporter_limitation', {})
+        point1_radius = transporter_limitation.get('cycle_time_seconds', 0)
+        
+        # Point 2: Station limitation
+        station_limitation = capacity_constraints.get('station_limitation', {})
+        point2_radius = station_limitation.get('cycle_time_seconds', 0)
+        
+        # Point 3: Container limitation
+        container_limitation = capacity_constraints.get('container_limitation', {})
+        point3_radius = container_limitation.get('cycle_time_seconds', 0)
             
     except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
         print(f"Error reading {report_data_path}: {e}. Using defaults.")
         simulated_cycle_time = 0
         target_cycle_time = 0
-        max_transporter_time = 0
-        max_station_cycle_time = 0
+        point1_radius = 0
+        point2_radius = 0
+        point3_radius = 0
+
+    # Determine the maximum radius we need to display based on data (the outermost circle)
+    max_needed = max(
+        simulated_cycle_time or 0,
+        target_cycle_time or 0,
+        point1_radius or 0,
+        point2_radius or 0,
+        point3_radius or 0,
+    )
+
+    # Axis endpoint: floor((max_needed + 120s) / 60s) * 60s
+    # This ensures axes end at a full minute and extend at most 2 minutes beyond outermost circle
+    axis_max_seconds = int(math.floor((max_needed + 120) / 60.0) * 60)
+
+    # Display max for plot limits: extend slightly beyond axis end to allow tick extensions
+    display_max_seconds = axis_max_seconds + 120
+
+    # Now draw axes and ticks
+    # Draw three radial axes (in degrees 90, 210, 330 -> up, lower-right, lower-left)
+    angles_deg = [90, 210, 330]
+    angles_rad = [np.deg2rad(d) for d in angles_deg]
+
+    # Simplified, explicit tick rules:
+    # - Major ticks: every 60 s (1 minute)
+    # - Minor ticks: every 15 s (quarter minute), but not where a major tick exists
+    # - Visual arc lengths are fixed to represent a small time unit (seconds)
+    # - Major tick radial extensions extend up to 60s but capped at display_max_seconds
+    major_interval = 60
+    minor_interval = 15
+    major_arc_seconds = 15   # visual arc length along circumference (in seconds)
+    minor_arc_seconds = 5    # smaller visual arc for minor ticks
+
+    for angle in angles_rad:
+        # Draw axis line from 0 to axis_max_seconds (the rounded-down full minute)
+        ax.plot([angle, angle], [0, axis_max_seconds], color='black', linewidth=0.9)
+
+        # Major ticks (every 60s up to axis_max_seconds)
+        for r in np.arange(major_interval, axis_max_seconds + 1, major_interval):
+            if r <= 0:
+                continue
+            # Convert fixed arc length (in seconds) into angle offset at radius r
+            angle_offset = major_arc_seconds / float(r)
+            ax.plot([angle - angle_offset, angle + angle_offset], [r, r], color='black', linewidth=0.9)
+
+            # Radial extension for major tick: extend up to 60s but not beyond display_max
+            tick_extra = min(major_interval, display_max_seconds - r)
+            if tick_extra > 0:
+                ax.plot([angle, angle], [r, r + tick_extra], color='black', linewidth=0.9)
+
+        # Minor ticks (every 15s but skip multiples of 60s, up to axis_max_seconds)
+        for r in np.arange(minor_interval, axis_max_seconds + 1, minor_interval):
+            if r <= 0 or (r % major_interval) == 0:
+                continue
+            angle_offset = minor_arc_seconds / float(r)
+            ax.plot([angle - angle_offset, angle + angle_offset], [r, r], color='grey', linewidth=0.6)
+
+    # Set final ylim
+    ax.set_ylim(0, display_max_seconds)
 
     # Draw target cycle time circle (black)
-    if target_cycle_time > 0 and target_cycle_time <= max_time_seconds:
+    if target_cycle_time > 0 and target_cycle_time <= display_max_seconds:
         ax.plot(np.linspace(0, 2 * np.pi, 100), [target_cycle_time] * 100,
-                color='black', linewidth=2.5, linestyle='-', 
+                color='black', linewidth=1.2, linestyle='-', 
                 label=f'Target Cycle Time ({format_time(target_cycle_time)})')
     
     # Draw simulated cycle time circle (green if within target, red if outside)
-    if simulated_cycle_time > 0 and simulated_cycle_time <= max_time_seconds:
+    if simulated_cycle_time > 0 and simulated_cycle_time <= display_max_seconds:
         color = 'green' if simulated_cycle_time <= target_cycle_time else 'red'
         ax.plot(np.linspace(0, 2 * np.pi, 100), [simulated_cycle_time] * 100,
-                color=color, linewidth=2.5, linestyle='-', 
+                color=color, linewidth=1.2, linestyle='-', 
                 label=f'Simulated Avg Cycle Time ({format_time(simulated_cycle_time)})')
     
     # --- 6. Draw three points and connect them to form a triangle ---
-    # Point 1: Max transporter time on vertical axis (90 degrees)
+    # Three capacity constraints determine triangle points:
+    # Point 1: Transporter limitation on vertical axis (90 degrees)
     point1_angle = np.pi / 2
-    point1_radius = max_transporter_time if max_transporter_time > 0 else 0
+    point1_label = "Transporter Limitation"
     
-    # Point 2: Max station cycle time on lower-right axis (210 degrees)
+    # Point 2: Station limitation on lower-right axis (210 degrees)
     point2_angle = np.deg2rad(210)
-    point2_radius = max_station_cycle_time if max_station_cycle_time > 0 else 0
+    point2_label = "Station Limitation"
     
-    # Point 3: Hardcoded 6 minutes on lower-left axis (330 degrees)
+    # Point 3: Container limitation on lower-left axis (330 degrees)
     point3_angle = np.deg2rad(330)
-    point3_radius = 6 * 60  # 6 minutes in seconds
+    point3_label = "Container Limitation"
     
-    # Draw the three points
-    if point1_radius > 0 and point1_radius <= max_time_seconds:
-        ax.plot(point1_angle, point1_radius, 'o', color='blue', markersize=10, 
-                label=f'Max Transporter Time ({format_time(point1_radius)})')
-    
-    if point2_radius > 0 and point2_radius <= max_time_seconds:
-        ax.plot(point2_angle, point2_radius, 'o', color='purple', markersize=10, 
-                label=f'Max Station Cycle Time ({format_time(point2_radius)})')
-    
-    if point3_radius > 0 and point3_radius <= max_time_seconds:
-        ax.plot(point3_angle, point3_radius, 'o', color='orange', markersize=10, 
-                label=f'Third Point (Hardcoded: {format_time(point3_radius)})')
+    # Draw the three points and color them by whether they're inside the target circle
+    if point1_radius > 0 and point1_radius <= display_max_seconds:
+        # green if inside/at target, red if outside
+        point1_color = 'green' if (target_cycle_time > 0 and point1_radius <= target_cycle_time) else 'red'
+        ax.plot(point1_angle, point1_radius, 'o', color=point1_color, markersize=10,
+                label=f'{point1_label} ({format_time(point1_radius)})')
+
+    if point2_radius > 0 and point2_radius <= display_max_seconds:
+        point2_color = 'green' if (target_cycle_time > 0 and point2_radius <= target_cycle_time) else 'red'
+        ax.plot(point2_angle, point2_radius, 'o', color=point2_color, markersize=10,
+                label=f'{point2_label} ({format_time(point2_radius)})')
+
+    if point3_radius > 0 and point3_radius <= display_max_seconds:
+        point3_color = 'green' if (target_cycle_time > 0 and point3_radius <= target_cycle_time) else 'red'
+        ax.plot(point3_angle, point3_radius, 'o', color=point3_color, markersize=10,
+                label=f'{point3_label} ({format_time(point3_radius)})')
     
     # Connect the three points to form a triangle
-    if all(r > 0 and r <= max_time_seconds for r in [point1_radius, point2_radius, point3_radius]):
+    if all(r > 0 and r <= display_max_seconds for r in [point1_radius, point2_radius, point3_radius]):
         triangle_angles = [point1_angle, point2_angle, point3_angle, point1_angle]  # Close the triangle
         triangle_radii = [point1_radius, point2_radius, point3_radius, point1_radius]
-        ax.plot(triangle_angles, triangle_radii, color='darkblue', linewidth=2, linestyle='-', alpha=0.7)
+
+        # Make triangle outline thinner and dashed so it's visually lighter
+        ax.plot(triangle_angles, triangle_radii, color='darkblue', linewidth=1.0, linestyle='--', alpha=0.8)
         ax.fill(triangle_angles[:-1], triangle_radii[:-1], color='lightblue', alpha=0.3)
-        
+
         # Draw circle at the furthest triangle point (bottleneck indicator)
         max_triangle_radius = max(point1_radius, point2_radius, point3_radius)
-        if max_triangle_radius > 0 and max_triangle_radius <= max_time_seconds:
-            ax.plot(np.linspace(0, 2 * np.pi, 100), [max_triangle_radius] * 100,
-                    color='orange', linewidth=2, linestyle='--', alpha=0.6,
-                    label=f'Bottleneck ({format_time(max_triangle_radius)})')
+    if max_triangle_radius > 0 and max_triangle_radius <= display_max_seconds:
+        ax.plot(np.linspace(0, 2 * np.pi, 100), [max_triangle_radius] * 100,
+            color='orange', linewidth=1.2, linestyle='--', alpha=0.6,
+            label=f'Bottleneck ({format_time(max_triangle_radius)})')
 
-    ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.15))
-    ax.set_title("Capacity Visualization", fontsize=16, pad=20)
+    # Remove legend and title for a cleaner background image
+    # ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.15))
+    # ax.set_title("Capacity Visualization", fontsize=16, pad=20)
 
     return fig, ax
 
@@ -181,9 +224,12 @@ if __name__ == '__main__':
     print(f"Loading data from: {report_data_file}")
 
     # Generate and save the background image using data from the latest simulation
-    fig, _ = create_capacity_background(report_data_path=report_data_file)
+    image_pixels = 1600
+    dpi = 100
+    fig, _ = create_capacity_background(report_data_path=report_data_file, max_time_minutes=12, image_pixels=image_pixels, dpi=dpi)
 
     output_path = images_dir / 'capacity_background.png'
-    fig.savefig(output_path, dpi=150, bbox_inches='tight')
+    # Save without bbox trimming to keep exact pixel dimensions
+    fig.savefig(output_path, dpi=dpi)
 
     print(f"Capacity visualization background saved to: {output_path}")

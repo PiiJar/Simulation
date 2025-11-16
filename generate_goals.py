@@ -48,6 +48,7 @@ def generate_goals(output_dir, treatment_programs=None, transfer_times=None):
     # Calculate total annual target for share calculation
     total_annual = sum([target.get("target_quantity", 0) for target in annual_targets if target.get("product_id") in valid_ids])
     # Simulation/plant context
+    available_containers = plant.get("available_containers", 50)  # Default 50 if not specified
     weeks_per_year = plant.get("production_schedule", {}).get("weeks_per_year", 48)
     days_per_week = plant.get("production_schedule", {}).get("days_per_week", 5)
     shifts_per_day = plant.get("production_schedule", {}).get("shifts_per_day", 2)
@@ -168,6 +169,10 @@ def generate_goals(output_dir, treatment_programs=None, transfer_times=None):
             "simulation_period": {
                 "duration_hours": simulation_duration_hours,
                 "description": f"Simulation represents {simulation_duration_hours} hours of production"
+            },
+            "plant_constraints": {
+                "available_containers": available_containers,
+                "description": "Number of transport containers/carriers available for batches"
             }
         },
         "simulation_targets": [
