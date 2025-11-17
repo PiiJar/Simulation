@@ -435,18 +435,17 @@ def collect_report_data(output_dir: str):
                     s = int(seconds % 60)
                     return f"{h:02d}:{m:02d}:{s:02d}"
                 
-                # Find first batch's last stage entry time (ramp-up end)
-                # Last stage = highest stage number for batch 1
-                first_batch = df_schedule[df_schedule['Batch'] == df_schedule['Batch'].min()]
-                last_stage_of_first = first_batch[first_batch['Stage'] == first_batch['Stage'].max()].iloc[0]
-                ramp_up_end = last_stage_of_first['EntryTime']
+                # Find first batch's completion time (ramp-up end)
+                # Steady state starts when first batch completes
+                first_batch_num = df_schedule['Batch'].min()
+                first_batch = df_schedule[df_schedule['Batch'] == first_batch_num]
+                ramp_up_end = first_batch['ExitTime'].max()
                 
                 # Find when last batch started (ramp-down start)
-                # First stage entry of last batch
+                # Steady state ends when last batch starts (enters first stage)
                 last_batch_num = df_schedule['Batch'].max()
                 last_batch = df_schedule[df_schedule['Batch'] == last_batch_num]
-                first_stage_of_last = last_batch[last_batch['Stage'] == last_batch['Stage'].min()].iloc[0]
-                ramp_down_start = first_stage_of_last['EntryTime']
+                ramp_down_start = last_batch['EntryTime'].min()
                 
                 # Find when the last finishing batch ends (ramp-down end)
                 # Maximum ExitTime across all batches
@@ -478,17 +477,22 @@ def collect_report_data(output_dir: str):
                 
                 # Calculate steady-state average cycle time from actual batch completions
                 try:
-                    batch_schedule_path = os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv')
-                    if os.path.exists(batch_schedule_path):
-                        df_schedule = pd.read_csv(batch_schedule_path)
-                        batch_end_times = df_schedule.groupby('Batch')['ExitTime'].max().sort_index()
+                    # Use production.csv for accurate batch start times
+                    production_path = os.path.join(output_dir, 'initialization', 'production.csv')
+                    if os.path.exists(production_path):
+                        df_production = pd.read_csv(production_path)
                         
-                        # Find batches that complete during steady-state
-                        steady_batches = batch_end_times[(batch_end_times > ramp_up_end) & (batch_end_times <= ramp_down_start)]
+                        # Convert Start_optimized to seconds
+                        df_production['Start_seconds'] = pd.to_timedelta(df_production['Start_optimized']).dt.total_seconds()
+                        
+                        # Find batches that START during steady-state
+                        # Steady state: from first batch completion (ramp_up_end) to when last batch starts (ramp_down_start)
+                        steady_batches = df_production[(df_production['Start_seconds'] >= ramp_up_end) & 
+                                                       (df_production['Start_seconds'] < ramp_down_start)]
                         
                         if len(steady_batches) > 1:
-                            first_batch_time = steady_batches.iloc[0]
-                            last_batch_time = steady_batches.iloc[-1]
+                            first_batch_time = steady_batches['Start_seconds'].iloc[0]
+                            last_batch_time = steady_batches['Start_seconds'].iloc[-1]
                             time_diff = last_batch_time - first_batch_time
                             avg_cycle_time = time_diff / (len(steady_batches) - 1)
                             
@@ -503,13 +507,21 @@ def collect_report_data(output_dir: str):
                     
                     # For throughput calculations, use steady-state period if it exists
                     if report_data["simulation_info"]["has_steady_state"]:
-                        # Count batches completed during steady state (pure throughput rate)
+                        # Steady-state window duration (for info only)
                         steady_state_duration = ramp_down_start - ramp_up_end
-                        batches_completed_in_steady = 0
+                        
+                        # Use production.csv for batch start times
+                        production_path = os.path.join(output_dir, 'initialization', 'production.csv')
+                        if os.path.exists(production_path):
+                            df_production = pd.read_csv(production_path)
+                            df_production['Start_seconds'] = pd.to_timedelta(df_production['Start_optimized']).dt.total_seconds()
+                            
+                            # Find batches that START during steady state
+                            steady_starts = df_production[(df_production['Start_seconds'] >= ramp_up_end) & 
+                                                         (df_production['Start_seconds'] < ramp_down_start)]
                         
                         # Count batches completed during ramp-down (work in progress completion)
                         batches_completed_in_rampdown = 0
-                        
                         for batch in df_schedule['Batch'].unique():
                             batch_data = df_schedule[df_schedule['Batch'] == batch]
                             last_stage = batch_data['Stage'].max()
@@ -517,19 +529,20 @@ def collect_report_data(output_dir: str):
                             
                             if not last_stage_data.empty:
                                 exit_time = last_stage_data.iloc[0]['ExitTime']
-                                
-                                # Completed in steady state
-                                if ramp_up_end < exit_time <= ramp_down_start:
-                                    batches_completed_in_steady += 1
-                                # Completed in ramp-down
-                                elif exit_time > ramp_down_start:
+                                if exit_time > ramp_down_start:
                                     batches_completed_in_rampdown += 1
                         
-                        if batches_completed_in_steady > 0 and steady_state_duration > 0:
-                            batches_per_second = batches_completed_in_steady / steady_state_duration
+                        if len(steady_starts) > 1:
+                            # Calculate throughput from actual start times from production.csv
+                            first_start = steady_starts['Start_seconds'].iloc[0]
+                            last_start = steady_starts['Start_seconds'].iloc[-1]
+                            actual_steady_duration = last_start - first_start
+                            
+                            # Batches per second = intervals / duration
+                            batches_per_second = (len(steady_starts) - 1) / actual_steady_duration
                             calculation_method = "steady_state_with_rampdown"
                             
-                            report_data["simulation_info"]["steady_state_batches_completed"] = batches_completed_in_steady
+                            report_data["simulation_info"]["steady_state_batches_started"] = len(steady_starts)
                             report_data["simulation_info"]["ramp_down_batches_completed"] = batches_completed_in_rampdown
                             report_data["simulation_info"]["ramp_up_time_seconds"] = int(ramp_up_end)
                             report_data["simulation_info"]["ramp_down_time_seconds"] = int(ramp_down_end - ramp_down_start)

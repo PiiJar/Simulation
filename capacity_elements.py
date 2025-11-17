@@ -169,21 +169,20 @@ def create_capacity_background(report_data_path, max_time_minutes=12, image_pixe
     point3_angle = np.deg2rad(330)
     point3_label = "Container Limitation"
     
-    # Draw the three points and color them by whether they're inside the target circle
+    # Draw the three points with distinct colors:
+    # Point 1 (Transporter): Blue
+    # Point 2 (Station): Purple
+    # Point 3 (Container): Dark Green
     if point1_radius > 0 and point1_radius <= display_max_seconds:
-        # green if inside/at target, red if outside
-        point1_color = 'green' if (target_cycle_time > 0 and point1_radius <= target_cycle_time) else 'red'
-        ax.plot(point1_angle, point1_radius, 'o', color=point1_color, markersize=10,
+        ax.plot(point1_angle, point1_radius, 'o', color='#2196F3', markersize=10,
                 label=f'{point1_label} ({format_time(point1_radius)})')
 
     if point2_radius > 0 and point2_radius <= display_max_seconds:
-        point2_color = 'green' if (target_cycle_time > 0 and point2_radius <= target_cycle_time) else 'red'
-        ax.plot(point2_angle, point2_radius, 'o', color=point2_color, markersize=10,
+        ax.plot(point2_angle, point2_radius, 'o', color='#9C27B0', markersize=10,
                 label=f'{point2_label} ({format_time(point2_radius)})')
 
     if point3_radius > 0 and point3_radius <= display_max_seconds:
-        point3_color = 'green' if (target_cycle_time > 0 and point3_radius <= target_cycle_time) else 'red'
-        ax.plot(point3_angle, point3_radius, 'o', color=point3_color, markersize=10,
+        ax.plot(point3_angle, point3_radius, 'o', color='#2E7D32', markersize=10,
                 label=f'{point3_label} ({format_time(point3_radius)})')
     
     # Connect the three points to form a triangle

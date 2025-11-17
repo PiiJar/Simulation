@@ -572,10 +572,8 @@ def create_slowest_phases_card(output_dir: str, report_data: dict):
     all_phases.sort(key=lambda x: x['cycle_time_seconds'], reverse=True)
     top_3_phases = all_phases[:3]
     
-    # Calculate target takt time from batches_per_hour
-    scaled_production = report_data.get('simulation_info', {}).get('scaled_production_estimates', {})
-    batches_per_hour = scaled_production.get('batches_per_hour', 0)
-    target_takt_time_seconds = (3600 / batches_per_hour) if batches_per_hour > 0 else 0
+    # Get target takt time from simulation goals
+    target_takt_time_seconds = report_data.get('simulation', {}).get('target_cycle_time_seconds', 0)
     
     # Determine header color based on worst phase
     if len(top_3_phases) > 0 and target_takt_time_seconds > 0:

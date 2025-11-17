@@ -31,7 +31,7 @@
       "annual": [
         {
           "product_id": "PROD-001",
-          "target_quantity": 150000,
+          "target_quantity": 130000,
           "unit": "pieces",
           "priority": 1
         }
