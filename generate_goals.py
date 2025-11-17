@@ -80,12 +80,20 @@ def generate_goals(output_dir, treatment_programs=None, transfer_times=None):
         if pieces_per_batch <= 0:
             raise ValueError(f"Product {pid}: pieces_per_batch must be > 0, got {pieces_per_batch}")
         
+        # Laske vuositason erät
+        annual_batches = annual_target / pieces_per_batch
+        
+        # Laske vuositason erät per tunti
+        annual_production_hours = weeks_per_year * days_per_week * shifts_per_day * hours_per_shift
+        annual_batches_per_hour = annual_batches / annual_production_hours
+        
+        # Laske simulaatioajan erien määrä OIKEAN tahtiajan perusteella
+        simulation_target_batches_float = annual_batches_per_hour * simulation_duration_hours
+        simulation_target_batches = int(round(simulation_target_batches_float))
+        
+        # Laske myös päivätason tiedot raportointia varten
         daily_target_pieces = annual_target / working_days_per_year
         daily_target_batches = daily_target_pieces / pieces_per_batch
-        
-        # Laske simulaatioajan erien määrä
-        simulation_target_batches_float = daily_target_batches * simulation_duration_hours / 24.0
-        simulation_target_batches = int(round(simulation_target_batches_float))
         
         # Validointi: ei sallita nollaa eriä
         if simulation_target_batches == 0:
@@ -147,18 +155,19 @@ def generate_goals(output_dir, treatment_programs=None, transfer_times=None):
         total_daily_batches += daily_target_batches
         batch_counts[pid] = simulation_target_batches  # Käytä simulaatioajan erämäärää!
     production_share_validation["total"] = f"{sum([float(v.strip('%')) for v in production_share_validation.values()]):.1f}%"
-    # Target pace (total batches = sum of daily_target_batches for all products)
-    total_batches = sum(batch_counts.values())
-    batches_per_hour = round(total_batches / simulation_duration_hours, 3) if simulation_duration_hours else 0
-    avg_batch_interval_min = round(60 / batches_per_hour, 2) if batches_per_hour else None
-    avg_batch_interval_sec = round(3600 / batches_per_hour, 2) if batches_per_hour else None
     
-    # Calculate target cycle time based on annual targets (more realistic)
+    # Calculate target cycle time and batch targets based on ANNUAL targets
     annual_production_hours = weeks_per_year * days_per_week * shifts_per_day * hours_per_shift
     annual_batches = sum([target.get("target_quantity", 0) / product_map.get(target.get("product_id", {}), {}).get("properties", {}).get("pieces_per_batch", 1) 
                          for target in annual_targets if target.get("product_id") in valid_ids])
     annual_batches_per_hour = annual_batches / annual_production_hours if annual_production_hours > 0 else 0
     target_cycle_time_seconds = round(3600 / annual_batches_per_hour, 2) if annual_batches_per_hour > 0 else None
+    
+    # Target pace for simulation period (calculated from annual targets, NOT from simulation batch count)
+    total_batches = sum(batch_counts.values())
+    batches_per_hour = round(annual_batches_per_hour, 3)  # Use ANNUAL target, not simulation actual
+    avg_batch_interval_min = round(60 / batches_per_hour, 2) if batches_per_hour else None
+    avg_batch_interval_sec = round(3600 / batches_per_hour, 2) if batches_per_hour else None
     
     # Build goals.json structure - vain simulaatiokohtaiset tavoitteet
     goals = {
@@ -192,20 +201,22 @@ def generate_goals(output_dir, treatment_programs=None, transfer_times=None):
             "production_share_validation": production_share_validation
         },
         "target_pace": {
+            "description": "Target production pace based on annual production targets",
             "simulation_duration_hours": simulation_duration_hours,
-            "total_batches": total_batches,
+            "simulation_target_batches": total_batches,
+            "annual_batches": round(annual_batches, 2),
+            "annual_production_hours": annual_production_hours,
             "batches_per_hour": batches_per_hour,
+            "target_cycle_time_seconds": target_cycle_time_seconds,
             "average_batch_interval_minutes": avg_batch_interval_min,
             "average_batch_interval_seconds": avg_batch_interval_sec,
-            "target_cycle_time_seconds": target_cycle_time_seconds,
             "calculation": {
-                "batches_per_hour": f"{total_batches} batches / {simulation_duration_hours} hours = {batches_per_hour} batches/hour",
-                "interval_minutes": f"60 minutes / {batches_per_hour} batches = {avg_batch_interval_min} minutes/batch",
-                "interval_seconds": f"3600 seconds / {batches_per_hour} batches = {avg_batch_interval_sec} seconds/batch",
-                "annual_target_cycle_time": f"Annual batches: {annual_batches:.0f}, Annual hours: {annual_production_hours}, Target cycle time: {target_cycle_time_seconds}s"
+                "annual_calculation": f"Annual target: {annual_batches:.0f} batches / {annual_production_hours} hours = {batches_per_hour:.2f} batches/hour",
+                "cycle_time": f"Target cycle time: 3600 seconds / {batches_per_hour:.2f} batches/hour = {target_cycle_time_seconds}s",
+                "simulation_target": f"Simulation ({simulation_duration_hours}h): {batches_per_hour:.2f} batches/hour × {simulation_duration_hours}h = {total_batches} batches"
             },
             "interpretation": {
-                "description": f"On average, a new batch should start every {avg_batch_interval_min} minutes to meet daily target",
+                "description": f"To meet annual targets, a new batch must complete every {target_cycle_time_seconds}s ({avg_batch_interval_min} min)",
                 "practical_note": "Actual intervals may vary based on treatment program duration and transporter capacity",
                 "target_cycle_time_note": f"Target cycle time based on annual production goals: {target_cycle_time_seconds}s per batch"
             },

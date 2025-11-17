@@ -6,6 +6,7 @@ keeping the main pipeline clean.
 """
 
 from generate_production_cards import generate_all_cards
+from capacity_elements import generate_capacity_visualization
 
 
 def generate_images(output_dir: str):
@@ -17,9 +18,17 @@ def generate_images(output_dir: str):
     
     Generates:
         - Production status cards
+        - Capacity elements visualization
         - (Future: other charts, diagrams, etc.)
     """
     print("🖼️  Generating report images...")
+    
+    # Generate capacity elements visualization
+    try:
+        generate_capacity_visualization(output_dir)
+        print("✅ Capacity elements visualization generated")
+    except Exception as e:
+        print(f"⚠️  Warning: Capacity visualization generation failed: {e}")
     
     # Generate production status cards
     try:

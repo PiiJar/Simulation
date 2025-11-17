@@ -11,6 +11,7 @@ Sisältää:
 """
 
 import os
+import json
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -122,39 +123,38 @@ class EnhancedSimulationReport(FPDF):
 
 
 def calculate_kpi_metrics(output_dir):
-    """Laske keskeiset suorituskykymittarit"""
+    """Laske keskeiset suorituskykymittarit report_data.json tiedostosta"""
     metrics = {}
     
-    # Lue tiedostot
-    batch_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv'))
-    transporter_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
-    station_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_station_schedule.csv'))
-    transporter_phases = pd.read_csv(os.path.join(output_dir, 'reports', 'transporter_phases.csv'))
+    # Lue report_data.json
+    report_data_path = os.path.join(output_dir, 'reports', 'report_data.json')
+    with open(report_data_path, 'r') as f:
+        report_data = json.load(f)
     
-    # Lue asematiedot (numerot, ryhmät, nimet) JSON-tiedostosta
-    from load_stations_json import load_stations_from_json
-    init_dir = os.path.join(output_dir, 'initialization')
-    stations_df = load_stations_from_json(init_dir)
-    station_info = stations_df.set_index('Number')[['Group', 'Name']].to_dict('index')
-    
-    # Makespan (kokonaisaika)
-    max_exit = batch_schedule['ExitTime'].max()
-    metrics['makespan_seconds'] = int(max_exit)
-    metrics['makespan_hours'] = max_exit / 3600
+    # Makespan (kokonaisaika) from simulation data
+    makespan_seconds = report_data['simulation']['duration_seconds']
+    metrics['makespan_seconds'] = makespan_seconds
+    metrics['makespan_hours'] = makespan_seconds / 3600
     
     # Muotoile makespan hh:mm:ss
-    makespan_hours = int(max_exit // 3600)
-    makespan_minutes = int((max_exit % 3600) // 60)
-    makespan_secs = int(max_exit % 60)
+    makespan_hours = int(makespan_seconds // 3600)
+    makespan_minutes = int((makespan_seconds % 3600) // 60)
+    makespan_secs = int(makespan_seconds % 60)
     metrics['makespan_formatted'] = f"{makespan_hours:02d}:{makespan_minutes:02d}:{makespan_secs:02d}"
     
     # Erämäärä
-    metrics['total_batches'] = len(batch_schedule['Batch'].unique())
+    metrics['total_batches'] = report_data['simulation']['total_batches']
     
-    # Keskimääräinen läpimenoaika
-    batch_times = batch_schedule.groupby('Batch').agg({'EntryTime': 'min', 'ExitTime': 'max'})
-    batch_times['LeadTime'] = batch_times['ExitTime'] - batch_times['EntryTime']
-    avg_lead_time_seconds = batch_times['LeadTime'].mean()
+    # Keskimääräinen läpimenoaika (calculate from batch schedule CSV)
+    batch_schedule_file = os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv')
+    if os.path.exists(batch_schedule_file):
+        batch_schedule = pd.read_csv(batch_schedule_file)
+        batch_times = batch_schedule.groupby('Batch').agg({'EntryTime': 'min', 'ExitTime': 'max'})
+        batch_times['LeadTime'] = batch_times['ExitTime'] - batch_times['EntryTime']
+        avg_lead_time_seconds = batch_times['LeadTime'].mean()
+    else:
+        avg_lead_time_seconds = 0
+    
     metrics['avg_lead_time'] = avg_lead_time_seconds / 3600
     metrics['avg_lead_time_seconds'] = int(avg_lead_time_seconds)
     
@@ -164,226 +164,50 @@ def calculate_kpi_metrics(output_dir):
     seconds = int(avg_lead_time_seconds % 60)
     metrics['avg_lead_time_formatted'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     
-    # Avg. Cycle Time
-    # = (viimeisen erän start-aika - ensimmäisen erän start-aika) / (erien määrä - 1)
-    # Start-ajat tulevat production.csv tiedostosta (Start_optimized sarake, muodossa hh:mm:ss)
+    # Avg. Cycle Time from simulation data
+    cycle_time_seconds = report_data['simulation']['steady_state_avg_cycle_time_seconds']
+    metrics['takt_time_seconds'] = cycle_time_seconds
+    
+    # Muotoile hh:mm:ss
+    takt_hours = int(cycle_time_seconds // 3600)
+    takt_minutes = int((cycle_time_seconds % 3600) // 60)
+    takt_secs = int(cycle_time_seconds % 60)
+    metrics['takt_time_formatted'] = f"{takt_hours:02d}:{takt_minutes:02d}:{takt_secs:02d}"
+    
+    # Erien määrä tunnissa (from scaled production estimates)
+    metrics['batches_per_hour'] = report_data['simulation_info']['scaled_production_estimates']['batches_per_hour']
+    
+    # Nostimen käyttöaste from transporter_statistics
+    for transporter_data in report_data['transporter_statistics']:
+        t_id = transporter_data['transporter_id']
+        utilization = transporter_data['utilization_percent']
+        metrics[f'transporter_{t_id}_utilization'] = utilization
+    
+    # Pullonkaula-analyysi from capacity_constraints
+    station_limitation = report_data['capacity_constraints']['constraints']['station_limitation']
+    
+    # Bottleneck information  
+    bottleneck_stage = station_limitation.get('limiting_stage', 0)
+    bottleneck_rate = station_limitation['cycle_time_minutes']
+    
+    # Station name (simple placeholder - Stage number)
+    bottleneck_station_name = f"Stage {bottleneck_stage}"
+    
+    metrics['most_used_station_group'] = bottleneck_stage
+    metrics['most_used_station_name'] = bottleneck_station_name
+    metrics['most_used_station_utilization'] = 0  # Placeholder
+    metrics['bottleneck_rate'] = bottleneck_rate  # min/station
+    metrics['theoretical_takt_time'] = "N/A"
+    metrics['theoretical_takt_seconds'] = 0
+    metrics['group_utilization'] = {}
+    
+    # Käsittelyohjelmat (Treatment Programs) from production.csv
     production_file = os.path.join(output_dir, 'initialization', 'production.csv')
     if os.path.exists(production_file):
         production_df = pd.read_csv(production_file)
-        
-        # Muunna Start_optimized (hh:mm:ss) sekunneiksi
-        def time_to_seconds(time_str):
-            if pd.isna(time_str):
-                return 0
-            parts = str(time_str).split(':')
-            if len(parts) == 3:
-                h, m, s = parts
-                return int(h) * 3600 + int(m) * 60 + int(s)
-            return 0
-        
-        production_df['Start_seconds'] = production_df['Start_optimized'].apply(time_to_seconds)
-        batch_starts = production_df.groupby('Batch')['Start_seconds'].min().sort_values()
-        
-        if len(batch_starts) > 1:
-            first_start = batch_starts.iloc[0]
-            last_start = batch_starts.iloc[-1]
-            cycle_time_seconds = (last_start - first_start) / (len(batch_starts) - 1)
-            metrics['takt_time_seconds'] = cycle_time_seconds
-            
-            # Muotoile hh:mm:ss
-            takt_hours = int(cycle_time_seconds // 3600)
-            takt_minutes = int((cycle_time_seconds % 3600) // 60)
-            takt_secs = int(cycle_time_seconds % 60)
-            metrics['takt_time_formatted'] = f"{takt_hours:02d}:{takt_minutes:02d}:{takt_secs:02d}"
-            
-            # Erien määrä tunnissa = 3600 / cycle time
-            metrics['batches_per_hour'] = 3600.0 / cycle_time_seconds if cycle_time_seconds > 0 else 0
-        else:
-            metrics['takt_time_seconds'] = 0
-            metrics['takt_time_formatted'] = "00:00:00"
-            metrics['batches_per_hour'] = 0
-    else:
-        metrics['takt_time_seconds'] = 0
-        metrics['takt_time_formatted'] = "00:00:00"
-        metrics['batches_per_hour'] = 0
-    
-    # Nostimen käyttöaste
-    for _, row in transporter_phases.iterrows():
-        t_id = int(row['Transporter'])
-        total = float(row['Total_Time'])
-        idle = float(row['Sum_Phase_0'])
-        utilization = ((total - idle) / total * 100) if total > 0 else 0
-        metrics[f'transporter_{t_id}_utilization'] = utilization
-    
-    # Asemien käyttöaste (ajallinen analyysi asemaryhmittäin)
-    # Laske kunkin aseman kokonaistyöaika (ExitTime - EntryTime)
-    station_schedule['Duration'] = station_schedule['ExitTime'] - station_schedule['EntryTime']
-    
-    # Lisää asemaryhmätiedot
-    station_schedule['Group'] = station_schedule['Station'].map(lambda s: station_info.get(s, {}).get('Group', 0))
-    
-    # Laske käyttöaste per asemaryhmä (yhteenlaskettu työaika ryhmässä)
-    group_work_time = station_schedule.groupby('Group')['Duration'].sum()
-    
-    # Laske asemien määrä per ryhmä
-    stations_per_group = stations_df.groupby('Group').size()
-    
-    # Kokonaisaika = makespan
-    total_time = metrics['makespan_seconds']
-    
-    # Laske käyttöaste per asemaryhmä (jaetaan asemien määrällä ryhmässä)
-    group_utilization = {}
-    for group, work_time in group_work_time.items():
-        num_stations = stations_per_group.get(group, 1)  # Oletus: 1 asema jos ei löydy
-        # Keskimääräinen käyttöaste per asema ryhmässä
-        utilization = (work_time / (total_time * num_stations) * 100) if total_time > 0 else 0
-        group_utilization[int(group)] = utilization
-    
-    # === PULLONKAULA-ANALYYSI: Etsi stage jolla korkein bottleneck rate ===
-    # Bottleneck rate = (stage min time + avg transfer time) / (number of stations)
-    # Tämä kertoo todellisen kapasiteetin rajoitteen, ei pelkkää käyttöastetta
-    
-    bottleneck_group = None
-    bottleneck_rate = 0
-    bottleneck_station_name = "N/A"
-    bottleneck_utilization = 0
-    avg_transfer_time = 0
-    
-    # Lue keskimääräinen siirtoaika transfer tasks -tiedostosta
-    # HUOM: TotalTaskTime on sekunteina, muunnetaan minuuteiksi
-    transfer_tasks_file = os.path.join(output_dir, 'cp_sat', 'cp_sat_transfer_tasks.csv')
-    if os.path.exists(transfer_tasks_file):
-        transfer_tasks_df = pd.read_csv(transfer_tasks_file)
-        avg_transfer_time = transfer_tasks_df['TotalTaskTime'].mean() / 60.0
-    
-    # Lue käsittelyohjelmat (treatment programs) pullonkaulan määrittämiseksi
-    treatment_programs_dir = os.path.join(output_dir, 'cp_sat')
-    if os.path.exists(treatment_programs_dir):
-        # Käytetään Program 1:ää (yleisin ohjelma)
-        tp_file = os.path.join(treatment_programs_dir, 'cp_sat_treatment_program_1.csv')
-        if os.path.exists(tp_file):
-            tp_df = pd.read_csv(tp_file)
-            
-            for _, row in tp_df[tp_df['Stage'] > 0].iterrows():
-                min_stat = int(row['MinStat'])
-                max_stat = int(row['MaxStat'])
-                num_stations = max_stat - min_stat + 1
-                
-                # Parsitaan aika (muodossa "HH:MM:SS")
-                min_time_str = row['MinTime']
-                parts = min_time_str.split(':')
-                min_time_min = int(parts[0]) * 60 + int(parts[1])
-                
-                # Bottleneck rate: (käsittelyaika + siirtoaika) / asemien määrä
-                total_time = min_time_min + avg_transfer_time
-                rate = total_time / num_stations if num_stations > 0 else 0
-                
-                # Hae asemaryhmä
-                station_info = stations_df[stations_df['Number'] == min_stat]
-                if not station_info.empty:
-                    group = int(station_info.iloc[0]['Group'])
-                    
-                    # Päivitä jos tämä on korkeampi bottleneck rate
-                    if rate > bottleneck_rate:
-                        bottleneck_rate = rate
-                        bottleneck_group = group
-                        bottleneck_station_name = station_info.iloc[0]['Name']
-                        bottleneck_utilization = group_utilization.get(group, 0)
-    
-    # === TEOREETTINEN TAKT TIME (Phase 1 optimaalinen) ===
-    # Lasketaan todellinen takt time kuivausasemalla (bottleneck)
-    theoretical_takt_seconds = 0
-    theoretical_takt_formatted = "N/A"
-    
-    batch_schedule_file = os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv')
-    if os.path.exists(batch_schedule_file) and bottleneck_group is not None:
-        schedule_df = pd.read_csv(batch_schedule_file)
-        
-        # Etsi bottleneck station (kuivaus)
-        # Bottleneck_group vastaa treatment program Stage-numeroa
-        # Tarkista mikä Stage vastaa korkeinta bottleneck_rate:a
-        if os.path.exists(tp_file):
-            tp_df = pd.read_csv(tp_file)
-            
-            # Etsi stage jolla on bottleneck_rate
-            for _, row in tp_df[tp_df['Stage'] > 0].iterrows():
-                min_stat = int(row['MinStat'])
-                max_stat = int(row['MaxStat'])
-                num_stations = max_stat - min_stat + 1
-                
-                min_time_str = row['MinTime']
-                parts = min_time_str.split(':')
-                min_time_min = int(parts[0]) * 60 + int(parts[1])
-                
-                total_time = min_time_min + avg_transfer_time
-                rate = total_time / num_stations if num_stations > 0 else 0
-                
-                # Jos tämä on bottleneck stage
-                if abs(rate - bottleneck_rate) < 0.01:
-                    stage_num = int(row['Stage'])
-                    
-                    # Hae tämän stagen entry times batch_schedule:sta
-                    stage_entries = schedule_df[schedule_df['Stage'] == stage_num].sort_values('EntryTime')
-                    
-                    if len(stage_entries) > 1:
-                        # Laske keskimääräinen väli entry timeissa (sekunneissa)
-                        gaps = []
-                        prev_entry = None
-                        for _, entry_row in stage_entries.iterrows():
-                            if prev_entry is not None:
-                                gaps.append(entry_row['EntryTime'] - prev_entry)
-                            prev_entry = entry_row['EntryTime']
-                        
-                        if gaps:
-                            avg_gap_seconds = sum(gaps) / len(gaps)
-                            theoretical_takt_seconds = avg_gap_seconds
-                            
-                            # Muunna muotoon HH:MM:SS
-                            hours = int(avg_gap_seconds // 3600)
-                            minutes = int((avg_gap_seconds % 3600) // 60)
-                            seconds = int(avg_gap_seconds % 60)
-                            theoretical_takt_formatted = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                    break
-    
-    # Käytetään pullonkaulaa jos löytyi, muuten vanha logiikka (korkein käyttöaste)
-    if bottleneck_group is not None:
-        metrics['most_used_station_group'] = bottleneck_group
-        metrics['most_used_station_name'] = bottleneck_station_name
-        metrics['most_used_station_utilization'] = bottleneck_utilization
-        metrics['bottleneck_rate'] = bottleneck_rate  # min/station
-        metrics['theoretical_takt_time'] = theoretical_takt_formatted
-        metrics['theoretical_takt_seconds'] = theoretical_takt_seconds
-        metrics['group_utilization'] = group_utilization
-    elif group_utilization:
-        # Fallback: käytetyin asemaryhmä (korkein käyttöaste)
-        busiest_group = max(group_utilization, key=group_utilization.get)
-        
-        # Hae ryhmän edustavan aseman nimi (ensimmäinen asema ryhmästä)
-        group_stations = stations_df[stations_df['Group'] == busiest_group]
-        if not group_stations.empty:
-            busiest_station_name = group_stations.iloc[0]['Name']
-        else:
-            busiest_station_name = f"Group {busiest_group}"
-        
-        metrics['most_used_station_group'] = busiest_group
-        metrics['most_used_station_name'] = busiest_station_name
-        metrics['most_used_station_utilization'] = group_utilization[busiest_group]
-        metrics['bottleneck_rate'] = 0
-        metrics['group_utilization'] = group_utilization
-    else:
-        metrics['most_used_station_group'] = 0
-        metrics['most_used_station_name'] = "N/A"
-        metrics['most_used_station_utilization'] = 0
-        metrics['bottleneck_rate'] = 0
-        metrics['group_utilization'] = {}
-    
-    # Käsittelyohjelmat (Treatment Programs)
-    if os.path.exists(production_file):
-        production_df = pd.read_csv(production_file)
         program_counts = production_df['Treatment_program'].value_counts().sort_index()
-        total_batches = len(production_df['Batch'].unique())
+        total_batches = metrics['total_batches']
         
-        # Tallenna ohjelmien määrät ja prosentit
         metrics['treatment_programs'] = {}
         for program, count in program_counts.items():
             percentage = (count / total_batches * 100) if total_batches > 0 else 0
@@ -2116,6 +1940,7 @@ def generate_enhanced_simulation_report(output_dir):
     # Lue perustiedot
     init_dir = os.path.join(output_dir, 'initialization')
     reports_dir = os.path.join(output_dir, 'reports')
+    report_data_path = os.path.join(reports_dir, 'report_data.json')
     
     try:
         df_cp = get_customer_plant_legacy_format(init_dir)
@@ -2189,11 +2014,10 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.set_y(25)  # Pienennetty 40 -> 25
     
     # Otsikko
-    pdf.set_font('Arial', 'B', 24)
+    pdf.set_font('Arial', 'B', 28)
     pdf.set_text_color(41, 128, 185)
-    pdf.cell(0, 12, 'Production Line', ln=1, align='C')  # 15 -> 12
-    pdf.cell(0, 12, 'Simulation Report', ln=1, align='C')  # 15 -> 12
-    pdf.ln(8)  # 10 -> 8
+    pdf.cell(0, 15, 'Simulation Report', ln=1, align='C')
+    pdf.ln(10)
     
     # Asiakastiedot
     pdf.set_font('Arial', '', 14)
@@ -2236,11 +2060,70 @@ def generate_enhanced_simulation_report(output_dir):
                 h = (img_h / img_w) * w
                 image_end_y = pdf.get_y() + h
             
-            # Keskitä kuva - käytä images-kansion tiedostoa
-            x_offset = (pdf.w - w) / 2
+            # Keskitä kuva marginaalien väliin
+            available_width = pdf.w - pdf.l_margin - pdf.r_margin
+            x_offset = pdf.l_margin + (available_width - w) / 2
             pdf.image(jpg_path, x=x_offset, y=pdf.get_y(), w=w)
         except Exception as e:
             print(f"[WARN] Cover image failed: {e}")
+    
+    # Status indicator below image
+    pdf.set_y(image_end_y + 5)
+    
+    # Read target and simulated cycle times from report data
+    target_met = False
+    target_cycle_time = 0
+    simulated_cycle_time = 0
+    
+    try:
+        with open(report_data_path, 'r') as f:
+            report_data = json.load(f)
+        
+        simulated_cycle_time = report_data.get('simulation', {}).get('steady_state_avg_cycle_time_seconds', 0)
+        
+        # Get target from goals.json
+        goals_path = os.path.join(output_dir, 'initialization', 'goals.json')
+        if os.path.exists(goals_path):
+            with open(goals_path, 'r') as f:
+                goals_data = json.load(f)
+                target_pace = goals_data.get('target_pace', {})
+                target_cycle_time = target_pace.get('target_cycle_time_seconds') or target_pace.get('average_batch_interval_seconds', 0)
+        
+        if target_cycle_time > 0 and simulated_cycle_time > 0:
+            target_met = simulated_cycle_time <= target_cycle_time
+    except Exception as e:
+        print(f"[WARN] Could not determine target status: {e}")
+    
+    # Draw status box
+    box_width = 60
+    box_height = 12
+    # Keskitä laatikko marginaalien väliin
+    available_width = pdf.w - pdf.l_margin - pdf.r_margin
+    box_x = pdf.l_margin + (available_width - box_width) / 2
+    
+    if target_met:
+        # Green box for TARGET MET
+        pdf.set_fill_color(46, 125, 50)  # Dark green
+        pdf.set_text_color(255, 255, 255)  # White text
+        status_text = 'TARGET MET'
+    else:
+        # Red box for TARGET MISSED
+        pdf.set_fill_color(198, 40, 40)  # Dark red
+        pdf.set_text_color(255, 255, 255)  # White text
+        status_text = 'TARGET MISSED'
+    
+    pdf.rect(box_x, pdf.get_y(), box_width, box_height, 'F')
+    pdf.set_font('Arial', 'B', 14)
+    pdf.set_xy(box_x, pdf.get_y() + 3)
+    pdf.cell(box_width, 6, status_text, 0, 0, 'C')
+    
+    # Additional info text below status box
+    pdf.set_y(pdf.get_y() + 10)
+    pdf.set_font('Arial', 'I', 9)
+    pdf.set_text_color(52, 73, 94)
+    # Keskitä teksti marginaalien väliin
+    pdf.set_x(pdf.l_margin)
+    pdf.cell(available_width, 5, 'More information in report', 0, 1, 'C')
     
     # Kansion nimi alas oikeaan (sivu 1:n loppuun)
     pdf.set_y(pdf.h - 20)  # 20mm sivun alareunasta

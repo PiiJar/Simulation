@@ -230,6 +230,34 @@ def create_capacity_background(report_data_path, max_time_minutes=12, image_pixe
 
     return fig, ax
 
+
+def generate_capacity_visualization(output_dir: str):
+    """
+    Generate capacity visualization for the given output directory.
+    
+    Args:
+        output_dir: Path to simulation output directory
+    """
+    from pathlib import Path
+    
+    output_path = Path(output_dir)
+    report_data_file = output_path / 'reports' / 'report_data.json'
+    images_dir = output_path / 'reports' / 'images'
+    
+    # Ensure the target directory exists
+    images_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate and save the background image
+    image_pixels = 1600
+    dpi = 100
+    fig, _ = create_capacity_background(report_data_path=report_data_file, max_time_minutes=12, image_pixels=image_pixels, dpi=dpi)
+    
+    output_file = images_dir / 'capacity_elements.png'
+    fig.savefig(output_file, dpi=dpi)
+    
+    return str(output_file)
+
+
 if __name__ == '__main__':
     # Find the latest simulation directory (exclude 'previews' folder)
     output_dir = Path('output')
