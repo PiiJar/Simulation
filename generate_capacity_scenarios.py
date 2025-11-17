@@ -1,8 +1,21 @@
+"""
+Generate capacity visualization scenarios for demonstration purposes.
+
+Creates multiple capacity_elements visualizations with different constraint scenarios:
+1. Transporter constraint exceeds target (11 min), simulated at 12 min
+2. Station constraint exceeds target (11 min), simulated at 12 min
+3. Unit constraint exceeds target (11 min), simulated at 12 min
+4. All constraints below target, simulated at 11 min (exceeds target)
+5. All constraints below target, simulated at 9 min (meets target)
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 import json
 import math
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 def format_time(seconds):
     """Formats seconds into MM:SS string."""
@@ -10,11 +23,32 @@ def format_time(seconds):
     secs = int(seconds % 60)
     return f"{minutes:02d}:{secs:02d}"
 
-def create_capacity_background(report_data_path, max_time_minutes=12, image_pixels=1600, dpi=100):
+def create_capacity_scenario(
+    scenario_name,
+    target_cycle_time,
+    transporter_constraint,
+    station_constraint,
+    unit_constraint,
+    simulated_cycle_time,
+    output_path,
+    max_time_minutes=12,
+    image_pixels=1600,
+    dpi=100
+):
     """
-    Creates the static background for the capacity visualization.
-
-    This includes the axis lines, time-based grid circles, and the target cycle time circle.
+    Creates a capacity visualization for a specific scenario.
+    
+    Args:
+        scenario_name: Name of the scenario for display
+        target_cycle_time: Target cycle time in seconds
+        transporter_constraint: Transporter limitation in seconds
+        station_constraint: Station group limitation in seconds
+        unit_constraint: Unit number limitation in seconds
+        simulated_cycle_time: Actual simulated cycle time in seconds
+        output_path: Path where to save the image
+        max_time_minutes: Maximum time range for visualization
+        image_pixels: Image size in pixels
+        dpi: DPI for the output image
     """
     max_time_seconds = max_time_minutes * 60
     requested_max_seconds = max_time_minutes * 60
@@ -38,101 +72,47 @@ def create_capacity_background(report_data_path, max_time_minutes=12, image_pixe
     # Remove the outer circular boundary (spine)
     ax.spines['polar'].set_visible(False)
 
-    # We'll draw axes/ticks later after we know the required display maximum (data-driven)
-
-    # --- 5. Load data and draw cycle time circles ---
-    try:
-        with open(report_data_path, 'r') as f:
-            data = json.load(f)
-        
-        # Get simulated cycle time
-        simulated_cycle_time = data.get('simulation', {}).get('steady_state_avg_cycle_time_seconds', 0)
-        
-        # Get target cycle time from goals.json (not from report data)
-        target_cycle_time = 10 * 60  # Default fallback
-        goals_path = Path(report_data_path).parent.parent / 'initialization' / 'goals.json'
-        if goals_path.exists():
-            try:
-                with open(goals_path, 'r') as f:
-                    goals_data = json.load(f)
-                    target_pace = goals_data.get('target_pace', {})
-                    # Use the new annual target cycle time if available, otherwise fall back to average_batch_interval_seconds
-                    target_cycle_time = target_pace.get('target_cycle_time_seconds') or target_pace.get('average_batch_interval_seconds', 10 * 60)
-            except Exception as e:
-                print(f"Warning: Could not load target cycle time from goals.json: {e}")
-        
-        # Get capacity constraints (three key cycle time limitations)
-        capacity_constraints = data.get('capacity_constraints', {}).get('constraints', {})
-        
-        # Point 1: Transporter limitation
-        transporter_limitation = capacity_constraints.get('transporter_limitation', {})
-        point1_radius = transporter_limitation.get('cycle_time_seconds', 0)
-        
-        # Point 2: Station limitation
-        station_limitation = capacity_constraints.get('station_limitation', {})
-        point2_radius = station_limitation.get('cycle_time_seconds', 0)
-        
-        # Point 3: Container limitation
-        container_limitation = capacity_constraints.get('container_limitation', {})
-        point3_radius = container_limitation.get('cycle_time_seconds', 0)
-            
-    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
-        print(f"Error reading {report_data_path}: {e}. Using defaults.")
-        simulated_cycle_time = 0
-        target_cycle_time = 0
-        point1_radius = 0
-        point2_radius = 0
-        point3_radius = 0
-
-    # Determine the maximum radius we need to display based on data (the outermost circle)
+    # Determine the maximum radius we need to display based on data
     max_needed = max(
         simulated_cycle_time or 0,
         target_cycle_time or 0,
-        point1_radius or 0,
-        point2_radius or 0,
-        point3_radius or 0,
+        transporter_constraint or 0,
+        station_constraint or 0,
+        unit_constraint or 0,
     )
 
     # Axis endpoint: floor((max_needed + 120s) / 60s) * 60s
-    # This ensures axes end at a full minute and extend at most 2 minutes beyond outermost circle
     axis_max_seconds = int(math.floor((max_needed + 120) / 60.0) * 60)
 
     # Display max for plot limits: extend slightly beyond axis end to allow tick extensions
     display_max_seconds = axis_max_seconds + 120
 
-    # Now draw axes and ticks
-    # Draw three radial axes (in degrees 90, 210, 330 -> up, lower-right, lower-left)
+    # Draw axes and ticks
     angles_deg = [90, 210, 330]
     angles_rad = [np.deg2rad(d) for d in angles_deg]
 
-    # Simplified, explicit tick rules:
-    # - Major ticks: every 60 s (1 minute)
-    # - Minor ticks: every 15 s (quarter minute), but not where a major tick exists
-    # - Visual arc lengths are fixed to represent a small time unit (seconds)
-    # - Major tick radial extensions extend up to 60s but capped at display_max_seconds
     major_interval = 60
     minor_interval = 15
-    major_arc_seconds = 15   # visual arc length along circumference (in seconds)
-    minor_arc_seconds = 5    # smaller visual arc for minor ticks
+    major_arc_seconds = 15
+    minor_arc_seconds = 5
 
     for angle in angles_rad:
-        # Draw axis line from 0 to axis_max_seconds (the rounded-down full minute)
+        # Draw axis line from 0 to axis_max_seconds
         ax.plot([angle, angle], [0, axis_max_seconds], color='black', linewidth=0.9)
 
         # Major ticks (every 60s up to axis_max_seconds)
         for r in np.arange(major_interval, axis_max_seconds + 1, major_interval):
             if r <= 0:
                 continue
-            # Convert fixed arc length (in seconds) into angle offset at radius r
             angle_offset = major_arc_seconds / float(r)
             ax.plot([angle - angle_offset, angle + angle_offset], [r, r], color='black', linewidth=0.9)
 
-            # Radial extension for major tick: extend up to 60s but not beyond display_max
+            # Radial extension for major tick
             tick_extra = min(major_interval, display_max_seconds - r)
             if tick_extra > 0:
                 ax.plot([angle, angle], [r, r + tick_extra], color='black', linewidth=0.9)
 
-        # Minor ticks (every 15s but skip multiples of 60s, up to axis_max_seconds)
+        # Minor ticks (every 15s but skip multiples of 60s)
         for r in np.arange(minor_interval, axis_max_seconds + 1, minor_interval):
             if r <= 0 or (r % major_interval) == 0:
                 continue
@@ -155,47 +135,39 @@ def create_capacity_background(report_data_path, max_time_minutes=12, image_pixe
                 color=color, linewidth=2.5, linestyle='-', 
                 label=f'Simulated Avg Cycle Time ({format_time(simulated_cycle_time)})')
     
-    # --- 6. Draw three points and connect them to form a triangle ---
-    # Three capacity constraints determine triangle points:
-    # Point 1: Transporter limitation on vertical axis (90 degrees)
-    point1_angle = np.pi / 2
-    point1_label = "Transporter Limitation"
+    # --- Draw three constraint points and connect them to form a triangle ---
+    point1_angle = np.pi / 2  # 90 degrees - vertical (Transporter)
+    point2_angle = np.deg2rad(210)  # lower-right (Station)
+    point3_angle = np.deg2rad(330)  # lower-left (Unit)
     
-    # Point 2: Station limitation on lower-right axis (210 degrees)
-    point2_angle = np.deg2rad(210)
-    point2_label = "Station Limitation"
+    point1_radius = transporter_constraint
+    point2_radius = station_constraint
+    point3_radius = unit_constraint
     
-    # Point 3: Container limitation on lower-left axis (330 degrees)
-    point3_angle = np.deg2rad(330)
-    point3_label = "Container Limitation"
-    
-    # Draw the three points with distinct colors:
-    # Point 1 (Transporter): Blue
-    # Point 2 (Station): Purple
-    # Point 3 (Container): Dark Green
+    # Draw the three points with distinct colors
     if point1_radius > 0 and point1_radius <= display_max_seconds:
         ax.plot(point1_angle, point1_radius, 'o', color='#2196F3', markersize=10,
-                label=f'{point1_label} ({format_time(point1_radius)})')
+                label=f'Transporter Limitation ({format_time(point1_radius)})')
 
     if point2_radius > 0 and point2_radius <= display_max_seconds:
         ax.plot(point2_angle, point2_radius, 'o', color='#9C27B0', markersize=10,
-                label=f'{point2_label} ({format_time(point2_radius)})')
+                label=f'Station Limitation ({format_time(point2_radius)})')
 
     if point3_radius > 0 and point3_radius <= display_max_seconds:
         ax.plot(point3_angle, point3_radius, 'o', color='#2E7D32', markersize=10,
-                label=f'{point3_label} ({format_time(point3_radius)})')
+                label=f'Container Limitation ({format_time(point3_radius)})')
     
     # Connect the three points to form a triangle
     if all(r > 0 and r <= display_max_seconds for r in [point1_radius, point2_radius, point3_radius]):
-        triangle_angles = [point1_angle, point2_angle, point3_angle, point1_angle]  # Close the triangle
+        triangle_angles = [point1_angle, point2_angle, point3_angle, point1_angle]
         triangle_radii = [point1_radius, point2_radius, point3_radius, point1_radius]
 
-        # Make triangle outline thinner and dashed so it's visually lighter
         ax.plot(triangle_angles, triangle_radii, color='darkblue', linewidth=1.0, linestyle='--', alpha=0.8)
         ax.fill(triangle_angles[:-1], triangle_radii[:-1], color='lightblue', alpha=0.3)
 
         # Draw circle at the furthest triangle point (bottleneck indicator)
         max_triangle_radius = max(point1_radius, point2_radius, point3_radius)
+        
     if max_triangle_radius > 0 and max_triangle_radius <= display_max_seconds:
         ax.plot(np.linspace(0, 2 * np.pi, 100), [max_triangle_radius] * 100,
             color='orange', linewidth=2.5, linestyle='--', alpha=0.6,
@@ -209,11 +181,6 @@ def create_capacity_background(report_data_path, max_time_minutes=12, image_pixe
         ax.fill_between(theta, inner_radius, outer_radius, color='orange', alpha=0.15)
 
     # Add legend at the bottom of the image
-    from matplotlib.lines import Line2D
-    from matplotlib.patches import Circle as LegendCircle
-    
-    from matplotlib.patches import Patch
-    
     legend_elements = [
         Line2D([0], [0], color='black', linewidth=2, label='Time scale (minutes)'),
         Line2D([0], [0], color='black', linewidth=2.5, linestyle='-', label='Target cycle time'),
@@ -228,30 +195,77 @@ def create_capacity_background(report_data_path, max_time_minutes=12, image_pixe
     ax.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 0.02), 
               ncol=4, frameon=True, fontsize=14, fancybox=True, shadow=True)
 
-    return fig, ax
+    # Save the figure
+    fig.savefig(output_path, dpi=dpi)
+    plt.close(fig)
+    print(f"Scenario '{scenario_name}' saved to: {output_path}")
+
+def generate_all_scenarios():
+    """Generate all demonstration scenarios."""
+    
+    # Create output directory
+    output_dir = Path('output/demo')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Common parameters
+    target = 10 * 60  # 10 minutes in seconds
+    
+    # Scenario 1: Transporter constraint exceeds target
+    create_capacity_scenario(
+        scenario_name="Transporter Bottleneck",
+        target_cycle_time=target,
+        transporter_constraint=11 * 60,  # 11 minutes
+        station_constraint=9 * 60,       # 9 minutes
+        unit_constraint=8 * 60,          # 8 minutes
+        simulated_cycle_time=12 * 60,    # 12 minutes
+        output_path=output_dir / 'capacity_scenario_1.png'
+    )
+    
+    # Scenario 2: Station constraint exceeds target
+    create_capacity_scenario(
+        scenario_name="Station Bottleneck",
+        target_cycle_time=target,
+        transporter_constraint=8 * 60,   # 8 minutes
+        station_constraint=11 * 60,      # 11 minutes
+        unit_constraint=9 * 60,          # 9 minutes
+        simulated_cycle_time=12 * 60,    # 12 minutes
+        output_path=output_dir / 'capacity_scenario_2.png'
+    )
+    
+    # Scenario 3: Unit constraint exceeds target
+    create_capacity_scenario(
+        scenario_name="Unit Number Bottleneck",
+        target_cycle_time=target,
+        transporter_constraint=9 * 60,   # 9 minutes
+        station_constraint=8 * 60,       # 8 minutes
+        unit_constraint=11 * 60,         # 11 minutes
+        simulated_cycle_time=12 * 60,    # 12 minutes
+        output_path=output_dir / 'capacity_scenario_3.png'
+    )
+    
+    # Scenario 4: All constraints below target, but simulated exceeds target
+    create_capacity_scenario(
+        scenario_name="Task Sync Constraint (Exceeds Target)",
+        target_cycle_time=target,
+        transporter_constraint=8 * 60,   # 8 minutes
+        station_constraint=8.5 * 60,     # 8.5 minutes
+        unit_constraint=9 * 60,          # 9 minutes
+        simulated_cycle_time=11 * 60,    # 11 minutes
+        output_path=output_dir / 'capacity_scenario_4.png'
+    )
+    
+    # Scenario 5: All constraints below target, simulated slightly worse than theoretical but better than target
+    create_capacity_scenario(
+        scenario_name="Meets Target (Good Performance)",
+        target_cycle_time=target,
+        transporter_constraint=8 * 60,   # 8 minutes
+        station_constraint=8.5 * 60,     # 8.5 minutes
+        unit_constraint=9 * 60,          # 9 minutes
+        simulated_cycle_time=9 * 60 + 30,  # 9.5 minutes (30 seconds worse than theoretical)
+        output_path=output_dir / 'capacity_scenario_5.png'
+    )
+    
+    print(f"\n✅ All {5} scenarios generated successfully in {output_dir}")
 
 if __name__ == '__main__':
-    # Find the latest simulation directory (exclude 'previews' folder)
-    output_dir = Path('output')
-    simulation_dirs = [p for p in output_dir.glob('*') if p.is_dir() and p.name != 'previews']
-    latest_snapshot = sorted(simulation_dirs, key=lambda p: p.stat().st_mtime)[-1]
-
-    # Define paths within the snapshot
-    report_data_file = latest_snapshot / 'reports' / 'report_data.json'
-    images_dir = latest_snapshot / 'reports' / 'images'
-
-    # Ensure the target directory exists
-    images_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"Loading data from: {report_data_file}")
-
-    # Generate and save the background image using data from the latest simulation
-    image_pixels = 1600
-    dpi = 100
-    fig, _ = create_capacity_background(report_data_path=report_data_file, max_time_minutes=12, image_pixels=image_pixels, dpi=dpi)
-
-    output_path = images_dir / 'capacity_elements.png'
-    # Save without bbox trimming to keep exact pixel dimensions
-    fig.savefig(output_path, dpi=dpi)
-
-    print(f"Capacity visualization background saved to: {output_path}")
+    generate_all_scenarios()

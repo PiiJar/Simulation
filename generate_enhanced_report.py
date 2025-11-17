@@ -2208,8 +2208,8 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.cell(0, 7, timestamp, ln=1, align='C')  # 8 -> 7
     pdf.ln(10)  # 15 -> 10
     
-    # Timeline-kuva etusivulle (pienennetty 70% alkuperäisestä)
-    first_page_img = os.path.join(reports_dir, 'matrix_timeline_page_1.png')
+    # Capacity elements -kuva etusivulle
+    first_page_img = os.path.join(reports_dir, 'images', 'capacity_elements.png')
     image_start_y = pdf.get_y()
     image_end_y = image_start_y
     
@@ -2217,7 +2217,7 @@ def generate_enhanced_simulation_report(output_dir):
         try:
             # Muunna JPEG:ksi ja tallenna vain reports/images/ kansioon
             images_dir = os.path.join(reports_dir, 'images')
-            jpg_path = os.path.join(images_dir, 'matrix_timeline_page_1.jpg')
+            jpg_path = os.path.join(images_dir, 'capacity_elements.jpg')
             
             with Image.open(first_page_img) as im:
                 if im.mode in ('RGBA', 'LA'):
@@ -2241,34 +2241,6 @@ def generate_enhanced_simulation_report(output_dir):
             pdf.image(jpg_path, x=x_offset, y=pdf.get_y(), w=w)
         except Exception as e:
             print(f"[WARN] Cover image failed: {e}")
-    
-    # Lyhyt kuvaus - sijoita kuvan alle
-    pdf.set_y(image_end_y + 8)
-    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    pdf.set_text_color(52, 73, 94)
-    
-    # Algoritmin kuvaus
-    pdf.set_font('Arial', 'B', 9)
-    pdf.cell(0, 5, 'Two-Phase CP-SAT Optimization Algorithm', ln=1, align='L')
-    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    algo_desc = (
-        "Phase 1: Batch-level scheduling optimizes batch entry times and station assignments. "
-        "Phase 2: Stage-level optimization schedules individual treatment stages, transporter movements, "
-        "and ensures no spatial or temporal conflicts between operations."
-    )
-    pdf.multi_cell(0, 4.5, algo_desc, align='L')
-    pdf.ln(3)
-    
-    # Rajoitukset
-    pdf.set_font('Arial', 'B', 9)
-    pdf.cell(0, 5, 'Simulation Limitations', ln=1, align='L')
-    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    limitations = (
-        "This simulation does not account for: manual loading/unloading times, human-induced delays, "
-        "equipment failures, quality control inspections, or setup/changeover times between batches. "
-        "Results represent an idealized scenario with perfect execution and no unexpected disruptions."
-    )
-    pdf.multi_cell(0, 4.5, limitations, align='L')
     
     # Kansion nimi alas oikeaan (sivu 1:n loppuun)
     pdf.set_y(pdf.h - 20)  # 20mm sivun alareunasta
