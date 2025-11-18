@@ -31,7 +31,8 @@ def visualize_matrix(output_dir):
         return df
     logs_dir = os.path.join(output_dir, "logs")
     reports_dir = os.path.join(output_dir, "reports")
-    os.makedirs(reports_dir, exist_ok=True)
+    images_dir = os.path.join(reports_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
     log_file = os.path.join(logs_dir, "simulation_log.csv")
     matrix_file = os.path.join(logs_dir, "line_matrix.csv")
     init_dir = os.path.join(output_dir, "initialization")
@@ -339,12 +340,26 @@ def visualize_matrix(output_dir):
 
         # Legend poistettu käyttäjän pyynnöstä
 
-        # Save chart for this page
-        output_file = os.path.join(reports_dir, f"matrix_timeline_page_{page+1}.png")
+        # Save chart for this page to images directory
+        output_file = os.path.join(images_dir, f\"matrix_timeline_page_{page+1}.png\")
         plt.tight_layout()
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         plt.close(fig)
-        logger.log_viz(f"Stretched matrix timeline page {page+1} saved: {output_file}")
+        logger.log_viz(f\"Stretched matrix timeline page {page+1} saved: {output_file}\")
         output_files.append(output_file)
+        
+        # Create rotated version (90° counter-clockwise) for PDF report
+        # Only create if it doesn't already exist and not already rotated
+        if '_rotated' not in output_file:
+            try:
+                from PIL import Image
+                rotated_path = output_file.replace('.png', '_rotated.png')
+                if not os.path.exists(rotated_path):
+                    with Image.open(output_file) as img:
+                        rotated = img.transpose(Image.ROTATE_90)
+                        rotated.save(rotated_path)
+                    logger.log_viz(f"Rotated version saved: {rotated_path}")
+            except Exception as e:
+                logger.log_error(f"Could not create rotated version: {e}")
     logger.log_data("Stretched matrix visualization completed (paged)")
     return output_files

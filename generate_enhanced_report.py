@@ -260,7 +260,9 @@ def create_utilization_chart(output_dir, reports_dir):
     ax.grid(axis='y', alpha=0.3)
     
     plt.tight_layout()
-    chart_path = os.path.join(reports_dir, 'utilization_chart.png')
+    images_dir = os.path.join(reports_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    chart_path = os.path.join(images_dir, 'utilization_chart.png')
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
     
@@ -581,7 +583,9 @@ def create_vertical_speed_change_chart(output_dir, reports_dir):
         ax.legend(handles=handles, loc='upper right')
 
     plt.tight_layout()
-    chart_path = os.path.join(reports_dir, 'transporter_vertical_speed_profile.png')
+    images_dir = os.path.join(reports_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    chart_path = os.path.join(images_dir, 'transporter_vertical_speed_profile.png')
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
     return chart_path
@@ -1680,7 +1684,9 @@ def create_transporter_temporal_load_chart(output_dir, reports_dir, color_map=No
     ax.legend(loc='upper right')
     
     plt.tight_layout()
-    chart_path = os.path.join(reports_dir, 'transporter_temporal_load.png')
+    images_dir = os.path.join(reports_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    chart_path = os.path.join(images_dir, 'transporter_temporal_load.png')
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
     
@@ -1733,7 +1739,9 @@ def create_transporter_task_distribution_chart(output_dir, reports_dir, color_ma
     ax.spines['bottom'].set_visible(False)  # Poistetaan myös alareuna
     
     plt.tight_layout()
-    chart_path = os.path.join(reports_dir, 'transporter_task_distribution.png')
+    images_dir = os.path.join(reports_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    chart_path = os.path.join(images_dir, 'transporter_task_distribution.png')
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
     
@@ -1799,7 +1807,9 @@ def create_station_usage_chart(output_dir, reports_dir):
         bars[0].set_color('#e74c3c')
     
     plt.tight_layout()
-    chart_path = os.path.join(reports_dir, 'station_usage_chart.png')
+    images_dir = os.path.join(reports_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    chart_path = os.path.join(images_dir, 'station_usage_chart.png')
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
     
@@ -1892,7 +1902,9 @@ def create_transporter_batch_occupation_chart(output_dir, reports_dir, color_map
     ax.grid(axis='y', alpha=0.3, linestyle='--')
 
     plt.tight_layout()
-    chart_path = os.path.join(reports_dir, 'transporter_batch_occupation.png')
+    images_dir = os.path.join(reports_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    chart_path = os.path.join(images_dir, 'transporter_batch_occupation.png')
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
 
@@ -1927,7 +1939,9 @@ def create_batch_leadtime_chart(output_dir, reports_dir):
     ax.legend()
     
     plt.tight_layout()
-    chart_path = os.path.join(reports_dir, 'batch_leadtime_chart.png')
+    images_dir = os.path.join(reports_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    chart_path = os.path.join(images_dir, 'batch_leadtime_chart.png')
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
     
@@ -2850,6 +2864,64 @@ def generate_enhanced_simulation_report(output_dir):
         "Optimization engine: Google OR-Tools CP-SAT\n"
         f"{solver_status_text}\n"
         f"Total makespan: {metrics['makespan_seconds']} seconds")
+    
+    # ===== APPENDIX 4 - FLOWCHART =====
+    # Add matrix timeline pages (one per page, rotated 90 degrees counter-clockwise)
+    images_dir = os.path.join(reports_dir, 'images')
+    matrix_pages = sorted([f for f in os.listdir(images_dir) if f.startswith('matrix_timeline_page_') and f.endswith('.png') and '_rotated' not in f])
+    
+    if matrix_pages:
+        # Add Appendix 4 title page
+        pdf.add_page()
+        pdf.chapter_title('Appendix 4 - Flowchart')
+        pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
+        pdf.multi_cell(0, 6,
+            "Matrix timeline visualization showing batch flow through stations over time. "
+            "Each page displays a 5400-second (90-minute) window of the production schedule. "
+            "The flowchart is rotated 90 degrees counter-clockwise for optimal viewing.")
+        pdf.ln(5)
+        
+        # Add each matrix page (one per PDF page, rotated)
+        for i, matrix_page in enumerate(matrix_pages, 1):
+            matrix_path = os.path.join(images_dir, matrix_page)
+            
+            # Add new page
+            pdf.add_page()
+            pdf.chapter_title(f'Appendix 4 - Flowchart (Page {i}/{len(matrix_pages)})')
+            
+            # Use pre-rotated image if available, otherwise use original
+            rotated_path = matrix_path.replace('.png', '_rotated.png')
+            image_to_use = rotated_path if os.path.exists(rotated_path) else matrix_path
+            
+            try:
+                with Image.open(image_to_use) as img:
+                    # Calculate dimensions to fit page after header
+                    current_y = pdf.get_y()
+                    page_width = pdf.w - pdf.l_margin - pdf.r_margin
+                    available_height = pdf.h - current_y - pdf.b_margin
+                    
+                    img_width, img_height = img.size
+                    aspect_ratio = img_width / img_height
+                    
+                    # Scale to fit available space while maintaining aspect ratio
+                    if page_width / available_height > aspect_ratio:
+                        # Height is limiting
+                        pdf_height = available_height * 0.98
+                        pdf_width = pdf_height * aspect_ratio
+                    else:
+                        # Width is limiting
+                        pdf_width = page_width * 0.98
+                        pdf_height = pdf_width / aspect_ratio
+                    
+                    # Center horizontally, place below header
+                    x = pdf.l_margin + (page_width - pdf_width) / 2
+                    y = current_y
+                    
+                    # Add image to PDF
+                    pdf.image(image_to_use, x=x, y=y, w=pdf_width, h=pdf_height)
+                    
+            except Exception as e:
+                print(f"[WARN] Could not add matrix page {matrix_page}: {e}")
     
     # Tallenna PDF
     pdf_path = os.path.join(reports_dir, f'enhanced_simulation_report_{folder_name}.pdf')
