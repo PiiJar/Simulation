@@ -2131,17 +2131,124 @@ def generate_enhanced_simulation_report(output_dir):
     pdf.set_text_color(127, 140, 141)
     pdf.cell(0, 5, folder_name, 0, 0, 'R')
     
+
+
+    # ===== CUSTOMER AND PLANT INFORMATION (always page 3) =====
+    # This block is now moved after the Table of Contents to ensure correct order
+    def add_customer_plant_info_page():
+        report_data_path = os.path.join(reports_dir, 'report_data.json')
+        with open(report_data_path, 'r') as f:
+            report_data = json.load(f)
+        sim_info = report_data.get('simulation_info', {})
+        customer = sim_info.get('customer_name', '-')
+        customer_id = sim_info.get('customer_id', '-')
+        plant = sim_info.get('plant_name', '-')
+        plant_id = sim_info.get('plant_id', '-')
+        location = sim_info.get('plant_location', {})
+        city = location.get('city', '-')
+        country = location.get('country', '-')
+        timezone = location.get('timezone', '-')
+        available_containers = sim_info.get('available_containers', '-')
+        folder_name = sim_info.get('folder_name', '-')
+        report_generated = sim_info.get('report_generated', '-')
+        total_batches = sim_info.get('total_batches', '-')
+        total_prod_time = sim_info.get('total_production_time', '-')
+        ramp_up = sim_info.get('ramp_up_time', '-')
+        steady = sim_info.get('steady_state_time', '-')
+        ramp_down = sim_info.get('ramp_down_time', '-')
+        # Annual estimate
+        scaled = sim_info.get('scaled_production_estimates', {})
+        year = scaled.get('year', {})
+        annual_batches = year.get('total_batches', '-')
+        by_product = year.get('by_product', {})
+        prod_name = '-'
+        prod_pieces = '-'
+        if by_product:
+            prod = next(iter(by_product.values()))
+            prod_name = prod.get('name', '-')
+            prod_pieces = prod.get('pieces', '-')
+
+        pdf.add_page()
+        pdf.chapter_title('Customer and Plant Information')
+        pdf.set_font(BODY_FONT_NAME, '', 12)
+        pdf.ln(2)
+        pdf.cell(0, 8, f"Customer: {customer} (ID: {customer_id})", ln=1)
+        pdf.cell(0, 8, f"Plant: {plant} (ID: {plant_id})", ln=1)
+        pdf.cell(0, 8, f"Location: {city}, {country}", ln=1)
+        pdf.cell(0, 8, f"Timezone: {timezone}", ln=1)
+        pdf.cell(0, 8, f"Available containers: {available_containers}", ln=1)
+        pdf.cell(0, 8, f"Simulation folder: {folder_name}", ln=1)
+        pdf.cell(0, 8, f"Report generated: {report_generated}", ln=1)
+        pdf.ln(4)
+        pdf.set_font(BODY_FONT_NAME, 'B', 12)
+        pdf.cell(0, 8, "Simulation summary:", ln=1)
+        pdf.set_font(BODY_FONT_NAME, '', 12)
+        pdf.cell(0, 7, f"Total batches (this run): {total_batches}", ln=1)
+        pdf.cell(0, 7, f"Total production time: {total_prod_time}", ln=1)
+        pdf.cell(0, 7, f"Ramp-up: {ramp_up}", ln=1)
+        pdf.cell(0, 7, f"Steady-state: {steady}", ln=1)
+        pdf.cell(0, 7, f"Ramp-down: {ramp_down}", ln=1)
+        pdf.ln(4)
+        pdf.set_font(BODY_FONT_NAME, 'B', 12)
+        pdf.cell(0, 8, "Annual production estimate:", ln=1)
+        pdf.set_font(BODY_FONT_NAME, '', 12)
+        pdf.cell(0, 7, f"Batches per year: {annual_batches}", ln=1)
+        pdf.cell(0, 7, f"Product: {prod_name}", ln=1)
+        pdf.cell(0, 7, f"Pieces per year: {prod_pieces}", ln=1)
+        pdf.ln(2)
+
+
+    # ===== TABLE OF CONTENTS (always page 2) =====
+    pdf.add_page()
+    pdf.chapter_title('Table of Contents')
+    toc_items = [
+        ('Customer and Plant Information', '3'),
+        ('Executive Summary', 'xx'),
+        ('Transporter Performance Analysis', 'xx'),
+        ('Station Occupation Analysis', 'xx'),
+        ('Conclusions', 'xx'),
+        ('Appendix 1 - Stations', None),
+        ('Appendix 2 - Transporters', None),
+        ('Appendix 3 - Treatment programs', None),
+        ('Appendix 4 - Flowchart', None),
+    ]
+    pdf.ln(8)
+    toc_font_size = 13
+    toc_line_height = 10
+    available_width = pdf.w - pdf.l_margin - pdf.r_margin
+    for label, page in toc_items:
+        pdf.set_font(BODY_FONT_NAME, '', toc_font_size)
+        pdf.set_x(pdf.l_margin)
+        if page is None:
+            pdf.cell(available_width, toc_line_height, label, 0, 1, 'L')
+        else:
+            pdf.cell(available_width * 0.7, toc_line_height, label, 0, 0, 'L')
+            pdf.cell(available_width * 0.3, toc_line_height, page, 0, 1, 'R')
+    pdf.ln(7)
+
+    # --- After ToC, add customer/plant info page ---
+    add_customer_plant_info_page()
+
     # ===== EXECUTIVE SUMMARY =====
     pdf.add_page()
     pdf.chapter_title('Executive Summary')
-    
     pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6, 
         "Key performance indicators from the simulation run. "
         "These metrics provide a high-level overview of production efficiency, "
         "resource utilization, and throughput.")
     pdf.ln(5)
-    
+
+    # ===== EXECUTIVE SUMMARY =====
+    pdf.add_page()
+    pdf.chapter_title('Executive Summary')
+    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
+    pdf.multi_cell(0, 6, 
+        "Key performance indicators from the simulation run. "
+        "These metrics provide a high-level overview of production efficiency, "
+        "resource utilization, and throughput.")
+    pdf.ln(5)
+
     # Add production status cards (3 across)
     cards_dir = os.path.join(output_dir, 'reports', 'images')
     card_files = [
@@ -2149,9 +2256,7 @@ def generate_enhanced_simulation_report(output_dir):
         'card_performance.png',
         'card_workload_balance.png'
     ]
-    
     cards_exist = all(os.path.exists(os.path.join(cards_dir, cf)) for cf in card_files)
-    
     if cards_exist:
         y_start = pdf.get_y()
         # Use same layout as KPI boxes: 3 cards across with consistent spacing
@@ -2159,15 +2264,12 @@ def generate_enhanced_simulation_report(output_dir):
         card_height_mm = 55  # Square cards
         x_spacing = 62  # Same spacing as KPI boxes (55mm + 7mm gap)
         x_start = pdf.l_margin
-        
         for idx, card_file in enumerate(card_files):
             card_path = os.path.join(cards_dir, card_file)
             x = x_start + idx * x_spacing
             pdf.image(card_path, x=x, y=y_start, w=card_width_mm, h=card_height_mm)
-        
         # Move below the cards
         pdf.set_y(y_start + card_height_mm + 8)
-    
     pdf.ln(3)
     
     # KPI-laatikot uudessa järjestyksessä
