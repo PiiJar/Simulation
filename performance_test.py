@@ -70,7 +70,8 @@ def run_simulation_and_measure_time(num_batches):
         # Aseta timeoutit
         env = os.environ.copy()
         env['CPSAT_PHASE1_MAX_TIME'] = '30'  # Lyhyempi timeout testaukseen
-        env['CPSAT_PHASE2_MAX_TIME'] = '60'
+        # Aseta aikaraja config.py:stä, ei suoraan ympäristömuuttujalla
+        # env['CPSAT_PHASE2_MAX_TIME'] = '60'
 
         result = subprocess.run([
             '/home/jarmo-piipponen/Development/Simulation/.venv/bin/python',

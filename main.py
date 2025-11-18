@@ -85,14 +85,12 @@ def main():
 
     from collect_report_data import collect_report_data
     from generate_simulation_report import generate_simulation_report
-    from generate_enhanced_report import generate_enhanced_simulation_report
     from generate_images import generate_images
     try:
         visualize_matrix(output_dir)
         collect_report_data(output_dir)  # Collect data to report_data.json
         generate_images(output_dir)  # Generate all report images (cards, charts, etc.)
-        generate_simulation_report(output_dir)  # Legacy report
-        generate_enhanced_simulation_report(output_dir)  # Enhanced report
+        generate_simulation_report(output_dir)  # Simulation report
         logger.log('STEP', 'Reporting ready')
     except Exception as e:
         error_msg = f'Reporting failed: {str(e)}'

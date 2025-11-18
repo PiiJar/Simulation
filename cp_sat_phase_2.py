@@ -181,8 +181,9 @@ class CpSatPhase2Optimizer:
 
         Jos ohjelmakohtainen maksimi puuttuu, käytä 48h fallbackia.
         """
+        from config import get_cpsat_phase2_anchor_stage1
         windows: Dict[int, Tuple[int, int]] = {}
-        use_anchor = os.getenv("CPSAT_PHASE2_ANCHOR_STAGE1", "0") in ("1", "true", "True")
+        use_anchor = get_cpsat_phase2_anchor_stage1()
         s1_map: Dict[int, int] = {}
         if use_anchor:
             # Etsi Stage 1 EntryTime per erä Vaihe 1 snapshotista
@@ -233,14 +234,14 @@ class CpSatPhase2Optimizer:
     def _compute_phase1_with_margin_windows(self) -> Dict[int, Tuple[int, int]]:
         """Rakenna eräkohtaiset ikkunat Vaiheen 1 toteutuneesta snapshotista + marginaali.
 
-        Ikkuna(b) = [Entry_phase1(b,1) - M, Exit_phase1(b,last) + M], rajoitettu [0, 48h].
+        Ikkuna(b) = [Entry_phase1(b,1), Exit_phase1(b,last) + M], rajoitettu [0, 48h].
+        Phase 1:n ratkaisu on aina nopeampi kuin Phase 2 voi saavuttaa, joten
+        aikaikkunan alaraja on Phase 1:n Entry-aika (ei miinusta marginia).
         M luetaan ympäristöstä CPSAT_PHASE2_WINDOW_MARGIN_SEC (oletus 600 sek).
         Jos data puuttuu, fallback ankkuroidun laskentaan tai [0,48h].
         """
-        try:
-            margin = int(float(os.getenv("CPSAT_PHASE2_WINDOW_MARGIN_SEC", "600")))
-        except Exception:
-            margin = 600
+        from config import get_cpsat_phase2_window_margin_sec
+        margin = get_cpsat_phase2_window_margin_sec()
         margin = max(0, margin)
 
         # Hae entry ja exit Vaihe 1:stä
@@ -265,7 +266,8 @@ class CpSatPhase2Optimizer:
         windows: Dict[int, Tuple[int, int]] = {}
         for _, b in self.batches_df.iterrows():
             b_id = int(b["Batch"])
-            start = int(entry_map.get(b_id, 0)) - margin
+            # Phase 1 ratkaisu on aina nopeampi -> ikkuna alkaa Entry:stä, ei ennen sitä
+            start = int(entry_map.get(b_id, 0))  # EI miinusta marginia
             end = int(exit_map.get(b_id, 48*3600)) + margin
             start = max(0, start)
             end = min(48*3600, max(start + 1, end))
@@ -278,10 +280,8 @@ class CpSatPhase2Optimizer:
         Window(b,s) = [Entry_phase1(b,s) - m, Exit_phase1(b,s) + m]
         m = CPSAT_PHASE2_WINDOW_STAGE_MARGIN_SEC (oletus 300s).
         """
-        try:
-            m = int(float(os.getenv("CPSAT_PHASE2_WINDOW_STAGE_MARGIN_SEC", "300")))
-        except Exception:
-            m = 300
+        from config import get_cpsat_phase2_window_stage_margin_sec
+        m = get_cpsat_phase2_window_stage_margin_sec()
         m = max(0, m)
         win: Dict[Tuple[int, int], Tuple[int, int]] = {}
         if not self.batch_sched.empty and "EntryTime" in self.batch_sched.columns and "ExitTime" in self.batch_sched.columns:
@@ -306,7 +306,8 @@ class CpSatPhase2Optimizer:
 
         Ympäristömuuttuja CPSAT_PHASE2_OVERLAP_MODE voi olla: phase1_with_margin (oletus) | anchored | sliding.
         """
-        mode = os.getenv("CPSAT_PHASE2_OVERLAP_MODE", "phase1_with_margin").lower()
+        from config import get_cpsat_phase2_overlap_mode
+        mode = get_cpsat_phase2_overlap_mode()
         if mode == "sliding":
             source = self.batch_windows
         elif mode == "anchored":
@@ -342,10 +343,8 @@ class CpSatPhase2Optimizer:
 
         m = CPSAT_PHASE2_TRANSPORTER_SAFE_MARGIN_SEC (oletus 600s).
         """
-        try:
-            m = int(float(os.getenv("CPSAT_PHASE2_TRANSPORTER_SAFE_MARGIN_SEC", "600")))
-        except Exception:
-            m = 600
+        from config import get_cpsat_phase2_transporter_safe_margin_sec
+        m = get_cpsat_phase2_transporter_safe_margin_sec()
         m = max(0, m)
 
         # Rakenna apukartat Vaiheen 1 aikataulusta
@@ -586,20 +585,15 @@ class CpSatPhase2Optimizer:
         """
         # Aikamarginaali sekunteina (perusmarginaali). Oletus 3 s.
         import math  # käytetään dynaamisen marginaalin pyöristyksessä
-        try:
-            avoid_time_margin = int(float(os.getenv("CPSAT_PHASE2_AVOID_TIME_MARGIN_SEC", "3")))
-        except Exception:
-            avoid_time_margin = 3
+        from config import get_cpsat_phase2_avoid_time_margin_sec, get_cpsat_phase2_avoid_dynamic_enable, get_cpsat_phase2_avoid_dynamic_per_mm_sec
+        avoid_time_margin = get_cpsat_phase2_avoid_time_margin_sec()
         avoid_time_margin = max(0, avoid_time_margin)
 
         # Dynaaminen lisämarginaali: skaalataan lähellä olevan "yhteisen alueen" pituudella (mm)
         # enable: CPSAT_PHASE2_AVOID_DYNAMIC_ENABLE in {1,true,yes,on}
         # kerroin: CPSAT_PHASE2_AVOID_DYNAMIC_PER_MM_SEC (sec/mm), esim. 0.002 -> 2 s / 1000 mm
-        dyn_enable = str(os.getenv("CPSAT_PHASE2_AVOID_DYNAMIC_ENABLE", "0")).strip().lower() in ("1", "true", "yes", "on")
-        try:
-            dyn_per_mm_sec = float(os.getenv("CPSAT_PHASE2_AVOID_DYNAMIC_PER_MM_SEC", "0"))
-        except Exception:
-            dyn_per_mm_sec = 0.0
+        dyn_enable = get_cpsat_phase2_avoid_dynamic_enable()
+        dyn_per_mm_sec = get_cpsat_phase2_avoid_dynamic_per_mm_sec()
 
         # Kerää Avoid_distance-arvot (millimetreinä)
         avoid_by_t: Dict[int, int] = {}
@@ -724,16 +718,11 @@ class CpSatPhase2Optimizer:
 
         Returns a list of violations (empty if none)."""
         # Sama aikamarginaali kuin mallissa (perusmarginaali) + mahdollinen dynaaminen lisä
-        try:
-            avoid_time_margin = int(float(os.getenv("CPSAT_PHASE2_AVOID_TIME_MARGIN_SEC", "3")))
-        except Exception:
-            avoid_time_margin = 3
+        from config import get_cpsat_phase2_avoid_time_margin_sec, get_cpsat_phase2_avoid_dynamic_enable, get_cpsat_phase2_avoid_dynamic_per_mm_sec
+        avoid_time_margin = get_cpsat_phase2_avoid_time_margin_sec()
         avoid_time_margin = max(0, avoid_time_margin)
-        dyn_enable = str(os.getenv("CPSAT_PHASE2_AVOID_DYNAMIC_ENABLE", "0")).strip().lower() in ("1", "true", "yes", "on")
-        try:
-            dyn_per_mm_sec = float(os.getenv("CPSAT_PHASE2_AVOID_DYNAMIC_PER_MM_SEC", "0"))
-        except Exception:
-            dyn_per_mm_sec = 0.0
+        dyn_enable = get_cpsat_phase2_avoid_dynamic_enable()
+        dyn_per_mm_sec = get_cpsat_phase2_avoid_dynamic_per_mm_sec()
         import math
         def x(station: int) -> float:
             return float(self.station_positions.get(int(station), 0.0))
@@ -927,17 +916,15 @@ class CpSatPhase2Optimizer:
         self.set_objective()
         print(" - Tavoite asetettu")
 
-        # Aikaraja: luettavissa ympäristömuuttujasta CPSAT_PHASE2_MAX_TIME (sekunteina), oletus 300 s
+        # Aikaraja: luetaan config.py:stä (ympäristömuuttuja tai oletus)
         try:
-            _time_limit = float(os.getenv("CPSAT_PHASE2_MAX_TIME", "300"))
+            from config import get_cp_sat_phase2_max_time
+            _time_limit = float(get_cp_sat_phase2_max_time())
         except Exception:
             _time_limit = 300.0
         self.solver.parameters.max_time_in_seconds = _time_limit
         # Valinnainen: säikeiden määrä ja hakulokin tulostus
-        try:
-            _threads = int(os.getenv("CPSAT_PHASE2_THREADS", "0") or "0")
-        except Exception:
-            _threads = 0
+        _threads = get_cpsat_phase2_threads()
         if _threads > 0:
             self.solver.parameters.num_search_workers = _threads
             print(f" - Säikeet: {_threads}")
@@ -1062,7 +1049,8 @@ class CpSatPhase2Optimizer:
         df = pd.DataFrame(rows)
         out = os.path.join(cp_dir, "cp_sat_hoist_schedule.csv")
         # Dekompositiossa voidaan appendata turvallisesti
-        do_append = os.getenv("CPSAT_PHASE2_DECOMPOSE_APPEND", "0") in ("1", "true", "True")
+        from config import get_cpsat_phase2_decompose_append
+        do_append = get_cpsat_phase2_decompose_append()
         if do_append and os.path.exists(out):
             prev = pd.read_csv(out)
             df = pd.concat([prev, df], ignore_index=True)
@@ -1171,7 +1159,8 @@ def optimize_phase_2(output_dir: str):
     eräkohtaisten ikkunoiden perusteella ja ratkaise per komponentti. Muussa tapauksessa
     ratkaise koko malli kerralla.
     """
-    decompose = os.getenv("CPSAT_PHASE2_DECOMPOSE", "0") in ("1", "true", "True")
+    from config import get_cpsat_phase2_decompose
+    decompose = get_cpsat_phase2_decompose()
     if not decompose:
         optimizer = CpSatPhase2Optimizer(output_dir)
         return optimizer.solve()
@@ -1181,10 +1170,8 @@ def optimize_phase_2(output_dir: str):
     base = CpSatPhase2Optimizer(output_dir)
     windows = base._compute_phase1_with_margin_windows()
     # Guard lisämarginaali komponenttirajojen turvallisuuteen
-    try:
-        guard = int(float(os.getenv("CPSAT_PHASE2_DECOMPOSE_GUARD_SEC", "600")))
-    except Exception:
-        guard = 600
+    from config import get_cpsat_phase2_decompose_guard_sec
+    guard = get_cpsat_phase2_decompose_guard_sec()
     guard = max(0, guard)
     # Laajenna ikkunat guardilla
     ext_windows: Dict[int, Tuple[int, int]] = {}

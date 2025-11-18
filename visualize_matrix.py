@@ -341,11 +341,11 @@ def visualize_matrix(output_dir):
         # Legend poistettu käyttäjän pyynnöstä
 
         # Save chart for this page to images directory
-        output_file = os.path.join(images_dir, f\"matrix_timeline_page_{page+1}.png\")
+        output_file = os.path.join(images_dir, f"matrix_timeline_page_{page+1}.png")
         plt.tight_layout()
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         plt.close(fig)
-        logger.log_viz(f\"Stretched matrix timeline page {page+1} saved: {output_file}\")
+        logger.log_viz(f"Stretched matrix timeline page {page+1} saved: {output_file}")
         output_files.append(output_file)
         
         # Create rotated version (90° counter-clockwise) for PDF report

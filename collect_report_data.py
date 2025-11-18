@@ -26,10 +26,17 @@ def collect_report_data(output_dir: str):
     reports_dir = os.path.join(output_dir, 'reports')
     os.makedirs(reports_dir, exist_ok=True)
     
-    # Initialize report data structure
+    # Initialize report data structure (NEW logical structure)
     report_data = {
+        # NEW: Logical groupings
+        "customer_and_plant": {},
+        "production_targets": {},
+        "simulation_results": {},
+        "metadata": {},
+        
+        # Legacy structure (for backwards compatibility)
         "simulation_info": {},
-        "simulation": {},  # Quick access metrics for cards
+        "simulation": {},
         "files": {},
         "batch_statistics": [],
         "transporter_statistics": [],
@@ -284,12 +291,15 @@ def collect_report_data(output_dir: str):
         
         # Get production schedule (shifts per day, hours per shift, etc.)
         production_schedule = plant.get("production_schedule", {})
+        report_data["simulation_info"]["production_schedule"] = production_schedule
         shifts_per_day = production_schedule.get("shifts_per_day", 2)
         hours_per_shift = production_schedule.get("hours_per_shift", 8.0)
         days_per_week = production_schedule.get("days_per_week", 5)
+        weeks_per_year = production_schedule.get("weeks_per_year", 52)
         
         # Get production targets for product distribution
         production_targets_list = plant.get("production_targets", {}).get("annual", [])
+        report_data["simulation_info"]["annual_production_targets"] = production_targets_list
         for target in production_targets_list:
             product_id = target.get("product_id", "")
             target_qty = target.get("target_quantity", 0)
@@ -298,6 +308,7 @@ def collect_report_data(output_dir: str):
                 total_target_quantity += target_qty
         
         # Store product information for later use
+        products_list = []
         for product in products:
             product_id = product.get("id", "")
             properties = product.get("properties", {})
@@ -306,6 +317,12 @@ def collect_report_data(output_dir: str):
                 "description": product.get("description", ""),
                 "pieces_per_batch": properties.get("pieces_per_batch", 1)
             }
+            products_list.append({
+                "product_id": product_id,
+                "name": product.get("name", ""),
+                "pieces_per_batch": properties.get("pieces_per_batch", 1)
+            })
+        report_data["simulation_info"]["products"] = products_list
     except Exception as e:
         print(f"Warning: Could not load customer.json: {e}")
         report_data["simulation_info"]["customer_id"] = ""
@@ -327,7 +344,7 @@ def collect_report_data(output_dir: str):
     now = datetime.now()
     report_data["simulation_info"]["report_generated"] = now.strftime('%Y-%m-%d %H:%M:%S')
     
-    # Load goals.json for simulation duration (from initialization directory)
+    # Load goals.json for simulation duration and production targets (from initialization directory)
     goals_path = os.path.join(init_dir, 'goals.json')
     target_cycle_time_seconds = None
     if os.path.exists(goals_path):
@@ -335,10 +352,21 @@ def collect_report_data(output_dir: str):
             with open(goals_path, 'r') as f:
                 goals = json.load(f)
                 report_data["simulation_info"]["simulation_duration_hours"] = goals.get("simulation_duration_hours", 0.0)
+                
                 # Extract target cycle time from goals
                 target_pace = goals.get("target_pace", {})
                 # Use the new annual target cycle time if available, otherwise fall back to average_batch_interval_seconds
                 target_cycle_time_seconds = target_pace.get("target_cycle_time_seconds") or target_pace.get("average_batch_interval_seconds")
+                
+                # Add production targets from goals.json
+                report_data["simulation_info"]["production_targets"] = {
+                    "annual_batches": target_pace.get("annual_batches", 0),
+                    "annual_production_hours": target_pace.get("annual_production_hours", 0),
+                    "target_batches_per_hour": target_pace.get("batches_per_hour", 0),
+                    "target_cycle_time_seconds": target_pace.get("target_cycle_time_seconds", 0),
+                    "simulation_target_batches": target_pace.get("simulation_target_batches", 0),
+                    "simulation_duration_hours": goals.get("simulation_goals", {}).get("simulation_period", {}).get("duration_hours", 0)
+                }
         except Exception as e:
             print(f"Warning: Could not load goals.json: {e}")
             report_data["simulation_info"]["simulation_duration_hours"] = 0.0
@@ -574,6 +602,33 @@ def collect_report_data(output_dir: str):
                     # Ramp times (in seconds)
                     ramp_up_seconds = report_data["simulation_info"]["ramp_up_time_seconds"]
                     ramp_down_seconds = report_data["simulation_info"]["ramp_down_time_seconds"]
+                    
+                    # Calculate total steady hours per year
+                    # Logic: If day has < 24 hours of production, subtract one ramp_up per day
+                    #        If day has 24 hours AND week has < 7 days, subtract one ramp_up per week
+                    hours_per_day = shifts_per_day * hours_per_shift
+                    ramp_up_hours = ramp_up_seconds / HOUR
+                    
+                    # Calculate total production hours per year (correct calculation)
+                    total_annual_hours = weeks_per_year * days_per_week * hours_per_day
+                    
+                    if hours_per_day < 24:
+                        # Subtract one ramp_up per day
+                        ramp_ups_per_year = weeks_per_year * days_per_week
+                        total_steady_hours_per_year = total_annual_hours - (ramp_ups_per_year * ramp_up_hours)
+                    elif hours_per_day >= 24 and days_per_week < 7:
+                        # 24-hour production, but not 7 days/week: subtract one ramp_up per week
+                        ramp_ups_per_year = weeks_per_year
+                        total_steady_hours_per_year = total_annual_hours - (ramp_ups_per_year * ramp_up_hours)
+                    else:
+                        # 24/7 production: no ramp_up adjustment (continuous)
+                        total_steady_hours_per_year = total_annual_hours
+                    
+                    # Ensure steady hours are positive and don't exceed total hours
+                    total_steady_hours_per_year = max(0, min(total_steady_hours_per_year, total_annual_hours))
+                    
+                    # Store in report_data
+                    report_data["simulation_info"]["total_steady_hours_per_year"] = round(total_steady_hours_per_year, 1)
                     
                     # Calculate ONE SHIFT production
                     steady_phase_shift = shift_duration_seconds - ramp_up_seconds - ramp_down_seconds
@@ -996,6 +1051,9 @@ def collect_report_data(output_dir: str):
     
     report_data["capacity_constraints"] = capacity_constraints
     
+    # Populate NEW logical structure
+    _populate_new_structure(report_data)
+    
     # Save report data to JSON
     report_data_path = os.path.join(reports_dir, 'report_data.json')
     with open(report_data_path, 'w', encoding='utf-8') as f:
@@ -1003,6 +1061,63 @@ def collect_report_data(output_dir: str):
     
     print(f"📊 Report data collected: {report_data_path}")
     return report_data_path
+
+
+def _populate_new_structure(report_data: dict):
+    """
+    Populate new logical structure from legacy simulation_info.
+    Maintains backwards compatibility by keeping both structures.
+    """
+    sim_info = report_data.get("simulation_info", {})
+    
+    # Customer and Plant data
+    report_data["customer_and_plant"] = {
+        "customer_id": sim_info.get("customer_id", ""),
+        "customer_name": sim_info.get("customer_name", ""),
+        "plant_id": sim_info.get("plant_id", ""),
+        "plant_name": sim_info.get("plant_name", ""),
+        "plant_location": sim_info.get("plant_location", ""),
+        "available_containers": sim_info.get("available_containers", 50),
+        "production_schedule": sim_info.get("production_schedule", {}),
+        "annual_production_targets": sim_info.get("annual_production_targets", []),
+        "products": sim_info.get("products", [])
+    }
+    
+    # Production Targets
+    prod_targets = sim_info.get("production_targets", {})
+    report_data["production_targets"] = {
+        "annual_batches": prod_targets.get("annual_batches", 0),
+        "annual_production_hours": prod_targets.get("annual_production_hours", 0),
+        "target_batches_per_hour": prod_targets.get("target_batches_per_hour", 0),
+        "target_cycle_time_seconds": prod_targets.get("target_cycle_time_seconds", 0),
+        "simulation_target_batches": prod_targets.get("simulation_target_batches", 0),
+        "simulation_duration_hours": prod_targets.get("simulation_duration_hours", 0),
+        "total_steady_hours_per_year": sim_info.get("total_steady_hours_per_year", 0)
+    }
+    
+    # Simulation Results
+    report_data["simulation_results"] = {
+        "total_batches": sim_info.get("total_batches", 0),
+        "simulation_duration_hours": sim_info.get("simulation_duration_hours", 0),
+        "total_production_time": sim_info.get("total_production_time", "00:00:00"),
+        "ramp_up_time": sim_info.get("ramp_up_time", "00:00:00"),
+        "ramp_up_time_seconds": sim_info.get("ramp_up_time_seconds", 0),
+        "steady_state_time": sim_info.get("steady_state_time", "00:00:00"),
+        "steady_state_time_seconds": sim_info.get("steady_state_time_seconds", 0),
+        "ramp_down_time": sim_info.get("ramp_down_time", "00:00:00"),
+        "ramp_down_time_seconds": sim_info.get("ramp_down_time_seconds", 0),
+        "has_steady_state": sim_info.get("has_steady_state", False),
+        "steady_state_batches_started": sim_info.get("steady_state_batches_started", 0),
+        "ramp_down_batches_completed": sim_info.get("ramp_down_batches_completed", 0),
+        "scaled_production_estimates": sim_info.get("scaled_production_estimates", {}),
+        "current_simulation": sim_info.get("current_simulation", {})
+    }
+    
+    # Metadata
+    report_data["metadata"] = {
+        "folder_name": sim_info.get("folder_name", ""),
+        "report_generated": sim_info.get("report_generated", "")
+    }
 
 
 if __name__ == "__main__":

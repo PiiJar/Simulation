@@ -2153,25 +2153,54 @@ def generate_enhanced_simulation_report(output_dir):
         report_data_path = os.path.join(reports_dir, 'report_data.json')
         with open(report_data_path, 'r') as f:
             report_data = json.load(f)
-        sim_info = report_data.get('simulation_info', {})
-        customer = sim_info.get('customer_name', '-')
-        customer_id = sim_info.get('customer_id', '-')
-        plant = sim_info.get('plant_name', '-')
-        plant_id = sim_info.get('plant_id', '-')
-        location = sim_info.get('plant_location', {})
+        
+        # Use NEW structure with fallback to legacy
+        customer_plant = report_data.get('customer_and_plant', {})
+        sim_results = report_data.get('simulation_results', {})
+        prod_targets = report_data.get('production_targets', {})
+        metadata_info = report_data.get('metadata', {})
+        
+        # Fallback to legacy structure if new structure is empty
+        if not customer_plant:
+            sim_info = report_data.get('simulation_info', {})
+            customer_plant = {
+                'customer_name': sim_info.get('customer_name', '-'),
+                'customer_id': sim_info.get('customer_id', '-'),
+                'plant_name': sim_info.get('plant_name', '-'),
+                'plant_id': sim_info.get('plant_id', '-'),
+                'plant_location': sim_info.get('plant_location', {}),
+                'available_containers': sim_info.get('available_containers', '-'),
+                'annual_production_targets': sim_info.get('annual_production_targets', []),
+                'products': sim_info.get('products', []),
+                'production_schedule': sim_info.get('production_schedule', {})
+            }
+            sim_results = {
+                'total_batches': sim_info.get('total_batches', '-'),
+                'total_production_time': sim_info.get('total_production_time', '-'),
+                'ramp_up_time': sim_info.get('ramp_up_time', '-'),
+                'steady_state_time': sim_info.get('steady_state_time', '-'),
+                'ramp_down_time': sim_info.get('ramp_down_time', '-'),
+                'scaled_production_estimates': sim_info.get('scaled_production_estimates', {})
+            }
+            prod_targets = sim_info.get('production_targets', {})
+            metadata_info = {
+                'folder_name': sim_info.get('folder_name', '-'),
+                'report_generated': sim_info.get('report_generated', '-')
+            }
+        
+        customer = customer_plant.get('customer_name', '-')
+        plant = customer_plant.get('plant_name', '-')
+        location = customer_plant.get('plant_location', {})
         city = location.get('city', '-')
         country = location.get('country', '-')
-        timezone = location.get('timezone', '-')
-        available_containers = sim_info.get('available_containers', '-')
-        folder_name = sim_info.get('folder_name', '-')
-        report_generated = sim_info.get('report_generated', '-')
-        total_batches = sim_info.get('total_batches', '-')
-        total_prod_time = sim_info.get('total_production_time', '-')
-        ramp_up = sim_info.get('ramp_up_time', '-')
-        steady = sim_info.get('steady_state_time', '-')
-        ramp_down = sim_info.get('ramp_down_time', '-')
+        available_containers = customer_plant.get('available_containers', '-')
+        total_batches = sim_results.get('total_batches', '-')
+        total_prod_time = sim_results.get('total_production_time', '-')
+        ramp_up = sim_results.get('ramp_up_time', '-')
+        steady = sim_results.get('steady_state_time', '-')
+        ramp_down = sim_results.get('ramp_down_time', '-')
         # Annual estimate
-        scaled = sim_info.get('scaled_production_estimates', {})
+        scaled = sim_results.get('scaled_production_estimates', {})
         year = scaled.get('year', {})
         annual_batches = year.get('total_batches', '-')
         by_product = year.get('by_product', {})
@@ -2193,12 +2222,12 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.set_font(BODY_FONT_NAME, 'B', 12)
         pdf.cell(label_width, 8, "Customer:", ln=0)
         pdf.set_font(BODY_FONT_NAME, '', 12)
-        pdf.cell(value_width, 8, f"{customer} (ID: {customer_id})", ln=1)
+        pdf.cell(value_width, 8, f"{customer}", ln=1)
 
         pdf.set_font(BODY_FONT_NAME, 'B', 12)
         pdf.cell(label_width, 8, "Plant:", ln=0)
         pdf.set_font(BODY_FONT_NAME, '', 12)
-        pdf.cell(value_width, 8, f"{plant} (ID: {plant_id})", ln=1)
+        pdf.cell(value_width, 8, f"{plant}", ln=1)
 
         pdf.set_font(BODY_FONT_NAME, 'B', 12)
         pdf.cell(label_width, 8, "Location:", ln=0)
@@ -2207,27 +2236,94 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.cell(value_width, 8, f"{city}, {country}", ln=1)
         pdf.ln(8)  # Blank line after Location
 
-        # Annual production estimate block (4 rows)
+        # Annual production estimate block - from report_data.json
         pdf.set_font(BODY_FONT_NAME, 'B', 12)
         pdf.cell(0, 8, "Annual production estimate:", ln=1)
         pdf.set_font(BODY_FONT_NAME, '', 12)
-        pdf.cell(0, 7, f"Batches per year: {annual_batches}", ln=1)
-        pdf.cell(0, 7, f"Product: {prod_name}", ln=1)
-        pdf.cell(0, 7, f"Pieces per year: {prod_pieces}", ln=1)
-        pdf.ln(8)  # Blank line after annual production block
-
-        pdf.cell(0, 8, f"Available containers: {available_containers}", ln=1)
-        pdf.cell(0, 8, f"Simulation folder: {folder_name}", ln=1)
-        pdf.ln(4)
+        
+        # Get annual production targets from report_data
+        targets = customer_plant.get('annual_production_targets', [])
+        if targets:
+            for target in targets:
+                product_id = target.get('product_id', 'N/A')
+                quantity = target.get('target_quantity', 0)
+                unit = target.get('unit', 'pieces')
+                pdf.cell(label_width, 7, f"Product {product_id}:", ln=0)
+                pdf.cell(value_width, 7, f"{quantity:,} {unit}/year", ln=1)
+        else:
+            # Fallback to old data if targets not available
+            pdf.cell(0, 7, f"Batches per year: {annual_batches}", ln=1)
+            pdf.cell(0, 7, f"Product: {prod_name}", ln=1)
+            pdf.cell(0, 7, f"Pieces per year: {prod_pieces}", ln=1)
+        
+        pdf.ln(8)  # Blank line
+        
+        # Production times section
+        pdf.set_font(BODY_FONT_NAME, 'B', 12)
+        pdf.cell(0, 8, "Production times:", ln=1)
+        pdf.set_font(BODY_FONT_NAME, '', 12)
+        
+        prod_schedule = customer_plant.get('production_schedule', {})
+        hours_per_shift = prod_schedule.get('hours_per_shift', 0)
+        shifts_per_day = prod_schedule.get('shifts_per_day', 0)
+        days_per_week = prod_schedule.get('days_per_week', 0)
+        weeks_per_year = prod_schedule.get('weeks_per_year', 0)
+        
+        pdf.cell(label_width, 7, "Shift:", ln=0)
+        pdf.cell(value_width, 7, f"{hours_per_shift} hours", ln=1)
+        
+        pdf.cell(label_width, 7, "Day:", ln=0)
+        pdf.cell(value_width, 7, f"{shifts_per_day} shifts", ln=1)
+        
+        pdf.cell(label_width, 7, "Week:", ln=0)
+        pdf.cell(value_width, 7, f"{days_per_week} days", ln=1)
+        
+        pdf.cell(label_width, 7, "Year:", ln=0)
+        pdf.cell(value_width, 7, f"{weeks_per_year} weeks", ln=1)
+        
+        # Calculate correct total hours (in case customer.json has wrong value)
+        correct_total_hours = weeks_per_year * days_per_week * shifts_per_day * hours_per_shift
+        pdf.cell(label_width, 7, "Total hours:", ln=0)
+        pdf.cell(value_width, 7, f"{correct_total_hours:,.1f} hours/year", ln=1)
+        
+        # Total steady hours per year
+        total_steady_hours = prod_targets.get('total_steady_hours_per_year', 0)
+        pdf.cell(label_width, 7, "Total steady hours:", ln=0)
+        pdf.cell(value_width, 7, f"{total_steady_hours:,.1f} hours/year (Total hours - ramp-up times)", ln=1)
+        
+        pdf.ln(8)  # Blank line
+        
+        # Batch size section
+        pdf.set_font(BODY_FONT_NAME, 'B', 12)
+        pdf.cell(0, 8, "Batch size:", ln=1)
+        pdf.set_font(BODY_FONT_NAME, '', 12)
+        
+        products_list = customer_plant.get('products', [])
+        for product in products_list:
+            product_id = product.get('product_id', 'N/A')
+            pieces_per_batch = product.get('pieces_per_batch', 0)
+            pdf.cell(label_width, 7, f"Product {product_id}:", ln=0)
+            pdf.cell(value_width, 7, f"{pieces_per_batch} pieces/batch", ln=1)
+        
+        pdf.ln(8)  # Blank line
+        
+        # Simulation summary section
         pdf.set_font(BODY_FONT_NAME, 'B', 12)
         pdf.cell(0, 8, "Simulation summary:", ln=1)
         pdf.set_font(BODY_FONT_NAME, '', 12)
-        pdf.cell(0, 7, f"Total batches (this run): {total_batches}", ln=1)
-        pdf.cell(0, 7, f"Total production time: {total_prod_time}", ln=1)
-        pdf.cell(0, 7, f"Ramp-up: {ramp_up}", ln=1)
-        pdf.cell(0, 7, f"Steady-state: {steady}", ln=1)
-        pdf.cell(0, 7, f"Ramp-down: {ramp_down}", ln=1)
-        pdf.ln(2)
+        pdf.cell(label_width, 7, "Available units:", ln=0)
+        pdf.cell(value_width, 7, f"{available_containers}", ln=1)
+        pdf.cell(label_width, 7, "Total batches:", ln=0)
+        pdf.cell(value_width, 7, f"{total_batches}", ln=1)
+        pdf.cell(label_width, 7, "Total time:", ln=0)
+        pdf.cell(value_width, 7, f"{total_prod_time}", ln=1)
+        pdf.cell(label_width, 7, "Ramp-up:", ln=0)
+        pdf.cell(value_width, 7, f"{ramp_up}", ln=1)
+        pdf.cell(label_width, 7, "Steady-state:", ln=0)
+        pdf.cell(value_width, 7, f"{steady}", ln=1)
+        pdf.cell(label_width, 7, "Ramp-down:", ln=0)
+        pdf.cell(value_width, 7, f"{ramp_down}", ln=1)
+        pdf.ln(8)  # Blank line after simulation summary
 
 
     # ===== TABLE OF CONTENTS (always page 2) =====

@@ -386,7 +386,8 @@ class CpSatPhase1Optimizer:
         ympäristömuuttuja CPSAT_PHASE1_GROUPS=true.
         """
         # Oletus: otetaan käyttöön. Poista käytöstä asettamalla CPSAT_PHASE1_GROUPS=0/false
-        enable_groups = os.getenv('CPSAT_PHASE1_GROUPS', '1').strip().lower() in ('1', 'true', 'yes')
+        from config import get_cpsat_phase1_groups
+        enable_groups = get_cpsat_phase1_groups()
         if not enable_groups:
             print("  (ohitettu) Asemaryhmärajoitteet poistettu käytöstä (CPSAT_PHASE1_GROUPS)")
             return
@@ -490,14 +491,9 @@ class CpSatPhase1Optimizer:
         
         # Ratkaise malli
         # Ympäristöparametrit: aikaraja ja säikeet
-        try:
-            _tlim = float(os.getenv('CPSAT_PHASE1_MAX_TIME', '0') or '0')
-        except Exception:
-            _tlim = 0.0
-        try:
-            _threads = int(os.getenv('CPSAT_PHASE1_THREADS', '0') or '0')
-        except Exception:
-            _threads = 0
+        from config import get_cpsat_phase1_max_time, get_cpsat_phase1_threads, get_cpsat_log_progress
+        _tlim = get_cpsat_phase1_max_time()
+        _threads = get_cpsat_phase1_threads()
         if _tlim > 0:
             self.solver.parameters.max_time_in_seconds = _tlim
             print(f"   (CP-SAT) Aikaraja asetettu: {int(_tlim)} s")
@@ -505,7 +501,7 @@ class CpSatPhase1Optimizer:
             self.solver.parameters.num_search_workers = _threads
             print(f"   (CP-SAT) Säikeet: {_threads}")
         # Yleinen kytkin hakulokille (molemmille vaiheille): CPSAT_LOG_PROGRESS=1
-        _log_progress = os.getenv('CPSAT_LOG_PROGRESS', '0') in ('1', 'true', 'True')
+        _log_progress = get_cpsat_log_progress()
         if _log_progress:
             self.solver.parameters.log_search_progress = True
             self.solver.parameters.log_to_stdout = True
