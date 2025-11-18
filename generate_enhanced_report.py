@@ -2170,15 +2170,40 @@ def generate_enhanced_simulation_report(output_dir):
 
         pdf.add_page()
         pdf.chapter_title('Customer and Plant Information')
+        pdf.ln(8)
         pdf.set_font(BODY_FONT_NAME, '', 12)
-        pdf.ln(2)
-        pdf.cell(0, 8, f"Customer: {customer} (ID: {customer_id})", ln=1)
-        pdf.cell(0, 8, f"Plant: {plant} (ID: {plant_id})", ln=1)
-        pdf.cell(0, 8, f"Location: {city}, {country}", ln=1)
-        pdf.cell(0, 8, f"Timezone: {timezone}", ln=1)
+
+        label_width = 38
+        value_width = 0  # 0 means extend to right margin
+
+        pdf.set_font(BODY_FONT_NAME, 'B', 12)
+        pdf.cell(label_width, 8, "Customer:", ln=0)
+        pdf.set_font(BODY_FONT_NAME, '', 12)
+        pdf.cell(value_width, 8, f"{customer} (ID: {customer_id})", ln=1)
+
+        pdf.set_font(BODY_FONT_NAME, 'B', 12)
+        pdf.cell(label_width, 8, "Plant:", ln=0)
+        pdf.set_font(BODY_FONT_NAME, '', 12)
+        pdf.cell(value_width, 8, f"{plant} (ID: {plant_id})", ln=1)
+
+        pdf.set_font(BODY_FONT_NAME, 'B', 12)
+        pdf.cell(label_width, 8, "Location:", ln=0)
+        pdf.set_font(BODY_FONT_NAME, '', 12)
+
+        pdf.cell(value_width, 8, f"{city}, {country}", ln=1)
+        pdf.ln(8)  # Blank line after Location
+
+        # Annual production estimate block (4 rows)
+        pdf.set_font(BODY_FONT_NAME, 'B', 12)
+        pdf.cell(0, 8, "Annual production estimate:", ln=1)
+        pdf.set_font(BODY_FONT_NAME, '', 12)
+        pdf.cell(0, 7, f"Batches per year: {annual_batches}", ln=1)
+        pdf.cell(0, 7, f"Product: {prod_name}", ln=1)
+        pdf.cell(0, 7, f"Pieces per year: {prod_pieces}", ln=1)
+        pdf.ln(8)  # Blank line after annual production block
+
         pdf.cell(0, 8, f"Available containers: {available_containers}", ln=1)
         pdf.cell(0, 8, f"Simulation folder: {folder_name}", ln=1)
-        pdf.cell(0, 8, f"Report generated: {report_generated}", ln=1)
         pdf.ln(4)
         pdf.set_font(BODY_FONT_NAME, 'B', 12)
         pdf.cell(0, 8, "Simulation summary:", ln=1)
@@ -2188,13 +2213,6 @@ def generate_enhanced_simulation_report(output_dir):
         pdf.cell(0, 7, f"Ramp-up: {ramp_up}", ln=1)
         pdf.cell(0, 7, f"Steady-state: {steady}", ln=1)
         pdf.cell(0, 7, f"Ramp-down: {ramp_down}", ln=1)
-        pdf.ln(4)
-        pdf.set_font(BODY_FONT_NAME, 'B', 12)
-        pdf.cell(0, 8, "Annual production estimate:", ln=1)
-        pdf.set_font(BODY_FONT_NAME, '', 12)
-        pdf.cell(0, 7, f"Batches per year: {annual_batches}", ln=1)
-        pdf.cell(0, 7, f"Product: {prod_name}", ln=1)
-        pdf.cell(0, 7, f"Pieces per year: {prod_pieces}", ln=1)
         pdf.ln(2)
 
 

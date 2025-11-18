@@ -1,7 +1,7 @@
 {
   "customer": {
     "id": "900135",
-    "name": "Factory X",
+    "name": "Nammo Lapua oy",
     "description": "Main production facility for zinc phosphating operations",
     "contact": {
       "email": "production@factoryx.example",
@@ -11,18 +11,18 @@
   },
   "plant": {
     "id": "P001",
-    "name": "Nammo Zinc-Phosphating",
+    "name": "Factory X - Zinc-Phosphating",
     "customer_id": "900135",
     "available_containers": 50,
     "location": {
-      "city": "Helsinki",
+      "city": "Jyväskylä",
       "country": "Finland",
       "timezone": "Europe/Helsinki"
     },
     "production_schedule": {
       "weeks_per_year": 48,
       "days_per_week": 5,
-      "shifts_per_day": 2,
+      "shifts_per_day": 3,
       "hours_per_shift": 8.0,
       "annual_production_hours": 3840.0,
       "description": "Standard production schedule: 48 weeks/year, 5 days/week, 2 shifts/day, 8 hours/shift"
@@ -30,8 +30,14 @@
     "production_targets": {
       "annual": [
         {
-          "product_id": "PROD-001",
-          "target_quantity": 130000,
+          "product_id": "155KR88",
+          "target_quantity": 80000,
+          "unit": "pieces",
+          "priority": 1
+        },
+        {
+          "product_id": "155 OP",
+          "target_quantity": 80000,
           "unit": "pieces",
           "priority": 1
         }
@@ -41,7 +47,7 @@
   },
   "products": [
     {
-      "id": "PROD-001",
+      "id": "155KR88",
       "plant_id": "P001",
       "name": "Steel Component A",
       "description": "Medium-sized steel component requiring zinc phosphating",
@@ -49,7 +55,31 @@
         "surface_area_mm2": 250000,
         "weight_kg": 5.5,
         "treatment_program": 1,
-        "pieces_per_batch": 5,
+        "pieces_per_batch": 8,
+        "material": "Steel",
+        "coating_type": "Zinc-Phosphate"
+      },
+      "dimensions": {
+        "length_mm": 500,
+        "width_mm": 200,
+        "height_mm": 100
+      },
+      "quality_requirements": {
+        "coating_thickness_min_um": 5.0,
+        "coating_thickness_max_um": 15.0,
+        "surface_finish": "Smooth"
+      }
+    },
+    {
+      "id": "155 OP",
+      "plant_id": "P001",
+      "name": "Steel Component B",
+      "description": "Medium-sized steel component requiring zinc phosphating",
+      "properties": {
+        "surface_area_mm2": 250000,
+        "weight_kg": 5.5,
+        "treatment_program": 1,
+        "pieces_per_batch": 8,
         "material": "Steel",
         "coating_type": "Zinc-Phosphate"
       },
