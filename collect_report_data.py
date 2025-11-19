@@ -827,7 +827,7 @@ def collect_report_data(output_dir: str):
     if target_cycle_time_seconds is not None:
         report_data["simulation"]["target_cycle_time_seconds"] = round(target_cycle_time_seconds, 2)
     
-    # --- Transporter Statistics (Hoist Utilization) ---
+    # --- Transporter Statistics (Transporter Utilization) ---
     # Calculate transporter phase times from movement logs
     try:
         logs_dir = os.path.join(output_dir, "logs")
@@ -933,9 +933,9 @@ def collect_report_data(output_dir: str):
     if os.path.exists(batch_schedule):
         report_data["files"]["batch_schedule"] = "cp_sat/cp_sat_batch_schedule.csv"
     
-    hoist_schedule = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv')
-    if os.path.exists(hoist_schedule):
-        report_data["files"]["hoist_schedule"] = "cp_sat/cp_sat_hoist_schedule.csv"
+    transporter_schedule = os.path.join(output_dir, 'cp_sat', 'cp_sat_transporter_schedule.csv')
+    if os.path.exists(transporter_schedule):
+        report_data["files"]["transporter_schedule"] = "cp_sat/cp_sat_transporter_schedule.csv"
     
     station_schedule = os.path.join(output_dir, 'cp_sat', 'cp_sat_station_schedule.csv')
     if os.path.exists(station_schedule):

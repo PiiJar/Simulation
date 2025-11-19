@@ -1,5 +1,5 @@
 # Tämä tiedosto sisältää kaikki transporter-liikkeiden fysiikkalogiikan funktiot
-# (aiemmin hoist_physics.py)
+# (aiemmin transporter_physics.py)
 
 import numpy as np
 

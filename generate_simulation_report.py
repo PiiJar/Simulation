@@ -1610,7 +1610,7 @@ def create_transporter_temporal_load_chart(output_dir, reports_dir, color_map=No
 
     color_map: optional dict {transporter_id: hexcolor} to ensure consistent colors
     """
-    transporter_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
+    transporter_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_transporter_schedule.csv'))
     batch_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv'))
     
     # Makespan
@@ -2215,11 +2215,11 @@ def generate_simulation_report(output_dir):
                     solver_status = s.get('status_name', 'UNKNOWN')
             else:
                 # Fallback heuristic
-                conflicts = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_conflicts.csv')
-                hoist = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv')
+                conflicts = os.path.join(output_dir, 'cp_sat', 'cp_sat_transporter_conflicts.csv')
+                transporter = os.path.join(output_dir, 'cp_sat', 'cp_sat_transporter_schedule.csv')
                 if os.path.exists(conflicts):
                     solver_status = 'INFEASIBLE'
-                elif os.path.exists(hoist):
+                elif os.path.exists(transporter):
                     solver_status = 'OPTIMAL'
         except Exception:
             solver_status = "Unknown"
@@ -3006,12 +3006,12 @@ def generate_simulation_report(output_dir):
                 s = json.load(fh)
                 solver_status_text = f"Status: {s.get('status_name', 'UNKNOWN')} (Phase 1)"
         else:
-            # Fallback: jos konfliktit löytyvät, merkitse INFEASIBLE; jos hoist_schedule löytyy, merkitse SOLUTION FOUND
-            conflicts = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_conflicts.csv')
-            hoist = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv')
+            # Fallback: jos konfliktit löytyvät, merkitse INFEASIBLE; jos transporter_schedule löytyy, merkitse SOLUTION FOUND
+            conflicts = os.path.join(output_dir, 'cp_sat', 'cp_sat_transporter_conflicts.csv')
+            transporter = os.path.join(output_dir, 'cp_sat', 'cp_sat_transporter_schedule.csv')
             if os.path.exists(conflicts):
                 solver_status_text = 'Status: INFEASIBLE (conflicts reported)'
-            elif os.path.exists(hoist):
+            elif os.path.exists(transporter):
                 solver_status_text = 'Status: SOLUTION FOUND (heuristic)'
             else:
                 solver_status_text = 'Status: No solver output found'

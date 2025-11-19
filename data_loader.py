@@ -134,7 +134,7 @@ class SimulationDataLoader:
             return self._cache["transporter_schedule"]
         
         if self.source_format == "csv":
-            df = pd.read_csv(self.cpsat_dir / "cp_sat_hoist_schedule.csv")
+            df = pd.read_csv(self.cpsat_dir / "cp_sat_transporter_schedule.csv")
         else:
             df = self._load_from_json("results/transporter_schedule")
         

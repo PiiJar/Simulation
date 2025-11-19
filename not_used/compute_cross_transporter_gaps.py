@@ -23,11 +23,11 @@ BASE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output")
 
 def load_tasks(run_dir: str) -> Tuple[List[Tuple[int,int,int,int,int,int,int,int]], int]:
     cp = os.path.join(BASE, run_dir, "cp_sat")
-    hoist_csv = os.path.join(cp, "cp_sat_hoist_schedule.csv")
+    transporter_csv = os.path.join(cp, "cp_sat_transporter_schedule.csv")
     stations_csv = os.path.join(cp, "cp_sat_stations.csv")
     transp_csv = os.path.join(cp, "cp_sat_transporters.csv")
 
-    df = pd.read_csv(hoist_csv)
+    df = pd.read_csv(transporter_csv)
     st = pd.read_csv(stations_csv)
     tr = pd.read_csv(transp_csv)
 
@@ -84,10 +84,10 @@ def main():
     for label, rd in RUNS.items():
         # Skip runs whose snapshot files are missing to avoid crashing
         cp = os.path.join(BASE, rd, "cp_sat")
-        hoist_csv = os.path.join(cp, "cp_sat_hoist_schedule.csv")
+        transporter_csv = os.path.join(cp, "cp_sat_transporter_schedule.csv")
         stations_csv = os.path.join(cp, "cp_sat_stations.csv")
         transp_csv = os.path.join(cp, "cp_sat_transporters.csv")
-        if not (os.path.exists(hoist_csv) and os.path.exists(stations_csv) and os.path.exists(transp_csv)):
+        if not (os.path.exists(transporter_csv) and os.path.exists(stations_csv) and os.path.exists(transp_csv)):
             print(f"Run {label}: snapshot not found under {cp}, skipping")
             continue
 
