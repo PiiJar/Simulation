@@ -53,6 +53,22 @@ Kaikki tiedostot tallennetaan aikaleimapohjaiseen kansioon, esim. `output/900135
 
 ---
 
+## 🚀 Simulaation ajaminen
+
+Projekti käyttää virtuaaliympäristöä. Aja simulaatio aina näin:
+
+```bash
+# Aktivoi virtuaaliympäristö (jos ei vielä aktivoitu)
+source .venv/bin/activate
+
+# Aja simulaatio
+python main.py
+```
+
+**HUOM:** Älä käytä `python3 main.py` suoraan ilman virtuaaliympäristöä, koska riippuvuudet (pandas, ortools jne.) ovat vain `.venv`-ympäristössä.
+
+---
+
 ## 🧪 Hyvät käytännöt Python-koodissa
 
 Copilotin tulee noudattaa seuraavia käytäntöjä:

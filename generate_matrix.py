@@ -106,7 +106,7 @@ def generate_matrix_pure(output_dir):
         })
         
         # Käy läpi optimoidut käsittelyvaiheet
-        for _, stage_row in prog_df.iterrows():
+        for idx, stage_row in prog_df.iterrows():
             stage = int(stage_row["Stage"])
             transporter_id = int(stage_row["Transporter"])
             station = int(stage_row["Station"])

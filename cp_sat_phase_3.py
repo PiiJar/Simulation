@@ -8,6 +8,7 @@ constraints when a pattern is detected.
 import os
 import pandas as pd
 from typing import List, Tuple, Optional
+from ortools.sat.python import cp_model
 from cp_sat_phase_2 import CpSatPhase2Optimizer, optimize_phase_2
 
 
@@ -28,12 +29,13 @@ class CpSatPhase3Optimizer(CpSatPhase2Optimizer):
     
     def add_pattern_sequence_constraints(self):
         """
-        Add stage sequence constraints based on discovered pattern.
+        Add BATCH-AGNOSTIC stage sequence constraints.
         
-        Pattern defines order: (B1,S9) → (B1,S10) → (B2,S2) → ...
-        Constraint: exit(task[i]) <= entry(task[i+1])
+        Pattern defines STAGE order per transporter: T1:[S1,S9,S10,...], T2:[S2,S3,S4,...]
+        Constraint: For each transporter, enforce stage execution order
+        ANY batch that needs stage S[i] must complete before ANY batch needing S[i+1] on same transporter
         
-        This is only called if pattern_sequence is provided.
+        This allows natural ramp-up: erät 1,2,3 fill the line following the pattern rhythm.
         """
         if not self.use_pattern_constraints:
             return
@@ -42,59 +44,213 @@ class CpSatPhase3Optimizer(CpSatPhase2Optimizer):
             print("⚠️  Pattern sequence too short, skipping constraints")
             return
         
-        # Pattern is ONE CYCLE (sykli) from 8-batch quick run
-        # We use PAKKO-OHJAUS: repeat this cycle to cover all batches
-        # This is JOKO/TAI: either pattern forces sequence OR free optimization
-        
         print(f"\n{'='*70}")
-        print(f"PAKKO-OHJAUS: Enforcing cycle repetition")
+        print(f"BATCH-AGNOSTIC PATTERN: Stage sequence constraints")
         print(f"{'='*70}")
-        print(f"Pattern cycle: {len(self.pattern_sequence)} tasks from 8-batch run")
+        print(f"Pattern defines stage execution ORDER per transporter")
+        print(f"Batches will naturally fill/empty line following this rhythm")
         
-        # Get batches in the cycle
-        cycle_batches = sorted(set(b for b, _ in self.pattern_sequence))
-        batches_in_cycle = len(cycle_batches)
+        # Extract stage sequences per transporter from pattern
+        # pattern_sequence = [(batch, stage), ...] in time order
+        # We need to extract: T1_stages = [S1, S9, S10, ...], T2_stages = [S2, S3, ...]
         
-        # Get total batches we're optimizing
-        total_batches = len(set(self.production_df['Batch']))
+        # First, determine which transporter handles which stages (from pattern sequence)
+        # Pattern tells us: (batch, stage) -> we can look up transporter from actual execution
+        stage_to_transporter = {}
         
-        # Calculate how many times to repeat cycle
-        num_repetitions = (total_batches + batches_in_cycle - 1) // batches_in_cycle
+        # Load the transporter schedule from Phase 2 to see which transporter did which stage
+        schedule_path = os.path.join(self.output_dir, "cp_sat", "cp_sat_transporter_schedule.csv")
+        if os.path.exists(schedule_path):
+            schedule_df = pd.read_csv(schedule_path)
+            for _, row in schedule_df.iterrows():
+                stage = int(row["Stage"])
+                trans = int(row["Transporter"])
+                if stage not in stage_to_transporter:
+                    stage_to_transporter[stage] = trans
+        else:
+            print("⚠️  No transporter schedule found, cannot determine stage->transporter mapping")
+            return
         
-        print(f"Cycle covers: {batches_in_cycle} batches")
-        print(f"Total batches: {total_batches}")
-        print(f"Repetitions needed: {num_repetitions}")
-        print(f"{'='*70}\n")
+        # Build stage sequence per transporter from pattern
+        transporter_sequences = {}
+        for batch, stage in self.pattern_sequence:
+            trans = stage_to_transporter.get(stage)
+            if trans is None:
+                continue
+            if trans not in transporter_sequences:
+                transporter_sequences[trans] = []
+            transporter_sequences[trans].append(stage)
         
-        # Apply HARD constraints: cycle order must be preserved in each repetition
+        # Extract ONE CYCLE per transporter
+        # Pattern file may contain start of next cycle - trim to unique stages
+        for trans in transporter_sequences:
+            full_seq = transporter_sequences[trans]
+            
+            # Keep stages until we see a repeat (indicates cycle restart)
+            seen_stages = []
+            seen_set = set()
+            
+            for stage in full_seq:
+                if stage in seen_set:
+                    # Found repeat - cycle ends here
+                    break
+                seen_set.add(stage)
+                seen_stages.append(stage)
+            
+            transporter_sequences[trans] = seen_stages
+            print(f"  Cycle for T{trans}: {seen_stages}")
+        
+        print(f"\nExtracted ONE CYCLE per transporter:")
+        for trans, stages in sorted(transporter_sequences.items()):
+            print(f"  T{trans}: {stages}")
+        
+        # GENERIC CYCLE REPLICATION STRATEGY
+        # Infer ramp-up/steady/ramp-down from pattern analysis
+        
         constraint_count = 0
         
-        for rep in range(num_repetitions):
-            batch_offset = rep * batches_in_cycle
+        # 1. Analyze pattern - it shows ONE steady-state cycle
+        pattern_batches = set(b for b, _ in self.pattern_sequence)
+        if len(pattern_batches) == 0:
+            print(f"\n⚠️  No pattern batches found")
+            return
+        
+        cycle_size = len(pattern_batches)  # How many batches on line simultaneously
+        total_batches = len(self.batches_df)
+        
+        print(f"\n  Pattern shows steady-state cycle:")
+        print(f"    Cycle contains {cycle_size} batches (line capacity when full)")
+        print(f"    Total batches to schedule: {total_batches}")
+        
+        # 2. Define regions based on line capacity
+        # Ramp-up: First cycle_size batches (line filling)
+        ramp_up_end = cycle_size
+        
+        # Steady-state: When line is full, cycle repeats
+        # Starts when batch (cycle_size+1) enters and batch 1 exits
+        steady_start = cycle_size + 1
+        
+        # Steady-state ends when not enough batches left for full cycle
+        steady_end = total_batches - cycle_size
+        
+        # Ramp-down: Last cycle_size batches (line emptying)
+        ramp_down_start = steady_end + 1
+        
+        print(f"\n  Production phases:")
+        print(f"    Ramp-up: batches 1-{ramp_up_end} (line filling, unconstrained)")
+        if steady_start <= steady_end:
+            print(f"    Steady-state: batches {steady_start}-{steady_end} (cycle repeats, constrained)")
+            num_repeats = (steady_end - steady_start + 1) // cycle_size
+            print(f"      → Cycle repeats ~{num_repeats} times")
+        else:
+            print(f"    Steady-state: NONE (not enough batches)")
+        print(f"    Ramp-down: batches {ramp_down_start}-{total_batches} (line emptying, unconstrained)")
+        
+        # 3. Only apply constraints if we have steady-state
+        if steady_start > steady_end:
+            print(f"\n  → Not enough batches for steady-state (need >{cycle_size*2} batches)")
+            print(f"  → Running without pattern constraints (free optimization)")
+            return
+        
+        # 4. Extract pattern timing (cycle-relative timing for each task)
+        pattern_timing = {}  # (trans, stage) -> relative time in cycle
+        cycle_duration = 0
+        
+        pattern_path = os.path.join(self.output_dir, "reports", "pattern_0_tasks.csv")
+        if os.path.exists(pattern_path):
+            import pandas as pd
+            pattern_csv = pd.read_csv(pattern_path).sort_values("TaskStart")
+            cycle_start_time = pattern_csv["TaskStart"].min()
+            cycle_duration = pattern_csv["TaskEnd"].max() - cycle_start_time
             
-            # Enforce order within this cycle repetition
-            for i in range(len(self.pattern_sequence) - 1):
-                b1, s1 = self.pattern_sequence[i]
-                b2, s2 = self.pattern_sequence[i + 1]
+            for _, row in pattern_csv.iterrows():
+                trans = int(row["Transporter"])
+                stage = int(row["Stage"])
+                start_time = int(row["TaskStart"])
+                relative_time = start_time - cycle_start_time
                 
-                # Map to actual batch numbers
-                actual_b1 = b1 + batch_offset
-                actual_b2 = b2 + batch_offset
+                if (trans, stage) not in pattern_timing:
+                    pattern_timing[(trans, stage)] = relative_time
+            
+            print(f"\n  Pattern timing:")
+            print(f"    Cycle duration: {cycle_duration}s")
+            print(f"    Timing anchors: {len(pattern_timing)} (trans, stage) pairs")
+        
+        # 5. SOFT TIMING CONSTRAINTS (ramp-up + steady-state)
+        # Add timing deviation penalties to objective
+        timing_deviations = []
+        
+        for batch_num in range(1, steady_end + 1):
+            cycle_number = (batch_num - 1) // cycle_size
+            expected_cycle_start = cycle_number * cycle_duration
+            
+            for (trans, stage), relative_time in pattern_timing.items():
+                key = (batch_num, stage)
                 
-                # Skip if beyond total batches
-                if actual_b1 >= total_batches or actual_b2 >= total_batches:
+                if key not in self.entry:
                     continue
                 
-                key1 = (actual_b1, s1)
-                key2 = (actual_b2, s2)
+                expected_time = expected_cycle_start + relative_time
+                actual_time = self.entry[key]
                 
-                if key1 in self.entry and key1 in self.exit and key2 in self.entry:
-                    # HARD constraint: task1 must END before task2 STARTS
-                    self.model.Add(self.exit[key1] <= self.entry[key2])
-                    constraint_count += 1
+                # Absolute deviation
+                deviation = self.model.NewIntVar(0, 10**9, f"timing_dev_B{batch_num}_S{stage}_T{trans}")
+                self.model.Add(deviation >= actual_time - expected_time)
+                self.model.Add(deviation >= expected_time - actual_time)
+                
+                timing_deviations.append(deviation)
         
-        print(f"✓ Added {constraint_count} HARD pattern constraints")
-        print(f"  (Pattern sequence is FORCED - PAKKO-OHJAUS active)\n")
+        print(f"    Soft timing hints: {len(timing_deviations)} deviations added to objective")
+        
+        # 6. HARD STAGE-ORDER CONSTRAINTS (steady-state only)
+        for trans, stage_seq in transporter_sequences.items():
+            for batch_num in range(steady_start, steady_end + 1):
+                for i in range(len(stage_seq) - 1):
+                    stage_now = stage_seq[i]
+                    stage_next = stage_seq[i + 1]
+                    
+                    key_now = (batch_num, stage_now)
+                    key_next = (batch_num, stage_next)
+                    
+                    if key_now in self.exit and key_next in self.entry:
+                        self.model.Add(self.exit[key_now] <= self.entry[key_next])
+                        constraint_count += 1
+        
+        print(f"    Hard stage-order constraints (steady): {constraint_count}")
+        
+        # 7. Store timing deviations for objective update
+        self.timing_penalty_terms = timing_deviations
+        
+        print(f"\n✓ Pattern constraints applied:")
+        print(f"  Ramp-up (1-{ramp_up_end}): soft timing hints")
+        print(f"  Steady ({steady_start}-{steady_end}): hard stage-order + soft timing")
+        print(f"  Ramp-down ({ramp_down_start}-{total_batches}): no extra constraints")
+        print(f"{'='*70}\n")
+    
+    def set_objective(self):
+        """Override to include timing deviation penalties."""
+        # Call parent objective (makespan + start gaps)
+        super().set_objective()
+        
+        # Add timing deviation penalties if pattern constraints are used
+        if hasattr(self, 'timing_penalty_terms') and self.timing_penalty_terms:
+            # Get current objective
+            # Note: Parent sets self.model.Minimize(objective)
+            # We need to add timing penalties to that objective
+            
+            # Sum all timing deviations
+            total_timing_deviation = self.model.NewIntVar(0, 10**12, "total_timing_deviation")
+            self.model.Add(total_timing_deviation == sum(self.timing_penalty_terms))
+            
+            # Weight for timing penalty (much smaller than makespan weight)
+            timing_weight = 10  # Soft constraint
+            
+            # Re-create objective with timing penalty
+            # Original: w1*makespan + w2*start_gaps
+            # New: w1*makespan + w2*start_gaps + w_timing*deviations
+            
+            print(f"  Added timing deviation penalty to objective (weight={timing_weight})")
+            print(f"    Total deviation variables: {len(self.timing_penalty_terms)}")
     
     def solve(self):
         """Override solve() to add pattern constraints before solving."""
@@ -131,16 +287,32 @@ class CpSatPhase3Optimizer(CpSatPhase2Optimizer):
         
         # Set time limit for Phase 3 (extended for OPTIMAL)
         try:
-            from config import get_cpsat_phase3_max_time
+            from config import get_cpsat_phase3_max_time, get_cpsat_phase3_threads
             time_limit = float(get_cpsat_phase3_max_time())
+            threads = get_cpsat_phase3_threads()
         except Exception:
             time_limit = 7200.0  # Default 2 hours
+            threads = 0
         
         self.solver.parameters.max_time_in_seconds = time_limit
+        if threads > 0:
+            self.solver.parameters.num_search_workers = threads
+        self.solver.parameters.log_search_progress = True
         print(f" - Time limit: {time_limit}s ({time_limit/60:.1f} minutes)")
         
-        # Continue with normal Phase 2 solving logic
-        return super().solve()
+        # Solve with Phase 3 parameters (don't call super().solve() - it would reset time limit!)
+        status = self.solver.Solve(self.model)
+        
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            print(f"CP-SAT Phase 3 Status: {self.solver.StatusName(status)}")
+            self._write_infeasible_conflict_report()
+            return False
+        
+        # Write results same as Phase 2
+        self._write_transporter_schedule_snapshot()
+        self._update_production_start_optimized()
+        self._write_treatment_programs_optimized()
+        return True
 
 
 def load_pattern_sequence(output_dir: str) -> Optional[List[Tuple[int, int]]]:

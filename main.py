@@ -49,17 +49,52 @@ def main():
     use_quick_mode = (unique_programs == 1)
     
     if use_quick_mode:
-        logger.log('INFO', f'Single program detected ({unique_programs}) → Quick mode: 8 batches, 300s time limit')
+        logger.log('INFO', f'Single program detected ({unique_programs}) → Quick mode enabled')
+        
+        # Calculate optimal Phase 2 batch count based on program duration and target cycle
+        # Read treatment program to get total duration (processing + transport times)
+        program_file = os.path.join(output_dir, 'initialization', 'treatment_program_001.csv')
+        program_df = pd.read_csv(program_file)
+        
+        # Total program duration = sum of processing times + transport times
+        # Convert MinTime (HH:MM:SS) to seconds
+        program_df['MinTime_sec'] = pd.to_timedelta(program_df['MinTime']).dt.total_seconds()
+        processing_time = program_df['MinTime_sec'].sum()
+        
+        # Transport time estimation: average transport between stations
+        # Assuming ~30s average transport time per stage
+        num_stages = len(program_df)
+        transport_time = num_stages * 30  # seconds
+        
+        program_duration = processing_time + transport_time
+        
+        # Target cycle time: Use customer target or estimate from program
+        # For now, use reasonable estimate: program_duration / 5
+        target_cycle_time = max(600, program_duration / 5)  # Min 10 minutes
+        
+        # Calculate batches needed for pattern detection
+        import math
+        batches_on_line = math.ceil(program_duration / target_cycle_time)
+        steady_cycles = 4  # Need 4 cycles to detect pattern reliably
+        phase2_batches = batches_on_line + steady_cycles
+        
+        # Cap at reasonable maximum
+        phase2_batches = min(phase2_batches, 20)
+        
+        logger.log('INFO', f'Program duration: {program_duration}s ({program_duration/60:.1f} min)')
+        logger.log('INFO', f'Estimated target cycle: {target_cycle_time}s ({target_cycle_time/60:.1f} min)')
+        logger.log('INFO', f'Batches on line when full: {batches_on_line}')
+        logger.log('INFO', f'Phase 2 batches: {phase2_batches} (ramp-up: {batches_on_line}, steady: {steady_cycles})')
         
         # Varmuuskopioi alkuperäinen production.csv
         production_org = os.path.join(output_dir, 'initialization', 'production_org.csv')
         prod_df.to_csv(production_org, index=False)
         logger.log('INFO', f'Backup saved: production_org.csv ({len(prod_df)} batches)')
         
-        # Luo rajoitettu production.csv (8 erää)
-        quick_prod_df = prod_df.head(8).copy()
+        # Phase 2: Luo rajoitettu production.csv
+        quick_prod_df = prod_df.head(phase2_batches).copy()
         quick_prod_df.to_csv(production_csv, index=False)
-        logger.log('INFO', f'Created limited production.csv: 8 batches for quick CP-SAT')
+        logger.log('INFO', f'Created limited production.csv for Phase 2: {len(quick_prod_df)} batches')
     else:
         logger.log('INFO', f'Multiple programs detected ({unique_programs}) → Normal mode')
     
@@ -193,6 +228,8 @@ def main():
     except Exception as e:
         error_msg = f'Result collection failed: {str(e)}'
         logger.log('ERROR', error_msg)
+        import traceback
+        traceback.print_exc()
         return
 
     # Visualization and reporting

@@ -1040,6 +1040,7 @@ class CpSatPhase2Optimizer:
             rows.append({
                 "Transporter": int(t_id),
                 "Batch": int(b),
+                "Stage": int(s),
                 "From_Station": int(from_station),
                 "To_Station": int(to_station),
                 "TaskStart": start_val,

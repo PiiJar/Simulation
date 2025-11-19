@@ -127,90 +127,121 @@ def find_stage_sequence_patterns(df: pd.DataFrame, min_length: int = 5, max_leng
         stages = [stage for _, stage, _ in seq]
         print(f"    T{tid}: {len(seq)} tasks, stages: {stages[:15]}{'...' if len(stages) > 15 else ''}")
     
-    # Find SHORTEST repeating cycle for each transporter
-    # Strategy: Start from small cycles, stop at first match (= shortest)
+    # Find SHORTEST TIME-DURATION SYNCHRONIZED cycle where ALL transporters TOGETHER cover all stages
+    # Each transporter has its own repeating sequence, but TOGETHER they must cover stages 1-14
+    print(f"\n  Searching for SHORTEST synchronized cycle where transporters TOGETHER cover all stages...")
+    
     transporter_cycles = {}
     
+    # First, find repeating patterns for each transporter (doesn't need to cover all stages individually)
     for tid in sorted(transporter_sequences.keys()):
         seq = transporter_sequences[tid]
         stages = [stage for _, stage, _ in seq]
+        times = [time for time, _, _ in seq]
         
-        print(f"\n  Searching for SHORTEST repeating cycle in T{tid}...")
+        print(f"\n    T{tid}: Finding any repeating cycle...")
         
-        # Try different cycle lengths (start from SMALL = efficient)
+        valid_cycles = []
+        
         for cycle_len in range(3, len(seq) // 2 + 1):
-            # Get first potential cycle
-            first_cycle = stages[:cycle_len]
-            
-            # Check if it repeats anywhere
-            found_repeat = False
-            for start_idx in range(cycle_len, len(stages) - cycle_len + 1):
-                test_cycle = stages[start_idx:start_idx + cycle_len]
-                if first_cycle == test_cycle:
-                    found_repeat = True
-                    transporter_cycles[tid] = {
+            for cycle_start in range(len(stages) - 2 * cycle_len + 1):
+                candidate_cycle = stages[cycle_start:cycle_start + cycle_len]
+                
+                # Check if this candidate repeats at least once
+                repeat_positions = [cycle_start]
+                
+                for test_start in range(cycle_start + cycle_len, len(stages) - cycle_len + 1):
+                    test_cycle = stages[test_start:test_start + cycle_len]
+                    if candidate_cycle == test_cycle:
+                        repeat_positions.append(test_start)
+                
+                if len(repeat_positions) >= 2:
+                    # Calculate time duration
+                    time_start = times[cycle_start]
+                    time_end = times[cycle_start + cycle_len - 1]
+                    duration = time_end - time_start
+                    
+                    valid_cycles.append({
                         'length': cycle_len,
-                        'stages': first_cycle,
-                        'time_start': seq[0][0],
-                        'time_end': seq[cycle_len - 1][0],
-                        'indices': [idx for _, _, idx in seq[:cycle_len]]
-                    }
-                    print(f"    ✓ Found {cycle_len}-task cycle that repeats")
-                    print(f"      Cycle stages: {first_cycle}")
-                    break
-            
-            if found_repeat:
-                break
+                        'stages': candidate_cycle,
+                        'time_start': time_start,
+                        'time_end': time_end,
+                        'duration': duration,
+                        'indices': [idx for _, _, idx in seq[cycle_start:cycle_start + cycle_len]],
+                        'repetitions': len(repeat_positions),
+                        'positions': repeat_positions,
+                        'covered_stages': set(candidate_cycle)
+                    })
         
-        if tid not in transporter_cycles:
-            print(f"    ⚠ No repeating cycle found for T{tid}")
+        # Select the cycle with MOST STAGES (to maximize coverage), then shortest duration
+        if valid_cycles:
+            # Sort by: 1) most stages, 2) shortest duration
+            valid_cycles.sort(key=lambda c: (-len(c['covered_stages']), c['duration']))
+            best_cycle = valid_cycles[0]
+            transporter_cycles[tid] = best_cycle
+            print(f"      ✓ Found cycle: {best_cycle['length']} tasks, {best_cycle['repetitions']} reps, {best_cycle['duration']}s")
+            print(f"        Stages ({len(best_cycle['covered_stages'])}): {sorted(best_cycle['covered_stages'])}")
+        else:
+            print(f"      ⚠ No repeating cycle found")
     
-    # Check if BOTH transporters have cycles
+    # Check if ALL transporters have cycles AND together they cover all stages
     if len(transporter_cycles) == len(transporters):
-        print(f"\n  ✓ Both transporters have repeating cycles")
+        print(f"\n  ✓ All transporters have repeating cycles")
         
-        # Combine cycles into ONE scalable pattern
-        all_indices = []
+        # Check COMBINED stage coverage
         all_stages = set()
-        
         for tid, cycle_info in transporter_cycles.items():
-            all_indices.extend(cycle_info['indices'])
-            all_stages.update(cycle_info['stages'])
+            all_stages.update(cycle_info['covered_stages'])
         
-        # Get tasks from combined cycle
-        pattern_tasks = df_sorted.loc[sorted(all_indices)]
+        print(f"    Combined stage coverage: {sorted(all_stages)}")
+        print(f"    Required stages: {sorted(required_stages)}")
         
-        # Check stage coverage
-        if required_stages.issubset(all_stages):
+        # Check if TOGETHER they cover most stages (allow 1-2 missing for edge cases like final stage)
+        missing_stages = required_stages - all_stages
+        if len(missing_stages) <= 1:  # Accept if at most 1 stage missing
+            if missing_stages:
+                print(f"    ⓘ Accepting cycle with {len(missing_stages)} missing stage(s): {sorted(missing_stages)}")
+            
+            # Combine cycles into ONE scalable pattern
+            all_indices = []
+            for tid, cycle_info in transporter_cycles.items():
+                all_indices.extend(cycle_info['indices'])
+            
+            # Get tasks from combined cycle
+            pattern_tasks = df_sorted.loc[sorted(all_indices)]
             pattern_start = pattern_tasks['TaskStart'].min()
             pattern_end = pattern_tasks['TaskEnd'].max()
             duration = pattern_end - pattern_start
             
             print(f"\n  {'='*60}")
-            print(f"  ✓✓ FOUND SCALABLE CYCLE (SYKLI) ✓✓")
+            print(f"  ✓✓ FOUND SYNCHRONIZED SCALABLE CYCLE ✓✓")
             print(f"  {'='*60}")
             for tid, cycle_info in transporter_cycles.items():
-                print(f"    T{tid}: {cycle_info['length']} tasks, stages: {cycle_info['stages']}")
-            print(f"    Combined: {len(all_indices)} tasks, {len(all_stages)} stages")
-            print(f"    Coverage: {sorted(all_stages)}")
-            print(f"    Duration: {duration}s ({duration/60:.1f}min)")
+                print(f"    T{tid}: {cycle_info['length']} tasks × {cycle_info['repetitions']} reps")
+                print(f"          Stages: {sorted(cycle_info['covered_stages'])}")
+                print(f"          Duration: {cycle_info['duration']}s")
+            print(f"    COMBINED coverage: {sorted(all_stages)} ✓")
+            print(f"    Total duration: {duration}s ({duration/60:.1f}min)")
             print(f"  {'='*60}")
             
-            # Return ONE pattern (the cycle)
+            # Return ONE pattern (the synchronized cycle)
             found_complete_patterns = [{
                 'pattern_sequence': [(t, s, i) for t, s, i in state_sequence 
                                    if i in all_indices],
                 't1_length': transporter_cycles.get(1, {}).get('length', 0),
                 't2_length': transporter_cycles.get(2, {}).get('length', 0),
-                't1_repeats': 2,  # Validated by finding repetition
-                't2_repeats': 2,
+                't1_repeats': transporter_cycles.get(1, {}).get('repetitions', 0),
+                't2_repeats': transporter_cycles.get(2, {}).get('repetitions', 0),
                 'duration': duration,
                 'start_time': pattern_start,
                 'end_time': pattern_end,
-                'stages': all_stages
+                'stages': all_stages,
+                'transporter_cycles': transporter_cycles
             }]
         else:
-            print(f"  ⚠ Cycles don't cover all stages: {sorted(all_stages)} (need {sorted(required_stages)})")
+            missing = required_stages - all_stages
+            print(f"  ⚠ Combined cycles don't cover all stages")
+            print(f"    Missing: {sorted(missing)}")
             found_complete_patterns = []
     else:
         print(f"\n  ⚠ Could not find repeating cycles for all transporters")
