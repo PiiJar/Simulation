@@ -275,6 +275,42 @@ def get_cpsat_phase2_decompose_guard_sec():
         return 600
 
 # ============================================================================
+# CP-SAT PHASE 3 KONFIGURAATIOT
+# ============================================================================
+
+def get_cpsat_phase3_max_time():
+    """Phase 3 maksimiaika sekunteina
+    
+    Phase 3 on laajennettu optimointi joka pyrkii OPTIMAL-ratkaisuun.
+    Käytetään vain quick mode -tilassa (yksi ohjelma).
+    
+    Jos pattern löytyy: Optimoi täydellä production.csv:llä pattern-rajoitteilla
+    Jos ei löydy: Optimoi ilman pattern-rajoitteita
+    
+    Oletus: 7200 sekuntia (2 tuntia)
+    Vaikutus: Pitkä aika antaa CP-SAT:lle mahdollisuuden löytää todella hyvä
+              tai optimaalinen ratkaisu isommallekin ongelmainstanssille.
+    Suositus: 7200s (2h) normaalisti, 14400s (4h) jos etsitään parasta mahdollista
+    """
+    try:
+        return int(os.environ.get("CPSAT_PHASE3_MAX_TIME", "7200"))  # oletus 2 tuntia
+    except:
+        return 7200
+
+def get_cpsat_phase3_threads():
+    """Phase 3 säikeiden määrä (0 = automaattinen)
+    
+    Määrittää rinnakkaisuuden tason Phase 3:ssa.
+    
+    Oletus: 0 (automaattinen, käyttää kaikkia CPU-ytimiä)
+    Suositus: Jätä 0:ksi optimaalista suorituskykyä varten.
+    """
+    try:
+        return int(os.getenv("CPSAT_PHASE3_THREADS", "0") or "0")
+    except:
+        return 0
+
+# ============================================================================
 # YLEISET CP-SAT KONFIGURAATIOT
 # ============================================================================
 

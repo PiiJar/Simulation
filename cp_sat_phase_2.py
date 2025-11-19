@@ -6,7 +6,7 @@ Vaatimusdokumentin REKQUIREMENTS_FOR_CPSAT_2 mukainen toteutusrunko:
 - Päätökset: Transporterin tehtäväjärjestys, Stage 0 -odotus, CalcTime ∈ [MinTime, MaxTime]
 - Rajoitteet: ei päällekkäisiä tehtäviä per transporter (deadhead huomioiden), aseman vaihto (change_time), Stage 1 -järjestys identtisille erille
 - Tavoite: Leksikografinen (approx.): makespan → CalcTime venytys; deadhead huomioitu rajoitteena (voi lisätä 2. prioriteetiksi myöhemmin)
-- Tulosteet: cp_sat_hoist_schedule.csv, (infeasible: cp_sat_hoist_conflicts.csv), production.csv Start_optimized, cp_sat/treatment_program_optimized/* CalcTime
+- Tulosteet: cp_sat_transporter_schedule.csv, (infeasible: cp_sat_transporter_conflicts.csv), production.csv Start_optimized, cp_sat/treatment_program_optimized/* CalcTime
 """
 
 import os
@@ -918,13 +918,14 @@ class CpSatPhase2Optimizer:
 
         # Aikaraja: luetaan config.py:stä (ympäristömuuttuja tai oletus)
         try:
-            from config import get_cp_sat_phase2_max_time
-            _time_limit = float(get_cp_sat_phase2_max_time())
+            from config import get_cpsat_phase2_max_time, get_cpsat_phase2_threads
+            _time_limit = float(get_cpsat_phase2_max_time())
+            _threads = get_cpsat_phase2_threads()
         except Exception:
             _time_limit = 300.0
+            _threads = 0
         self.solver.parameters.max_time_in_seconds = _time_limit
         # Valinnainen: säikeiden määrä ja hakulokin tulostus
-        _threads = get_cpsat_phase2_threads()
         if _threads > 0:
             self.solver.parameters.num_search_workers = _threads
             print(f" - Säikeet: {_threads}")
@@ -978,7 +979,7 @@ class CpSatPhase2Optimizer:
             # Kirjoita konfliktiraportti ja keskeytä
             cp_dir = os.path.join(self.output_dir, "cp_sat")
             _ensure_dirs(cp_dir)
-            path = os.path.join(cp_dir, "cp_sat_hoist_conflicts.csv")
+            path = os.path.join(cp_dir, "cp_sat_transporter_conflicts.csv")
             vdf = pd.DataFrame(violations)
             vdf.to_csv(path, index=False)
             print(f"Tallennettu konfliktiraportti: {path}")
@@ -1017,7 +1018,7 @@ class CpSatPhase2Optimizer:
     def _write_conflicts(self):
         cp_dir = os.path.join(self.output_dir, "cp_sat")
         _ensure_dirs(cp_dir)
-        path = os.path.join(cp_dir, "cp_sat_hoist_conflicts.csv")
+        path = os.path.join(cp_dir, "cp_sat_transporter_conflicts.csv")
         df = pd.DataFrame([
             {"Message": "CP-SAT Phase 2 infeasible", "Hint": "Tarkista aseman vaihtoajat (change_time), deadhead-matriisi ja sidotut asemat/nostimet."}
         ])
@@ -1047,7 +1048,7 @@ class CpSatPhase2Optimizer:
                 "EntryTime_2(To)": entry_to,
             })
         df = pd.DataFrame(rows)
-        out = os.path.join(cp_dir, "cp_sat_hoist_schedule.csv")
+        out = os.path.join(cp_dir, "cp_sat_transporter_schedule.csv")
         # Dekompositiossa voidaan appendata turvallisesti
         from config import get_cpsat_phase2_decompose_append
         do_append = get_cpsat_phase2_decompose_append()
@@ -1221,7 +1222,7 @@ def optimize_phase_2(output_dir: str):
     # Tyhjennä aiemmat snapshotit yhdistelyä varten
     cp_dir = os.path.join(output_dir, "cp_sat")
     os.makedirs(cp_dir, exist_ok=True)
-    for f in ("cp_sat_hoist_schedule.csv", "cp_sat_station_schedule.csv"):
+    for f in ("cp_sat_transporter_schedule.csv", "cp_sat_station_schedule.csv"):
         p = os.path.join(cp_dir, f)
         if os.path.exists(p):
             try:
