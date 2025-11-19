@@ -4,33 +4,52 @@ Tämä tiedosto antaa Copilotille lisätietoa projektin rakenteesta, käytännö
 
 ---
 
-## 🔧 Projektin rakenne ja ajoputki
+## 🔧 Projektin rakenne ja simulaatioputki
 
-Tämä projekti on tuotantolinjan simulointiputki, joka koostuu seuraavista vaiheista:
+Tämä projekti on tuotantolinjan simulaatio- ja optimointiputki, joka käyttää CP-SAT-ratkaisijaa. Päälogiikka on `main.py`-tiedostossa.
 
-1. `generate_matrix.py`  
-   → Luo alkuperäisen line-matriisin (Station–Stage)
+### Päävaiheet:
 
-2. `generate_transporter_tasks.py`  
-   → Luo transporter-tehtävät
+1. **Alustus (Initialization)**
+   - Luo simulaatiokansio aikaleimalla
+   - Generoi `goals.json` ja `production.csv`
+   - Luo kaikki eräkohtaiset käsittelyohjelmat
+   - Quick mode -tarkistus: Jos yksi ohjelma → rajoita 8 erään
 
-3. `resolve_station_conflicts.py`  
-   → Korjaa asema- ja ajoitusristiriidat
+2. **Esikäsittely (Preprocessing)**
+   - Valmistele data CP-SAT-optimointia varten (`preprocess_for_cpsat()`)
 
-4. `stretch_transporter_tasks.py`  
-   → Venyttää tehtäviä siirtovälin mukaan  
-   → Huomioi myös saman erän myöhemmät vaiheet
+3. **CP-SAT Phase 1: Asemaoptimointi**
+   - Optimoi nostimen valinta jokaiselle erälle ja vaiheelle
+   - Luo alustava aikataulu ilman tarkkoja ajoituksia
 
-5. `update_programs.py`  
-   → Päivittää ohjelmien `CalcTime`-kentät
+4. **CP-SAT Phase 2: Transporter + Aikataulu**
+   - Optimoi tarkat aloitus- ja lopetusajat
+   - Huomioi nostinten fysiikka ja rajoitteet
+   - Quick modessa lyhyempi aikaraja (300s)
 
-6. `generate_matrix_updated.py`  
-   → Luo uusi line-matriisi venytettyjen tehtävien mukaan
+5. **Pattern Mining (vain quick mode)**
+   - Etsi syklisiä tuotantokuvioita Phase 2:n ratkaisusta
+   - Palauta täysi production.csv Phase 3:a varten
 
-7. `visualize_comparison.py`  
-   → Piirtää visuaalisen vertailun ennen–jälkeen
+6. **CP-SAT Phase 3: Laajennettu optimointi (vain quick mode)**
+   - Käytä täyttä production.csv:ää
+   - Jos pattern löytyi → käytä pattern-rajoitteita
+   - Tavoite: OPTIMAL-ratkaisu (aikaraja 7200s)
 
-Kaikki tiedostot tallennetaan aikaleimapohjaiseen kansioon, esim. `output/2025-06-19_14-12/`.
+7. **Tulosten keruu (Results)**
+   - Luo matriisit, nostintehtävät, yksityiskohtaiset liikkeet
+   - Korjaa raporttidataa
+
+8. **Raportointi ja Visualisointi**
+   - Visualisoi matriisit ja luo kaaviot
+   - Generoi lopullinen simulaatioraportti
+
+### Kaksi ajotilaa:
+- **Normal mode**: Vaiheet 1-4, 7-8 (useita ohjelmia)
+- **Quick mode**: Kaikki vaiheet 1-8 (yksi ohjelma, pattern mining)
+
+Kaikki tiedostot tallennetaan aikaleimapohjaiseen kansioon, esim. `output/900135_-_Factory_X_Nammo_Zinc_Phosphating_2025-11-19_14-12/`.
 
 ---
 
@@ -45,20 +64,19 @@ Copilotin tulee noudattaa seuraavia käytäntöjä:
 - Tulosta selkeät CLI-viestit jokaisesta vaiheesta
 - Käytä `pd.to_csv()` ja `pd.to_html()` tallennukseen
 - Käytä `pd.to_timedelta(...).dt.total_seconds()` kun käsittelet aikakenttiä
-- Käytä `from config import get_shift_gap` ja `get_shift_gap()` siirtovälin hakemiseen
-- Venytyksessä huomioi:
-  - edellisen tehtävän päättymisaika
-  - saman erän myöhempien vaiheiden siirto samalla määrällä
+- Käytä `config.py`-tiedostosta löytyviä konfiguraatiofunktioita (esim. `get_cpsat_phase2_max_time()`)
+- **Käytä aina termiä "transporter" nostimista** – älä käytä "hoist"-termiä
 
 ---
 
 ## 🧩 Erityispiirteet
 
-- Tehtävien järjestys on tärkeä — älä järjestä `df.sort_values()` ellei erikseen pyydetä
-- `stretch_transporter_tasks.py` toimii kumulatiivisesti: jokainen siirto vaikuttaa seuraaviin
 - `main.py` ajaa koko putken yhdellä komennolla
-- Kaikki CSV-tiedostot tallennetaan snapshot-kansioon
-- **Testien ajaksi:** `test_main.py` ajaa koko testiputken läpi (test_stepx)
+- Jokainen vaihe kirjaa etenemisen lokiin (`simulation_logger`)
+- Kaikki CSV-tiedostot ja raportit tallennetaan aikaleimapohjaiseen kansioon
+- CP-SAT-optimoinnin parametrit ovat säädettävissä `config.py`-tiedostossa
+- Pattern mining toimii vain quick modessa (yksi ohjelma)
+- Virhetilanteessa putki keskeytyy ja virhe raportoidaan selkeästi
 
 ---
 
