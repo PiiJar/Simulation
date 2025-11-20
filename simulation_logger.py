@@ -83,11 +83,10 @@ class SimulationLogger:
 # Global logger instance (will be initialized in main.py)
 logger = None
 
-def init_logger(output_dir):
+def initialize_logger(output_dir):
     """Initialize the global logger instance"""
     global logger
     logger = SimulationLogger(output_dir)
-    # Poistettu ylimääräinen viesti
     return logger
 
 def get_logger():
