@@ -20,14 +20,18 @@ class CyclicPattern:
     duration: int
     transporter_states: Dict[int, str]  # transporter_id -> station at end
     tasks_in_cycle: pd.DataFrame
-    batches_completed: int
-    throughput: float  # batches per hour
+    batches_completed: int  # For reference only, not accurate throughput measure
 
 
 def load_transporter_schedule(output_dir: str) -> pd.DataFrame:
     """Load the CP-SAT transporter schedule from the output directory."""
-    # Phase 2 saves as cp_sat_transporter_schedule.csv
-    schedule_path = os.path.join(output_dir, "cp_sat", "cp_sat_transporter_schedule.csv")
+    # Try Phase 1+2 directory first (quick mode), then fallback to cp_sat (normal mode)
+    for subdir in ["cp_sat_phase_1_2", "cp_sat"]:
+        schedule_path = os.path.join(output_dir, subdir, "cp_sat_transporter_schedule.csv")
+        if os.path.exists(schedule_path):
+            break
+    else:
+        schedule_path = os.path.join(output_dir, "cp_sat", "cp_sat_transporter_schedule.csv")
     
     if not os.path.exists(schedule_path):
         raise FileNotFoundError(f"Transporter schedule not found: {schedule_path}")
@@ -36,8 +40,9 @@ def load_transporter_schedule(output_dir: str) -> pd.DataFrame:
     
     # Add Stage column if missing (derive from batch_schedule)
     if 'Stage' not in df.columns:
-        # Load batch schedule to get Stage info
-        batch_schedule_path = os.path.join(output_dir, "cp_sat", "cp_sat_station_schedule.csv")
+        # Load batch schedule to get Stage info - use same subdir as schedule
+        subdir = os.path.dirname(schedule_path).split(os.sep)[-1]
+        batch_schedule_path = os.path.join(output_dir, subdir, "cp_sat_station_schedule.csv")
         if os.path.exists(batch_schedule_path):
             batch_sched = pd.read_csv(batch_schedule_path)
             # Merge Stage info based on Batch and Station (To_Station)
@@ -107,160 +112,124 @@ def find_stage_sequence_patterns(df: pd.DataFrame, min_length: int = 5, max_leng
     required_stages = set(range(1, 15))  # S1-S14
     print(f"  Required stages: {sorted(required_stages)}")
     
-    # Strategy: Find ONE repeating CYCLE (sykli) that both transporters execute
-    # Goal: Repeating pattern that can be scaled from 8 batches to 28 batches
-    # This is JOKO/TAI: either we find a scalable cycle OR we use free optimization
-    print(f"\n  Strategy: Finding ONE scalable cycle (sykli)...")
+    # Strategy: Find repeating stage sequence in TIME ORDER (not per-transporter)
+    # Pattern is: stages 1-14 each appear once, then this sequence repeats
+    print(f"\n  Strategy: Finding repeating stage sequence in chronological order...")
     
-    # Build per-transporter stage sequences with timing
-    transporter_sequences = {}
-    for time, state_tuple, idx in state_sequence:
-        for trans_id, stage in state_tuple:
-            if trans_id not in transporter_sequences:
-                transporter_sequences[trans_id] = []
-            transporter_sequences[trans_id].append((time, stage, idx))
+    # Build chronological stage sequence from ALL transporters
+    df_sorted_time = df_sorted.sort_values('TaskStart')
+    time_ordered_stages = df_sorted_time['Stage'].astype(int).tolist()
+    time_ordered_indices = df_sorted_time.index.tolist()
     
-    # Print transporter sequences
-    print(f"  Per-transporter sequences:")
-    for tid in sorted(transporter_sequences.keys()):
-        seq = transporter_sequences[tid]
-        stages = [stage for _, stage, _ in seq]
-        print(f"    T{tid}: {len(seq)} tasks, stages: {stages[:15]}{'...' if len(stages) > 15 else ''}")
+    print(f"  Chronological stage sequence ({len(time_ordered_stages)} tasks):")
+    print(f"    First 30: {time_ordered_stages[:30]}")
     
-    # Find SHORTEST TIME-DURATION SYNCHRONIZED cycle where ALL transporters TOGETHER cover all stages
-    # Each transporter has its own repeating sequence, but TOGETHER they must cover stages 1-14
-    print(f"\n  Searching for SHORTEST synchronized cycle where transporters TOGETHER cover all stages...")
+    # Find repeating pattern: sequence of stages 1-14 (each once) that repeats
+    print(f"\n  Searching for repeating pattern containing each stage 1-14 exactly once...")
     
-    transporter_cycles = {}
+    best_pattern = None
     
-    # First, find repeating patterns for each transporter (doesn't need to cover all stages individually)
-    for tid in sorted(transporter_sequences.keys()):
-        seq = transporter_sequences[tid]
-        stages = [stage for _, stage, _ in seq]
-        times = [time for time, _, _ in seq]
-        
-        print(f"\n    T{tid}: Finding any repeating cycle...")
-        
-        valid_cycles = []
-        
-        for cycle_len in range(3, len(seq) // 2 + 1):
-            for cycle_start in range(len(stages) - 2 * cycle_len + 1):
-                candidate_cycle = stages[cycle_start:cycle_start + cycle_len]
+    # Try different pattern lengths (should be around 14 stages)
+    for pattern_len in range(len(required_stages), len(time_ordered_stages) // 2 + 1):
+        # Try different starting positions
+        for start_pos in range(len(time_ordered_stages) - pattern_len * 2 + 1):
+            # Extract candidate pattern
+            candidate_stages = time_ordered_stages[start_pos:start_pos + pattern_len]
+            candidate_indices = time_ordered_indices[start_pos:start_pos + pattern_len]
+            
+            # Check: does this pattern contain all required stages exactly once?
+            if set(candidate_stages) != required_stages:
+                continue
+            if len(candidate_stages) != len(set(candidate_stages)):
+                continue  # Has duplicates
+            
+            # Check: does this pattern repeat at least once?
+            found_repetition = False
+            for next_start in range(start_pos + pattern_len, len(time_ordered_stages) - pattern_len + 1):
+                next_stages = time_ordered_stages[next_start:next_start + pattern_len]
+                if next_stages == candidate_stages:
+                    found_repetition = True
+                    break
+            
+            if found_repetition:
+                # Found valid repeating pattern!
+                tasks = df_sorted.loc[candidate_indices]
+                time_start = tasks['TaskStart'].min()
+                time_end = tasks['TaskEnd'].max()
                 
-                # Check if this candidate repeats at least once
-                repeat_positions = [cycle_start]
-                
-                for test_start in range(cycle_start + cycle_len, len(stages) - cycle_len + 1):
-                    test_cycle = stages[test_start:test_start + cycle_len]
-                    if candidate_cycle == test_cycle:
-                        repeat_positions.append(test_start)
-                
-                if len(repeat_positions) >= 2:
-                    # Calculate time duration
-                    time_start = times[cycle_start]
-                    time_end = times[cycle_start + cycle_len - 1]
-                    duration = time_end - time_start
-                    
-                    valid_cycles.append({
-                        'length': cycle_len,
-                        'stages': candidate_cycle,
-                        'time_start': time_start,
-                        'time_end': time_end,
-                        'duration': duration,
-                        'indices': [idx for _, _, idx in seq[cycle_start:cycle_start + cycle_len]],
-                        'repetitions': len(repeat_positions),
-                        'positions': repeat_positions,
-                        'covered_stages': set(candidate_cycle)
-                    })
+                best_pattern = {
+                    'length': pattern_len,
+                    'stages': candidate_stages,
+                    'time_start': time_start,
+                    'time_end': time_end,
+                    'duration': time_end - time_start,
+                    'indices': candidate_indices,
+                    'covered_stages': set(candidate_stages)
+                }
+                print(f"  ✓ Found repeating pattern!")
+                print(f"    Length: {pattern_len} tasks")
+                print(f"    Duration: {time_end - time_start}s")
+                print(f"    Stage sequence: {candidate_stages}")
+                break
         
-        # Select the cycle with MOST STAGES (to maximize coverage), then shortest duration
-        if valid_cycles:
-            # Sort by: 1) most stages, 2) shortest duration
-            valid_cycles.sort(key=lambda c: (-len(c['covered_stages']), c['duration']))
-            best_cycle = valid_cycles[0]
-            transporter_cycles[tid] = best_cycle
-            print(f"      ✓ Found cycle: {best_cycle['length']} tasks, {best_cycle['repetitions']} reps, {best_cycle['duration']}s")
-            print(f"        Stages ({len(best_cycle['covered_stages'])}): {sorted(best_cycle['covered_stages'])}")
-        else:
-            print(f"      ⚠ No repeating cycle found")
+        if best_pattern:
+            break
     
-    # Check if ALL transporters have cycles AND together they cover all stages
-    if len(transporter_cycles) == len(transporters):
-        print(f"\n  ✓ All transporters have repeating cycles")
+    # Check if we found a valid pattern
+    if best_pattern and best_pattern['covered_stages'] == required_stages:
+        print(f"    ✓ Pattern covers ALL required stages")
         
-        # Check COMBINED stage coverage
-        all_stages = set()
-        for tid, cycle_info in transporter_cycles.items():
-            all_stages.update(cycle_info['covered_stages'])
+        # Show detailed sequence
+        pattern_indices = best_pattern['indices']
+        pattern_start = best_pattern['time_start']
+        pattern_end = best_pattern['time_end']
+        duration = best_pattern['duration']
         
-        print(f"    Combined stage coverage: {sorted(all_stages)}")
-        print(f"    Required stages: {sorted(required_stages)}")
+        print(f"\n  {'='*60}")
+        print(f"  ✓✓ FOUND REPEATING PATTERN ✓✓")
+        print(f"  {'='*60}")
+        print(f"    Pattern length: {best_pattern['length']} tasks")
+        print(f"    Duration: {duration}s ({duration/60:.1f}min)")
+        print(f"    Stages: {sorted(best_pattern['covered_stages'])} ✓")
+        print(f"\n    Detailed sequence:")
+        # Show actual sequence of tasks
+        pattern_df = df_sorted.loc[pattern_indices].sort_values('TaskStart')
+        for idx, row in pattern_df.iterrows():
+            print(f"      T{row['Transporter']} B{row['Batch']:02d} S{int(row['Stage']):02d} "
+                  f"{row['TaskStart']:5d}s → {row['TaskEnd']:5d}s "
+                  f"({row['TaskEnd']-row['TaskStart']:3d}s)")
+        print(f"  {'='*60}")
         
-        # Check if TOGETHER they cover most stages (allow 1-2 missing for edge cases like final stage)
-        missing_stages = required_stages - all_stages
-        if len(missing_stages) <= 1:  # Accept if at most 1 stage missing
-            if missing_stages:
-                print(f"    ⓘ Accepting cycle with {len(missing_stages)} missing stage(s): {sorted(missing_stages)}")
-            
-            # Combine cycles into ONE scalable pattern
-            all_indices = []
-            for tid, cycle_info in transporter_cycles.items():
-                all_indices.extend(cycle_info['indices'])
-            
-            # Get tasks from combined cycle
-            pattern_tasks = df_sorted.loc[sorted(all_indices)]
-            pattern_start = pattern_tasks['TaskStart'].min()
-            pattern_end = pattern_tasks['TaskEnd'].max()
-            duration = pattern_end - pattern_start
-            
-            print(f"\n  {'='*60}")
-            print(f"  ✓✓ FOUND SYNCHRONIZED SCALABLE CYCLE ✓✓")
-            print(f"  {'='*60}")
-            for tid, cycle_info in transporter_cycles.items():
-                print(f"    T{tid}: {cycle_info['length']} tasks × {cycle_info['repetitions']} reps")
-                print(f"          Stages: {sorted(cycle_info['covered_stages'])}")
-                print(f"          Duration: {cycle_info['duration']}s")
-            print(f"    COMBINED coverage: {sorted(all_stages)} ✓")
-            print(f"    Total duration: {duration}s ({duration/60:.1f}min)")
-            print(f"  {'='*60}")
-            
-            # Return ONE pattern (the synchronized cycle)
-            found_complete_patterns = [{
-                'pattern_sequence': [(t, s, i) for t, s, i in state_sequence 
-                                   if i in all_indices],
-                't1_length': transporter_cycles.get(1, {}).get('length', 0),
-                't2_length': transporter_cycles.get(2, {}).get('length', 0),
-                't1_repeats': transporter_cycles.get(1, {}).get('repetitions', 0),
-                't2_repeats': transporter_cycles.get(2, {}).get('repetitions', 0),
-                'duration': duration,
-                'start_time': pattern_start,
-                'end_time': pattern_end,
-                'stages': all_stages,
-                'transporter_cycles': transporter_cycles
-            }]
-        else:
-            missing = required_stages - all_stages
-            print(f"  ⚠ Combined cycles don't cover all stages")
-            print(f"    Missing: {sorted(missing)}")
-            found_complete_patterns = []
+        # Return ONE pattern
+        found_complete_patterns = [{
+            'pattern_sequence': [(t, s, i) for t, s, i in state_sequence 
+                               if i in pattern_indices],
+            'task_indices': pattern_indices,
+            't1_length': len([i for i in pattern_indices if df_sorted.loc[i, 'Transporter'] == 1]),
+            't2_length': len([i for i in pattern_indices if df_sorted.loc[i, 'Transporter'] == 2]),
+            'duration': duration,
+            'start_time': pattern_start,
+            'end_time': pattern_end,
+            'stages': best_pattern['covered_stages']
+        }]
     else:
-        print(f"\n  ⚠ Could not find repeating cycles for all transporters")
+        print(f"\n  ⚠ Could not find repeating pattern")
         found_complete_patterns = []
     
     # JOKO/TAI: Either we found a scalable cycle OR no pattern
-    if len(found_complete_patterns) == 0:
+    if not found_complete_patterns:
         print(f"\n  {'='*60}")
-        print(f"  ❌ NO SCALABLE CYCLE FOUND")
+        print(f"  ❌ NO MINIMAL PATTERN FOUND")
         print(f"  {'='*60}")
         print(f"  → Phase 3 will use FREE optimization (no pattern)")
         return []
     
-    # Return the ONE cycle we found
+    # Return the ONE cycle we found with task indices
     best = found_complete_patterns[0]
-    return [(best['start_time'], best['end_time'])]
+    return [(best['start_time'], best['end_time'], best['task_indices'])]
 
 
-def analyze_cycle(df: pd.DataFrame, start_time: int, end_time: int, transporters: List[int]) -> CyclicPattern:
+def analyze_cycle(df: pd.DataFrame, start_time: int, end_time: int, transporters: List[int], task_indices: Optional[List[int]] = None) -> CyclicPattern:
     """Analyze a potential cycle and create a CyclicPattern object."""
     duration = end_time - start_time
     
@@ -275,18 +244,15 @@ def analyze_cycle(df: pd.DataFrame, start_time: int, end_time: int, transporters
         else:
             end_states[tid] = "Unknown"
     
-    # Get tasks in this cycle
+    # Get ALL tasks in this time window (from all transporters)
+    # This ensures we capture both T1 and T2 tasks that happen during the cycle
     cycle_tasks = df[
         (df['TaskStart'] >= start_time) & 
         (df['TaskStart'] < end_time)
     ].copy()
     
-    # Count unique batches
-    batches_completed = cycle_tasks['Batch'].nunique() if len(cycle_tasks) > 0 else 0
-    
-    # Calculate throughput (batches per hour)
-    duration_hours = duration / 3600
-    throughput = batches_completed / duration_hours if duration_hours > 0 else 0
+    # Count batches involved (for reference, not accurate throughput)
+    batches_in_cycle = cycle_tasks['Batch'].nunique() if len(cycle_tasks) > 0 else 0
     
     return CyclicPattern(
         start_time=start_time,
@@ -294,8 +260,7 @@ def analyze_cycle(df: pd.DataFrame, start_time: int, end_time: int, transporters
         duration=duration,
         transporter_states=end_states,
         tasks_in_cycle=cycle_tasks,
-        batches_completed=batches_completed,
-        throughput=throughput
+        batches_completed=batches_in_cycle
     )
 
 
@@ -309,7 +274,7 @@ def find_cyclic_patterns(output_dir: str, max_cycle_duration: int = 7200, requir
         require_complete: If True, only return cycles that contain all treatment stages
     
     Returns:
-        List of discovered cyclic patterns, sorted by throughput (descending)
+        List of discovered cyclic patterns, sorted by duration (ascending)
     """
     print("\n" + "="*70)
     print("PATTERN MINING: Searching for Stage-Based Cyclic Patterns")
@@ -334,7 +299,13 @@ def find_cyclic_patterns(output_dir: str, max_cycle_duration: int = 7200, requir
     # Analyze each cycle candidate
     patterns = []
     
-    for idx, (start, end) in enumerate(cycle_candidates):
+    for idx, candidate in enumerate(cycle_candidates):
+        if len(candidate) == 3:
+            start, end, task_indices = candidate
+        else:
+            start, end = candidate
+            task_indices = None
+        
         duration = end - start
         
         # Skip cycles that are too long
@@ -345,7 +316,7 @@ def find_cyclic_patterns(output_dir: str, max_cycle_duration: int = 7200, requir
         if duration < 30:
             continue
         
-        pattern = analyze_cycle(df, start, end, transporters)
+        pattern = analyze_cycle(df, start, end, transporters, task_indices)
         
         # Accept patterns with batches
         if pattern.batches_completed > 0:
@@ -355,21 +326,163 @@ def find_cyclic_patterns(output_dir: str, max_cycle_duration: int = 7200, requir
             print(f"    Time: {start}s → {end}s")
             print(f"    Duration: {duration}s ({duration/60:.1f}min)")
             print(f"    Batches: {pattern.batches_completed}")
-            print(f"    Throughput: {pattern.throughput:.2f} batches/hour")
+            print(f"    Batches involved: {pattern.batches_completed}")
             print(f"    Tasks: {len(pattern.tasks_in_cycle)}")
             print(f"    Transporter end positions: {pattern.transporter_states}")
     
-    # Sort by throughput (descending)
-    patterns.sort(key=lambda p: p.throughput, reverse=True)
+    # Sort by duration (ascending - prefer shorter cycles)
+    patterns.sort(key=lambda p: p.duration)
     
     print("\n" + "="*70)
     print(f"SUMMARY: Found {len(patterns)} cyclic pattern(s)")
     if patterns:
         best = patterns[0]
-        print(f"Best pattern: {best.duration}s, {best.throughput:.2f} batches/h, {best.batches_completed} batches")
+        print(f"Best pattern: {best.duration}s ({best.duration/60:.1f}min), {best.batches_completed} batches involved")
     print("="*70 + "\n")
     
     return patterns
+
+
+def create_sequence_matrix(pattern: CyclicPattern, output_dir: str) -> Optional[pd.DataFrame]:
+    """
+    Luo sequence_matrix.csv joka kuvaa erien liikkeet asemilla sekvenssin ajalta.
+    
+    Rakenne kuten line_matrix, mutta vain sekvenssin ajalta.
+    Eränumerot korvataan kirjaimilla A, B, C, jne.
+    
+    Args:
+        pattern: Löydetty pattern
+        output_dir: Output directory
+    
+    Returns:
+        DataFrame tai None
+    """
+    # Lataa treatment program tiedot (MinTime, MaxTime)
+    treatment_program_path = os.path.join("initialization", "treatment_program_001.csv")
+    if not os.path.exists(treatment_program_path):
+        print(f"  ⚠ Treatment program not found: {treatment_program_path}")
+        return None
+    
+    treatment_df = pd.read_csv(treatment_program_path)
+    
+    # Muunna aika-sarakkeet sekunneiksi
+    for col in ['MinTime', 'MaxTime']:
+        treatment_df[col] = pd.to_timedelta(treatment_df[col]).dt.total_seconds().astype(int)
+    
+    # Lataa station schedule saadaksemme CalcTime-tiedot
+    for subdir in ["cp_sat_phase_1_2", "cp_sat"]:
+        station_schedule_path = os.path.join(output_dir, subdir, "cp_sat_station_schedule.csv")
+        if os.path.exists(station_schedule_path):
+            break
+    else:
+        station_schedule_path = None
+    
+    if station_schedule_path and os.path.exists(station_schedule_path):
+        station_df = pd.read_csv(station_schedule_path)
+    else:
+        print(f"  ⚠ Station schedule not found")
+        return None
+    
+    # Sorteerataan pattern tasks ajan mukaan
+    tasks = pattern.tasks_in_cycle.sort_values('TaskStart').copy()
+    
+    # Luodaan batch mapping: alkuperäinen batch numero -> kirjain
+    unique_batches = sorted(tasks['Batch'].unique())
+    batch_mapping = {batch: chr(65 + i) for i, batch in enumerate(unique_batches)}  # A, B, C, ...
+    
+    # Rakennetaan sequence matrix
+    rows = []
+    
+    for _, task in tasks.iterrows():
+        batch_num = int(task['Batch'])
+        stage = int(task['Stage'])
+        batch_letter = batch_mapping[batch_num]
+        
+        # Hae station station_schedule:sta
+        station_row = station_df[(station_df['Batch'] == batch_num) & (station_df['Stage'] == stage)]
+        if len(station_row) == 0:
+            continue
+        
+        station_row = station_row.iloc[0]
+        station = int(station_row['Station'])
+        
+        # Hae treatment program tiedot
+        treatment_row = treatment_df[treatment_df['Stage'] == stage]
+        if len(treatment_row) == 0:
+            continue
+        
+        treatment_row = treatment_row.iloc[0]
+        min_time = int(treatment_row['MinTime'])
+        max_time = int(treatment_row['MaxTime'])
+        
+        # CalcTime asemalla
+        calc_time = int(station_row['CalcTime']) if 'CalcTime' in station_row else 0
+        
+        # EntryTime = kun erä saapuu asemalle = kun nostimen tehtävä loppuu
+        entry_time = int(task['TaskEnd'])
+        
+        # ExitTime = EntryTime + CalcTime
+        exit_time = entry_time + calc_time
+        
+        # TransportTime = nostimen tehtävän kesto
+        transport_time = int(task['TaskEnd'] - task['TaskStart'])
+        
+        # Program ja Treatment_program
+        program = f"Program_{batch_letter}"
+        treatment_program = "Treatment_Program_001"
+        
+        rows.append({
+            'Batch': batch_letter,
+            'Program': program,
+            'Treatment_program': treatment_program,
+            'Stage': stage,
+            'Station': station,
+            'MinTime': min_time,
+            'MaxTime': max_time,
+            'CalcTime': calc_time,
+            'EntryTime': entry_time,
+            'ExitTime': exit_time,
+            'TransportTime': transport_time
+        })
+    
+    if not rows:
+        return None
+    
+    sequence_matrix = pd.DataFrame(rows)
+    
+    # Järjestä batch ja stage mukaan
+    sequence_matrix = sequence_matrix.sort_values(['Batch', 'Stage'])
+    
+    # Normalisoi ajat alkamaan nollasta (siirrä ensimmäinen sykli alkamaan ajasta 0)
+    min_time = sequence_matrix['EntryTime'].min()
+    sequence_matrix['EntryTime'] = sequence_matrix['EntryTime'] - min_time
+    sequence_matrix['ExitTime'] = sequence_matrix['ExitTime'] - min_time
+    
+    # Laske syklin todellinen kesto:
+    # Viimeisen erän poistumisaika + aika että nostin on valmis aloittamaan uuden syklin
+    # Pattern-objektissa on cycle duration joka sisältää tämän
+    cycle_duration = pattern.duration
+    
+    # Toista sama sykli kolme kertaa peräkkäin
+    # Nostimet tekevät saman liikesarjan, erät siirtyvät
+    all_cycles = [sequence_matrix.copy()]
+    
+    for cycle_num in range(1, 3):
+        next_cycle = sequence_matrix.copy()
+        
+        # Siirrä ajat syklin keston verran eteenpäin
+        # Tämä huomioi myös viimeisen liikkeen jälkeisen ajan
+        time_offset = cycle_duration * cycle_num
+        next_cycle['EntryTime'] = next_cycle['EntryTime'] + time_offset
+        next_cycle['ExitTime'] = next_cycle['ExitTime'] + time_offset
+        
+        all_cycles.append(next_cycle)
+    
+    # Yhdistä kaikki syklit
+    sequence_matrix = pd.concat(all_cycles, ignore_index=True)
+    sequence_matrix = sequence_matrix.sort_values(['EntryTime'])
+    
+    return sequence_matrix
 
 
 def export_pattern_report(pattern: CyclicPattern, output_dir: str, pattern_index: int = 0):
@@ -397,13 +510,20 @@ def export_pattern_report(pattern: CyclicPattern, output_dir: str, pattern_index
         f.write(f"End time: {pattern.end_time}s\n")
         f.write(f"Duration: {pattern.duration}s ({pattern.duration/60:.1f} minutes)\n")
         f.write(f"Batches completed: {pattern.batches_completed}\n")
-        f.write(f"Throughput: {pattern.throughput:.2f} batches/hour\n")
+        f.write(f"Batches involved: {pattern.batches_completed}\n")
         f.write(f"Tasks in cycle: {len(pattern.tasks_in_cycle)}\n")
         f.write(f"\nTransporter end positions:\n")
         for tid, station in sorted(pattern.transporter_states.items()):
             f.write(f"  Transporter {tid}: Station {station}\n")
     
     print(f"  ✓ Pattern {pattern_index} exported: {tasks_file}")
+    
+    # Export sequence_matrix.csv
+    sequence_matrix_file = os.path.join(reports_dir, f"sequence_matrix.csv")
+    sequence_matrix = create_sequence_matrix(pattern, output_dir)
+    if sequence_matrix is not None:
+        sequence_matrix.to_csv(sequence_matrix_file, index=False)
+        print(f"  ✓ Sequence matrix exported: {sequence_matrix_file}")
 
 
 if __name__ == "__main__":

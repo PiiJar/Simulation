@@ -34,9 +34,9 @@ try:
 except Exception:
     visualize_schedule = None
 
-def load_input_data(output_dir):
+def load_input_data(output_dir, phase_subdir="cp_sat"):
     """Lataa kaikki tarvittavat lähtötiedot."""
-    cp_sat_dir = os.path.join(output_dir, "cp_sat")
+    cp_sat_dir = os.path.join(output_dir, phase_subdir)
     
     # Perustiedostot
     batches = pd.read_csv(os.path.join(cp_sat_dir, "cp_sat_batches.csv"))
@@ -109,16 +109,17 @@ def find_identical_batches(batches):
     return batches.groupby('Treatment_program')['Batch'].apply(list).to_dict()
 
 class CpSatPhase1Optimizer:
-    def __init__(self, output_dir):
+    def __init__(self, output_dir, phase_subdir="cp_sat"):
         """Alusta optimoija ja lataa lähtötiedot."""
         self.output_dir = output_dir
+        self.phase_subdir = phase_subdir
         (
             self.batches,
             self.stations,
             self.transporters,
             self.transfer_tasks,
             self.treatment_programs
-        ) = load_input_data(output_dir)
+        ) = load_input_data(output_dir, phase_subdir)
         
         self.average_task_time, self.change_time = calculate_time_parameters(
             self.transfer_tasks
@@ -516,7 +517,7 @@ class CpSatPhase1Optimizer:
         # Kirjoita status-tiedosto cp_sat-kansioon, jotta raportit voivat lukea tarkan tilan
         try:
             import json
-            cp_sat_dir = os.path.join(self.output_dir, "cp_sat")
+            cp_sat_dir = os.path.join(self.output_dir, self.phase_subdir)
             os.makedirs(cp_sat_dir, exist_ok=True)
             status_path = os.path.join(cp_sat_dir, "cp_sat_phase1_status.json")
             with open(status_path, "w") as fh:
@@ -607,7 +608,7 @@ class CpSatPhase1Optimizer:
         df = df.sort_values(['Transporter', 'ExitTime'])
         
         # Tallenna tulos cp_sat-kansioon
-        cp_sat_dir = os.path.join(self.output_dir, "cp_sat")
+        cp_sat_dir = os.path.join(self.output_dir, self.phase_subdir)
         result_path = os.path.join(cp_sat_dir, "cp_sat_batch_schedule.csv")
         df.to_csv(result_path, index=False)
         print(f"Tallennettu aikataulu: {result_path}")
@@ -625,7 +626,7 @@ class CpSatPhase1Optimizer:
         
         return df
 
-def optimize_phase_1(output_dir):
+def optimize_phase_1(output_dir, phase_subdir="cp_sat"):
     """Pääfunktio vaiheen 1 optimoinnille."""
-    optimizer = CpSatPhase1Optimizer(output_dir)
+    optimizer = CpSatPhase1Optimizer(output_dir, phase_subdir)
     return optimizer.solve()

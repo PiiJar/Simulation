@@ -36,7 +36,7 @@ def main():
         return
     
     # Generate ALL batch treatment programs at initialization
-    # (Phase 2 and Phase 3 will use only the batches in production.csv at that time)
+    # (Phase 2 will use limited batches, Phase 3 will use all batches)
     generate_batch_treatment_programs(output_dir)
     logger.log('INFO', 'Generated all batch treatment programs at initialization')
     
@@ -75,7 +75,7 @@ def main():
         # Calculate batches needed for pattern detection
         import math
         batches_on_line = math.ceil(program_duration / target_cycle_time)
-        steady_cycles = 4  # Need 4 cycles to detect pattern reliably
+        steady_cycles = 6  # Need 6 cycles to detect pattern reliably
         phase2_batches = batches_on_line + steady_cycles
         
         # Cap at reasonable maximum
@@ -98,56 +98,70 @@ def main():
     else:
         logger.log('INFO', f'Multiple programs detected ({unique_programs}) → Normal mode')
     
-    # Sitten luo batch treatment programs production.csv:n pohjalta
-    generate_batch_treatment_programs(output_dir)
-    logger.log('STEP', 'Initializtion ready')
+    logger.log('STEP', 'Initialization ready')
 
-    # --- 2. Preprocessing ---
-    logger.log('STEP', 'Preprocessing started')
-    preprocess_for_cpsat(output_dir)
-    logger.log('STEP', 'Preprocessing ready')
-
-    # --- 3. Optimization Phase 1: Station Optimization ---
-    logger.log('STEP', 'CP-SAT Phase 1 optimization started')
-    try:
-        schedule_df = optimize_phase_1(output_dir)
-        logger.log('STEP', 'CP-SAT Phase 1 optimization completed successfully')
-    except Exception as e:
-        error_msg = f'CP-SAT Phase 1 optimization failed: {str(e)}'
-        logger.log('ERROR', error_msg)
-        return
-
-    # --- 4. Optimization Phase 2: Transporter + Final schedule ---
-    # Set time limit based on program count
+    # --- 2. Phase 1 & 2: Quick mode uses separate directories ---
     if use_quick_mode:
-        phase2_time_limit = 300  # 5 minutes for single program
-        logger.log('STEP', f'CP-SAT Phase 2 optimization started (Quick mode: {phase2_time_limit}s)')
-    else:
-        phase2_time_limit = None  # Use default from config
-        logger.log('STEP', 'CP-SAT Phase 2 optimization started (Normal mode)')
-    
-    # Set environment variable for Phase 2 time limit
-    original_time = os.environ.get("CPSAT_PHASE2_MAX_TIME")
-    if phase2_time_limit is not None:
-        os.environ["CPSAT_PHASE2_MAX_TIME"] = str(phase2_time_limit)
-    
-    try:
-        ok = optimize_phase_2(output_dir)
-        if not ok:
-            error_msg = 'CP-SAT Phase 2 returned no solution (infeasible)'
+        # Phase 1 & 2 for pattern detection (limited batches) -> cp_sat_phase_1_2
+        logger.log('STEP', 'Preprocessing for Phase 1+2 (limited batches)')
+        preprocess_for_cpsat(output_dir, "cp_sat_phase_1_2")
+        
+        logger.log('STEP', 'CP-SAT Phase 1 optimization (limited batches)')
+        try:
+            schedule_df = optimize_phase_1(output_dir, "cp_sat_phase_1_2")
+            logger.log('STEP', 'CP-SAT Phase 1 completed')
+        except Exception as e:
+            error_msg = f'CP-SAT Phase 1 failed: {str(e)}'
             logger.log('ERROR', error_msg)
             return
-        logger.log('STEP', 'CP-SAT Phase 2 optimization completed successfully')
-    except Exception as e:
-        error_msg = f'CP-SAT Phase 2 optimization failed: {str(e)}'
-        logger.log('ERROR', error_msg)
-        return
-    finally:
-        # Restore original time limit
-        if original_time is not None:
-            os.environ["CPSAT_PHASE2_MAX_TIME"] = original_time
-        else:
-            os.environ.pop("CPSAT_PHASE2_MAX_TIME", None)
+        
+        phase2_time_limit = 300  # 5 minutes for pattern detection
+        logger.log('STEP', f'CP-SAT Phase 2 optimization (Quick mode: {phase2_time_limit}s)')
+        original_time = os.environ.get("CPSAT_PHASE2_MAX_TIME")
+        os.environ["CPSAT_PHASE2_MAX_TIME"] = str(phase2_time_limit)
+        
+        try:
+            ok = optimize_phase_2(output_dir, "cp_sat_phase_1_2")
+            if not ok:
+                error_msg = 'CP-SAT Phase 2 returned no solution (infeasible)'
+                logger.log('ERROR', error_msg)
+                return
+            logger.log('STEP', 'CP-SAT Phase 2 completed')
+        except Exception as e:
+            error_msg = f'CP-SAT Phase 2 failed: {str(e)}'
+            logger.log('ERROR', error_msg)
+            return
+        finally:
+            if original_time is not None:
+                os.environ["CPSAT_PHASE2_MAX_TIME"] = original_time
+            else:
+                os.environ.pop("CPSAT_PHASE2_MAX_TIME", None)
+    else:
+        # Normal mode: single Phase 1 & 2 with full production
+        logger.log('STEP', 'Preprocessing started')
+        preprocess_for_cpsat(output_dir, "cp_sat")
+        
+        logger.log('STEP', 'CP-SAT Phase 1 optimization started')
+        try:
+            schedule_df = optimize_phase_1(output_dir, "cp_sat")
+            logger.log('STEP', 'CP-SAT Phase 1 completed')
+        except Exception as e:
+            error_msg = f'CP-SAT Phase 1 failed: {str(e)}'
+            logger.log('ERROR', error_msg)
+            return
+        
+        logger.log('STEP', 'CP-SAT Phase 2 optimization started (Normal mode)')
+        try:
+            ok = optimize_phase_2(output_dir, "cp_sat")
+            if not ok:
+                error_msg = 'CP-SAT Phase 2 returned no solution (infeasible)'
+                logger.log('ERROR', error_msg)
+                return
+            logger.log('STEP', 'CP-SAT Phase 2 completed')
+        except Exception as e:
+            error_msg = f'CP-SAT Phase 2 failed: {str(e)}'
+            logger.log('ERROR', error_msg)
+            return
 
     # --- 4.5. Pattern Mining (only if quick mode) ---
     if use_quick_mode:
@@ -165,8 +179,8 @@ def main():
             if patterns and len(patterns) > 0:
                 best_pattern = patterns[0]
                 logger.log('INFO', f'✓ Found {len(patterns)} complete cyclic pattern(s)')
-                logger.log('INFO', f'✓ Best pattern: {best_pattern.duration}s duration, {best_pattern.throughput:.2f} batches/hour')
-                logger.log('INFO', f'✓ Pattern covers {len(best_pattern.tasks_in_cycle)} tasks, {best_pattern.batches_completed} batches')
+                logger.log('INFO', f'✓ Best pattern: {best_pattern.duration}s ({best_pattern.duration/60:.1f}min) duration')
+                logger.log('INFO', f'✓ Pattern covers {len(best_pattern.tasks_in_cycle)} tasks, {best_pattern.batches_completed} batches involved')
                 
                 # Export pattern reports (non-critical, ignore errors)
                 try:
@@ -186,24 +200,34 @@ def main():
             traceback.print_exc()
             print(f"⚠ Pattern mining failed: {str(e)}")
         
-        # --- 4.6. Restore full production for Phase 3 ---
-        logger.log('STEP', 'Restoring full production for Phase 3')
-        production_org = os.path.join(output_dir, 'initialization', 'production_org.csv')
-        if os.path.exists(production_org):
-            # Restore original production.csv
-            prod_org_df = pd.read_csv(production_org)
-            prod_org_df.to_csv(production_csv, index=False)
-            logger.log('INFO', f'Restored production.csv: {len(prod_org_df)} batches')
-            # Note: All treatment programs already created at initialization
-        else:
-            logger.log('WARNING', 'production_org.csv not found - skipping restoration')
-        
-        # --- 4.7. CP-SAT Phase 3: Extended optimization (with or without pattern) ---
+        # --- 4.6. CP-SAT Phase 1+3: Full production optimization (with pattern if found) ---
         from cp_sat_phase_3 import optimize_phase_3
         
-        logger.log('STEP', 'CP-SAT Phase 3 optimization started (seeking OPTIMAL)')
+        # Restore full production.csv for Phase 3
+        production_org = os.path.join(output_dir, 'initialization', 'production_org.csv')
+        production_csv = os.path.join(output_dir, 'initialization', 'production.csv')
+        if os.path.exists(production_org):
+            import shutil
+            shutil.copy(production_org, production_csv)
+            restored_df = pd.read_csv(production_csv)
+            logger.log('INFO', f'Restored full production.csv: {len(restored_df)} batches')
+        
+        # Run Phase 1 for full production -> cp_sat_phase_1_3
+        logger.log('STEP', 'Preprocessing for Phase 1+3 (full production)')
+        preprocess_for_cpsat(output_dir, "cp_sat_phase_1_3")
+        
+        logger.log('STEP', 'CP-SAT Phase 1 optimization (full production)')
         try:
-            ok = optimize_phase_3(output_dir)
+            schedule_df = optimize_phase_1(output_dir, "cp_sat_phase_1_3")
+            logger.log('STEP', 'CP-SAT Phase 1 completed for full production')
+        except Exception as e:
+            error_msg = f'CP-SAT Phase 1 failed: {str(e)}'
+            logger.log('ERROR', error_msg)
+            return
+        
+        logger.log('STEP', 'CP-SAT Phase 3 optimization started (seeking OPTIMAL with pattern)')
+        try:
+            ok = optimize_phase_3(output_dir, "cp_sat_phase_1_3")
             if not ok:
                 error_msg = 'CP-SAT Phase 3 returned no solution (infeasible)'
                 logger.log('ERROR', error_msg)
@@ -218,6 +242,26 @@ def main():
         logger.log('INFO', 'Phase 3 skipped (only used in quick mode)')
 
     # --- 5. Results ---
+    # Determine which cp_sat directory to use for results
+    if use_quick_mode:
+        # Quick mode: Phase 3 results in cp_sat_phase_1_3
+        result_dir = "cp_sat_phase_1_3"
+        logger.log('INFO', f'Using results from: {result_dir}')
+    else:
+        # Normal mode: Phase 2 results in cp_sat
+        result_dir = "cp_sat"
+        logger.log('INFO', f'Using results from: {result_dir}')
+    
+    # Create symlink from cp_sat -> result_dir for backward compatibility
+    cp_sat_link = os.path.join(output_dir, "cp_sat")
+    result_path = os.path.join(output_dir, result_dir)
+    if result_dir != "cp_sat" and not os.path.exists(cp_sat_link):
+        try:
+            os.symlink(result_dir, cp_sat_link)
+            logger.log('INFO', f'Created symlink: cp_sat -> {result_dir}')
+        except Exception as e:
+            logger.log('WARNING', f'Could not create symlink: {e}')
+    
     logger.log('STEP', 'Result collection started')
     try:
         generate_matrix(output_dir)

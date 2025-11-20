@@ -165,7 +165,7 @@ def calculate_kpi_metrics(output_dir):
     metrics['avg_lead_time_formatted'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     
     # Avg. Cycle Time from simulation data
-    cycle_time_seconds = report_data['simulation']['steady_state_avg_cycle_time_seconds']
+    cycle_time_seconds = report_data.get('simulation', {}).get('steady_state_avg_cycle_time_seconds', 0)
     metrics['takt_time_seconds'] = cycle_time_seconds
     
     # Muotoile hh:mm:ss
@@ -1695,7 +1695,7 @@ def create_transporter_temporal_load_chart(output_dir, reports_dir, color_map=No
 
 def create_transporter_task_distribution_chart(output_dir, reports_dir, color_map=None):
     """Luo tehtävien jakautumiskaavio nostimien kesken (vaakapalkki)"""
-    transporter_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv'))
+    transporter_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_transporter_schedule.csv'))
     
     # Laske tehtävien määrä per transporter
     task_counts = transporter_schedule.groupby('Transporter').size()

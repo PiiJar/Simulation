@@ -1,11 +1,17 @@
 import os
 import pandas as pd
 
-def preprocess_for_cpsat(output_dir):
+def preprocess_for_cpsat(output_dir, phase_subdir="cp_sat"):
+    """
+    Preprocess data for CP-SAT optimization.
     
-    # Read data from initialization and save all preprocessed files to the cp_sat directory
+    Args:
+        output_dir: Main output directory
+        phase_subdir: Subdirectory name for this phase (e.g., "cp_sat_phase1", "cp_sat_phase2", "cp_sat_phase3")
+    """
+    # Read data from initialization and save all preprocessed files to the specified cp_sat directory
     init_dir = os.path.join(output_dir, "initialization")
-    cp_sat_dir = os.path.join(output_dir, "cp_sat")
+    cp_sat_dir = os.path.join(output_dir, phase_subdir)
     os.makedirs(cp_sat_dir, exist_ok=True)
     
     # Read production plan for batch start station lookup
