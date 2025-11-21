@@ -1,3 +1,4 @@
+
 import os
 import pandas as pd
 
@@ -395,7 +396,7 @@ def preprocess_for_cpsat(output_dir):
             if not os.path.exists(max_proc_path):
                 print(f"  VAROITUS: cp_sat_maximum_process_time.csv puuttuu, ramp_up-arvoa ei päivitetä")
             else:
-                import pandas as pd
+                # import pandas as pd (poistettu, pd on jo importattu tiedoston alussa)
                 max_proc_df = pd.read_csv(max_proc_path)
                 # Valitse rivi, jossa SELECTED==True, muuten ensimmäinen
                 sel = max_proc_df[max_proc_df["SELECTED"] == True] if "SELECTED" in max_proc_df.columns else max_proc_df.iloc[[0]]

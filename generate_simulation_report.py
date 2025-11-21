@@ -130,54 +130,58 @@ def calculate_kpi_metrics(output_dir):
     report_data_path = os.path.join(output_dir, 'reports', 'report_data.json')
     with open(report_data_path, 'r') as f:
         report_data = json.load(f)
-    
-    # Makespan (kokonaisaika) from simulation data
-    makespan_seconds = report_data['simulation']['duration_seconds']
-    metrics['makespan_seconds'] = makespan_seconds
-    metrics['makespan_hours'] = makespan_seconds / 3600
-    
-    # Muotoile makespan hh:mm:ss
-    makespan_hours = int(makespan_seconds // 3600)
-    makespan_minutes = int((makespan_seconds % 3600) // 60)
-    makespan_secs = int(makespan_seconds % 60)
-    metrics['makespan_formatted'] = f"{makespan_hours:02d}:{makespan_minutes:02d}:{makespan_secs:02d}"
-    
-    # Erämäärä
-    metrics['total_batches'] = report_data['simulation']['total_batches']
-    
-    # Keskimääräinen läpimenoaika (calculate from batch schedule CSV)
-    batch_schedule_file = os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv')
-    if os.path.exists(batch_schedule_file):
-        batch_schedule = pd.read_csv(batch_schedule_file)
-        batch_times = batch_schedule.groupby('Batch').agg({'EntryTime': 'min', 'ExitTime': 'max'})
-        batch_times['LeadTime'] = batch_times['ExitTime'] - batch_times['EntryTime']
-        avg_lead_time_seconds = batch_times['LeadTime'].mean()
-    else:
-        avg_lead_time_seconds = 0
-    
-    metrics['avg_lead_time'] = avg_lead_time_seconds / 3600
-    metrics['avg_lead_time_seconds'] = int(avg_lead_time_seconds)
-    
-    # Muotoile hh:mm:ss
-    hours = int(avg_lead_time_seconds // 3600)
-    minutes = int((avg_lead_time_seconds % 3600) // 60)
-    seconds = int(avg_lead_time_seconds % 60)
-    metrics['avg_lead_time_formatted'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-    
-    # Avg. Cycle Time from simulation data
-    cycle_time_seconds = report_data['simulation']['steady_state_avg_cycle_time_seconds']
-    metrics['takt_time_seconds'] = cycle_time_seconds
-    
-    # Muotoile hh:mm:ss
-    takt_hours = int(cycle_time_seconds // 3600)
-    takt_minutes = int((cycle_time_seconds % 3600) // 60)
-    takt_secs = int(cycle_time_seconds % 60)
-    metrics['takt_time_formatted'] = f"{takt_hours:02d}:{takt_minutes:02d}:{takt_secs:02d}"
-    
-    # Erien määrä tunnissa (from scaled production estimates)
-    metrics['batches_per_hour'] = report_data['simulation_info']['scaled_production_estimates']['batches_per_hour']
-    
-    # Nostimen käyttöaste from transporter_statistics
+
+    try:
+        # Makespan (kokonaisaika) from simulation data
+        makespan_seconds = report_data['simulation']['duration_seconds']
+        metrics['makespan_seconds'] = makespan_seconds
+        metrics['makespan_hours'] = makespan_seconds / 3600
+
+        # Muotoile makespan hh:mm:ss
+        makespan_hours = int(makespan_seconds // 3600)
+        makespan_minutes = int((makespan_seconds % 3600) // 60)
+        makespan_secs = int(makespan_seconds % 60)
+        metrics['makespan_formatted'] = f"{makespan_hours:02d}:{makespan_minutes:02d}:{makespan_secs:02d}"
+
+        # Erämäärä
+        metrics['total_batches'] = report_data['simulation']['total_batches']
+
+        # Keskimääräinen läpimenoaika (calculate from batch schedule CSV)
+        batch_schedule_file = os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv')
+        if os.path.exists(batch_schedule_file):
+            batch_schedule = pd.read_csv(batch_schedule_file)
+            batch_times = batch_schedule.groupby('Batch').agg({'EntryTime': 'min', 'ExitTime': 'max'})
+            batch_times['LeadTime'] = batch_times['ExitTime'] - batch_times['EntryTime']
+            avg_lead_time_seconds = batch_times['LeadTime'].mean()
+        else:
+            avg_lead_time_seconds = 0
+
+        metrics['avg_lead_time'] = avg_lead_time_seconds / 3600
+        metrics['avg_lead_time_seconds'] = int(avg_lead_time_seconds)
+
+        # Muotoile hh:mm:ss
+        hours = int(avg_lead_time_seconds // 3600)
+        minutes = int((avg_lead_time_seconds % 3600) // 60)
+        seconds = int(avg_lead_time_seconds % 60)
+        metrics['avg_lead_time_formatted'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        # Avg. Cycle Time from simulation data
+        cycle_time_seconds = report_data['simulation']['steady_state_avg_cycle_time_seconds']
+        metrics['takt_time_seconds'] = cycle_time_seconds
+
+        # Muotoile hh:mm:ss
+        takt_hours = int(cycle_time_seconds // 3600)
+        takt_minutes = int((cycle_time_seconds % 3600) // 60)
+        takt_secs = int(cycle_time_seconds % 60)
+        metrics['takt_time_formatted'] = f"{takt_hours:02d}:{takt_minutes:02d}:{takt_secs:02d}"
+
+        # Erien määrä tunnissa (from scaled production estimates)
+        metrics['batches_per_hour'] = report_data['simulation_info']['scaled_production_estimates']['batches_per_hour']
+
+        # Nostimen käyttöaste from transporter_statistics
+    except KeyError as e:
+        print(f"❌ KeyError: {e}. Available keys in report_data['simulation']: {list(report_data.get('simulation', {}).keys())}")
+        raise
     for transporter_data in report_data['transporter_statistics']:
         t_id = transporter_data['transporter_id']
         utilization = transporter_data['utilization_percent']
@@ -1934,6 +1938,18 @@ def generate_simulation_report(output_dir):
         
         # Calculate expected batches: batches_per_hour × target_duration_hours, rounded up
         import math
+        # Safely extract batches_per_hour
+        batches_per_hour = 0
+        try:
+            batches_per_hour = metrics.get('batches_per_hour', 0)
+            if batches_per_hour == 0:
+                # Try fallback from report_data
+                batches_per_hour = report_data.get('simulation_info', {}).get('scaled_production_estimates', {}).get('batches_per_hour', 0)
+            if batches_per_hour == 0:
+                print("⚠️ Warning: batches_per_hour missing from metrics and report_data. Using 0.")
+        except Exception as e:
+            print(f"❌ Error extracting batches_per_hour: {e}")
+            batches_per_hour = 0
         expected_batches = math.ceil(batches_per_hour * target_duration_hours)
         pdf.cell(label_width, 7, "Target batches:", ln=0)
         pdf.write(7, f"{expected_batches} (Target time x Batches/hour)")
@@ -2025,6 +2041,11 @@ def generate_simulation_report(output_dir):
     kpi_data.append(("Total Production Time", metrics['makespan_formatted'], ""))
     
     # 5. Target Batches/Hour vs. Achieved
+    # Ensure rd is assigned to report_data
+    rd = report_data if 'report_data' in locals() else metrics.get('report_data', {})
+    if not rd:
+        print("⚠️ Warning: 'rd' (report_data) missing, using empty dict.")
+        rd = {}
     target_bph = rd.get('production_targets', {}).get('target_batches_per_hour', 0)
     achieved_bph = metrics['batches_per_hour']
     if target_bph > 0:
@@ -2051,8 +2072,13 @@ def generate_simulation_report(output_dir):
     # Load report data to get production schedule
     import json
     report_data_path = os.path.join(reports_dir, 'report_data.json')
-    with open(report_data_path, 'r') as f:
-        rd = json.load(f)
+    rd = {}
+    try:
+        with open(report_data_path, 'r') as f:
+            rd = json.load(f)
+    except Exception as e:
+        print(f"ERROR: Could not load report_data.json: {e}")
+        rd = {}
     cp = rd.get('customer_and_plant', {})
     # Fallback for legacy structure if needed
     if not cp:
@@ -2458,7 +2484,19 @@ def generate_simulation_report(output_dir):
     # ===== APPENDIX 4 - FLOWCHART =====
     # Add matrix timeline pages (one per page, rotated 90 degrees counter-clockwise)
     images_dir = os.path.join(reports_dir, 'images')
-    matrix_pages = sorted([f for f in os.listdir(images_dir) if f.startswith('matrix_timeline_page_') and f.endswith('.png') and '_rotated' not in f])
+    
+    # Helper to extract page number for sorting
+    def get_page_num(filename):
+        try:
+            # Expect format: matrix_timeline_page_X.png
+            return int(filename.split('_')[-1].split('.')[0])
+        except (ValueError, IndexError):
+            return 999999
+
+    matrix_pages = sorted(
+        [f for f in os.listdir(images_dir) if f.startswith('matrix_timeline_page_') and f.endswith('.png') and '_rotated' not in f],
+        key=get_page_num
+    )
     
     if matrix_pages:
         # Add each matrix page (one per PDF page, rotated)
