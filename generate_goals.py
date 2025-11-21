@@ -160,7 +160,19 @@ def generate_goals(output_dir, treatment_programs=None, transfer_times=None):
     annual_production_hours = weeks_per_year * days_per_week * shifts_per_day * hours_per_shift
     annual_batches = sum([target.get("target_quantity", 0) / product_map.get(target.get("product_id", {}), {}).get("properties", {}).get("pieces_per_batch", 1) 
                          for target in annual_targets if target.get("product_id") in valid_ids])
-    annual_batches_per_hour = annual_batches / annual_production_hours if annual_production_hours > 0 else 0
+    
+    # Calculate steady hours (excluding ramp-up/down times)
+    # Ramp-up produces nothing, so capacity must be calculated based on productive hours
+    # Each shift has ramp-up at start and ramp-down at end
+    shifts_per_year = weeks_per_year * days_per_week * shifts_per_day
+    # Estimate ramp times (these will be calculated more precisely during simulation)
+    estimated_ramp_up_per_shift_hours = 1.5  # ~1.5 hours typical ramp-up
+    estimated_ramp_down_per_shift_hours = 1.5  # ~1.5 hours typical ramp-down
+    total_ramp_hours_per_year = shifts_per_year * (estimated_ramp_up_per_shift_hours + estimated_ramp_down_per_shift_hours)
+    annual_steady_hours = annual_production_hours - total_ramp_hours_per_year
+    
+    # Use steady hours for capacity calculation (since ramp-up produces no batches)
+    annual_batches_per_hour = annual_batches / annual_steady_hours if annual_steady_hours > 0 else 0
     target_cycle_time_seconds = round(3600 / annual_batches_per_hour, 2) if annual_batches_per_hour > 0 else None
     
     # Target pace for simulation period (calculated from annual targets, NOT from simulation batch count)
@@ -206,6 +218,7 @@ def generate_goals(output_dir, treatment_programs=None, transfer_times=None):
             "simulation_target_batches": total_batches,
             "annual_batches": round(annual_batches, 2),
             "annual_production_hours": annual_production_hours,
+            "annual_steady_hours": round(annual_steady_hours, 1),
             "batches_per_hour": batches_per_hour,
             "target_cycle_time_seconds": target_cycle_time_seconds,
             "average_batch_interval_minutes": avg_batch_interval_min,

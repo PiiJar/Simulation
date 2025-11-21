@@ -1623,25 +1623,25 @@ def generate_simulation_report(output_dir):
     
     # Read target and simulated cycle times from report data
     target_met = False
-    target_cycle_time = 0
-    simulated_cycle_time = 0
+    target_batches_per_hour = 0
+    simulated_batches_per_hour = 0
     
     try:
         with open(report_data_path, 'r') as f:
             report_data = json.load(f)
         
-        simulated_cycle_time = report_data.get('simulation', {}).get('steady_state_avg_cycle_time_seconds', 0)
+        # Get simulated batches per hour from simulation_results
+        sim_results = report_data.get('simulation_results', {})
+        scaled_estimates = sim_results.get('scaled_production_estimates', {})
+        simulated_batches_per_hour = scaled_estimates.get('batches_per_hour', 0)
         
-        # Get target from goals.json
-        goals_path = os.path.join(output_dir, 'initialization', 'goals.json')
-        if os.path.exists(goals_path):
-            with open(goals_path, 'r') as f:
-                goals_data = json.load(f)
-                target_pace = goals_data.get('target_pace', {})
-                target_cycle_time = target_pace.get('target_cycle_time_seconds') or target_pace.get('average_batch_interval_seconds', 0)
+        # Get target from production_targets
+        prod_targets = report_data.get('production_targets', {})
+        target_batches_per_hour = prod_targets.get('target_batches_per_hour', 0)
         
-        if target_cycle_time > 0 and simulated_cycle_time > 0:
-            target_met = simulated_cycle_time <= target_cycle_time
+        # Target is met if simulated rate meets or exceeds target rate
+        if target_batches_per_hour > 0 and simulated_batches_per_hour > 0:
+            target_met = simulated_batches_per_hour >= target_batches_per_hour
     except Exception as e:
         print(f"[WARN] Could not determine target status: {e}")
     
@@ -1890,7 +1890,11 @@ def generate_simulation_report(output_dir):
             pdf.cell(value_width, 7, calculation_text, ln=1)
             
             # Add batches per hour calculation
-            batches_per_hour = total_batches / total_steady_hours if total_steady_hours > 0 else 0
+            # Use the correctly calculated value from production_targets
+            # Even though ramp-up produces no batches, it's part of working hours, so use total annual hours
+            annual_batches = prod_targets.get('annual_batches', total_batches)
+            annual_hours = prod_targets.get('annual_production_hours', correct_total_hours)
+            batches_per_hour = annual_batches / annual_hours if annual_hours > 0 else 0
             
             # Build the text with bold formatting inline
             pdf.set_font(BODY_FONT_NAME, '', 12)
@@ -2020,13 +2024,47 @@ def generate_simulation_report(output_dir):
     # 4. Total Production Time
     kpi_data.append(("Total Production Time", metrics['makespan_formatted'], ""))
     
-    # 5. Avg. Cycle Time (todellinen simuloitu tahtiaika)
-    kpi_data.append(("Avg. Cycle Time", metrics['takt_time_formatted'], ""))
+    # 5. Target Batches/Hour vs. Achieved
+    target_bph = rd.get('production_targets', {}).get('target_batches_per_hour', 0)
+    achieved_bph = metrics['batches_per_hour']
+    if target_bph > 0:
+        kpi_data.append(("Target Pace", f"{target_bph:.2f}", "batches/h"))
+        kpi_data.append(("Achieved Pace", f"{achieved_bph:.2f}", "batches/h"))
+    else:
+        # Fallback if no target available
+        kpi_data.append(("Batches per Hour", f"{achieved_bph:.1f}", ""))
     
-    # 6. Batches per Hour
-    kpi_data.append(("Batches per Hour", f"{metrics['batches_per_hour']:.1f}", ""))
+    # 6. Target Cycle Time vs. Achieved
+    target_cycle_sec = rd.get('production_targets', {}).get('target_cycle_time_seconds', 0)
+    if target_cycle_sec > 0:
+        # Convert to hh:mm:ss
+        t_h = int(target_cycle_sec // 3600)
+        t_m = int((target_cycle_sec % 3600) // 60)
+        t_s = int(target_cycle_sec % 60)
+        target_cycle_str = f"{t_h:02d}:{t_m:02d}:{t_s:02d}"
+        kpi_data.append(("Target Cycle Time", target_cycle_str, ""))
     
-    # 7-8. Transporters (järjestyksessä)
+    # 7. Avg. Cycle Time (achieved)
+    kpi_data.append(("Achieved Cycle Time", metrics['takt_time_formatted'], ""))
+
+    # 7. Batches per Shift
+    # Load report data to get production schedule
+    import json
+    report_data_path = os.path.join(reports_dir, 'report_data.json')
+    with open(report_data_path, 'r') as f:
+        rd = json.load(f)
+    cp = rd.get('customer_and_plant', {})
+    # Fallback for legacy structure if needed
+    if not cp:
+        sim_info = rd.get('simulation_info', {})
+        cp = {'production_schedule': sim_info.get('production_schedule', {})}
+        
+    prod_schedule = cp.get('production_schedule', {})
+    hours_per_shift = prod_schedule.get('hours_per_shift', 0)
+    batches_per_shift = hours_per_shift * metrics['batches_per_hour']
+    kpi_data.append(("Batches per Shift", f"{batches_per_shift:.1f}", ""))
+    
+    # 8-9. Transporters (järjestyksessä)
     transporter_keys = sorted([k for k in metrics.keys() if k.startswith('transporter_') and k.endswith('_utilization')])
     for key in transporter_keys:
         t_id = key.split('_')[1]
