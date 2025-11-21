@@ -3,7 +3,7 @@
     {
       "id": 1,
       "model": "2D",
-      "start_station": 101,
+      "start_station": 201,
       "physics": {
         "x_acceleration_time_s": 2.0,
         "x_deceleration_time_s": 2.0,
@@ -11,9 +11,9 @@
         "y_acceleration_time_s": 0.0,
         "y_deceleration_time_s": 0.0,
         "y_max_speed_mm_s": 0,
-        "z_total_distance_mm": 2500,
+        "z_total_distance_mm": 2000,
         "z_slow_distance_dry_mm": 300,
-        "z_slow_distance_wet_mm": 1000,
+        "z_slow_distance_wet_mm": 800,
         "z_slow_end_distance_mm": 50,
         "z_slow_speed_mm_s": 100,
         "z_fast_speed_mm_s": 200,
@@ -21,62 +21,16 @@
       },
       "task_areas": {
         "line_100": {
-          "min_lift_station": 101,
-          "max_lift_station": 111,
-          "min_sink_station": 101,
-          "max_sink_station": 114
+          "min_lift_station": 0,
+          "max_lift_station": 0,
+          "min_sink_station": 0,
+          "max_sink_station": 0
         },
         "line_200": {
-          "min_lift_station": 0,
-          "max_lift_station": 0,
-          "min_sink_station": 0,
-          "max_sink_station": 0
-        },
-        "line_300": {
-          "min_lift_station": 0,
-          "max_lift_station": 0,
-          "min_sink_station": 0,
-          "max_sink_station": 0
-        },
-        "line_400": {
-          "min_lift_station": 0,
-          "max_lift_station": 0,
-          "min_sink_station": 0,
-          "max_sink_station": 0
-        }
-      }
-    },
-    {
-      "id": 2,
-      "model": "2D",
-      "start_station": 118,
-      "physics": {
-        "x_acceleration_time_s": 2.0,
-        "x_deceleration_time_s": 2.0,
-        "x_max_speed_mm_s": 300,
-        "y_acceleration_time_s": 0.0,
-        "y_deceleration_time_s": 0.0,
-        "y_max_speed_mm_s": 0,
-        "z_total_distance_mm": 2500,
-        "z_slow_distance_dry_mm": 300,
-        "z_slow_distance_wet_mm": 1000,
-        "z_slow_end_distance_mm": 50,
-        "z_slow_speed_mm_s": 100,
-        "z_fast_speed_mm_s": 200,
-        "avoid_distance_mm": 2000
-      },
-      "task_areas": {
-        "line_100": {
-          "min_lift_station": 112,
-          "max_lift_station": 118,
-          "min_sink_station": 111,
-          "max_sink_station": 118
-        },
-        "line_200": {
-          "min_lift_station": 0,
-          "max_lift_station": 0,
-          "min_sink_station": 0,
-          "max_sink_station": 0
+          "min_lift_station": 201,
+          "max_lift_station": 216,
+          "min_sink_station": 201,
+          "max_sink_station": 216
         },
         "line_300": {
           "min_lift_station": 0,
