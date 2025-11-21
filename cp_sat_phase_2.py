@@ -924,7 +924,7 @@ class CpSatPhase2Optimizer:
             from config import get_cpsat_phase2_max_time
             _time_limit = float(get_cpsat_phase2_max_time())
         except Exception:
-            _time_limit = 1200.0
+            _time_limit = 7200.0
         self.solver.parameters.max_time_in_seconds = _time_limit
         # Valinnainen: säikeiden määrä ja hakulokin tulostus
         _threads = get_cpsat_phase2_threads()
