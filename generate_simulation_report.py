@@ -143,8 +143,8 @@ def calculate_kpi_metrics(output_dir):
         makespan_secs = int(makespan_seconds % 60)
         metrics['makespan_formatted'] = f"{makespan_hours:02d}:{makespan_minutes:02d}:{makespan_secs:02d}"
 
-        # Erämäärä
-        metrics['total_batches'] = report_data['simulation']['total_batches']
+        # Erämäärä (productive batches)
+        metrics['total_batches'] = report_data['simulation'].get('productive_batches', report_data['simulation'].get('total_batches', 0))
 
         # Keskimääräinen läpimenoaika (calculate from batch schedule CSV)
         batch_schedule_file = os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv')
@@ -165,8 +165,10 @@ def calculate_kpi_metrics(output_dir):
         seconds = int(avg_lead_time_seconds % 60)
         metrics['avg_lead_time_formatted'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-        # Avg. Cycle Time from simulation data
-        cycle_time_seconds = report_data['simulation']['steady_state_avg_cycle_time_seconds']
+        # Avg. Cycle Time from productive time and batches
+        productive_batches = report_data['simulation'].get('productive_batches', 0)
+        productive_time_seconds = report_data['simulation'].get('productive_time_seconds', 0)
+        cycle_time_seconds = productive_time_seconds / productive_batches if productive_batches > 0 else 0
         metrics['takt_time_seconds'] = cycle_time_seconds
 
         # Muotoile hh:mm:ss
@@ -175,8 +177,13 @@ def calculate_kpi_metrics(output_dir):
         takt_secs = int(cycle_time_seconds % 60)
         metrics['takt_time_formatted'] = f"{takt_hours:02d}:{takt_minutes:02d}:{takt_secs:02d}"
 
-        # Erien määrä tunnissa (from scaled production estimates)
-        metrics['batches_per_hour'] = report_data['simulation_info']['scaled_production_estimates']['batches_per_hour']
+        # Erien määrä tunnissa (from scaled production estimates or calculate from productive time)
+        try:
+            metrics['batches_per_hour'] = report_data['simulation_info']['scaled_production_estimates']['batches_per_hour']
+        except (KeyError, TypeError):
+            productive_batches = report_data['simulation'].get('productive_batches', 0)
+            productive_time_seconds = report_data['simulation'].get('productive_time_seconds', 0)
+            metrics['batches_per_hour'] = (productive_batches / (productive_time_seconds / 3600)) if productive_time_seconds > 0 else 0
 
         # Nostimen käyttöaste from transporter_statistics
     except KeyError as e:
@@ -1735,11 +1742,18 @@ def generate_simulation_report(output_dir):
         city = location.get('city', '-')
         country = location.get('country', '-')
         available_containers = customer_plant.get('available_containers', '-')
-        total_batches = sim_results.get('total_batches', '-')
-        total_prod_time = sim_results.get('total_production_time', '-')
-        ramp_up = sim_results.get('ramp_up_time', '-')
-        steady = sim_results.get('steady_state_time', '-')
-        ramp_down = sim_results.get('ramp_down_time', '-')
+        # Käytä productive_batches ja productive_time_seconds
+        sim_new = report_data.get('simulation', {})
+        total_batches = sim_new.get('productive_batches', '-')
+        productive_time_seconds = sim_new.get('productive_time_seconds', 0)
+        # Muotoile tuottava aika hh:mm:ss
+        h = int(productive_time_seconds // 3600)
+        m = int((productive_time_seconds % 3600) // 60)
+        s = int(productive_time_seconds % 60)
+        total_prod_time = f"{h:02d}:{m:02d}:{s:02d}"
+        ramp_up = '-'
+        steady = '-'
+        ramp_down = '-'
         
         # Read solver status
         solver_status = "Unknown"
@@ -1893,20 +1907,12 @@ def generate_simulation_report(output_dir):
             pdf.cell(label_width, 7, "----> ", ln=0)
             pdf.cell(value_width, 7, calculation_text, ln=1)
             
-            # Add batches per hour calculation
-            # Use the correctly calculated value from production_targets
-            # Even though ramp-up produces no batches, it's part of working hours, so use total annual hours
-            annual_batches = prod_targets.get('annual_batches', total_batches)
-            annual_hours = prod_targets.get('annual_production_hours', correct_total_hours)
-            batches_per_hour = annual_batches / annual_hours if annual_hours > 0 else 0
-            
-            # Build the text with bold formatting inline
+            # Laske batches_per_hour ja cycle_time_seconds tuottavan ajan perusteella
+            batches_per_hour = (total_batches / (productive_time_seconds / 3600)) if productive_time_seconds > 0 else 0
             pdf.set_font(BODY_FONT_NAME, '', 12)
             pdf.cell(label_width, 7, "----> ", ln=0)
-            # Regular text part
-            text_before = f"{total_batches:,.0f} / {total_steady_hours:,.1f} = "
+            text_before = f"{total_batches} / {productive_time_seconds/3600:.2f} = "
             pdf.write(7, text_before)
-            # Bold result
             pdf.set_font(BODY_FONT_NAME, 'B', 12)
             pdf.write(7, f"{batches_per_hour:.2f} batches/hour")
             pdf.ln()
@@ -1918,7 +1924,6 @@ def generate_simulation_report(output_dir):
                 m, s = divmod(seconds_per_batch, 60)
                 h, m = divmod(m, 60)
                 cycle_time_str = "{:02d}:{:02d}:{:02d}".format(int(h), int(m), int(s))
-                
                 pdf.cell(label_width, 7, "----> ", ln=0)
                 pdf.set_font(BODY_FONT_NAME, 'B', 12)
                 pdf.cell(value_width, 7, f"{cycle_time_str} average cycle time", ln=1)

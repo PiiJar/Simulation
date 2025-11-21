@@ -404,6 +404,18 @@ def collect_report_data(output_dir: str):
 
         if os.path.exists(production_path):
             df_production = pd.read_csv(production_path)
+            # Laske tuottavan ajan alku ja loppu (ensimmäinen ja viimeinen valmistunut erä)
+            if 'Start_optimized' in df_production.columns:
+                df_production['Start_seconds'] = pd.to_timedelta(df_production['Start_optimized']).dt.total_seconds()
+                first_batch_time = df_production['Start_seconds'].iloc[0]
+                last_batch_time = df_production['Start_seconds'].iloc[-1]
+                productive_time = last_batch_time - first_batch_time
+                productive_batches = len(df_production)
+                report_data['simulation']['productive_batches'] = productive_batches
+                report_data['simulation']['productive_time_seconds'] = productive_time
+                report_data['simulation']['productive_time_hms'] = seconds_to_hms(productive_time)
+                report_data['simulation']['productive_start_time'] = df_production['Start_optimized'].iloc[0]
+                report_data['simulation']['productive_end_time'] = df_production['Start_optimized'].iloc[-1]
             total_batches = len(df_production)
 
             # Capture the distinct treatment programs encountered in production.csv
