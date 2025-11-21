@@ -14,6 +14,9 @@ from typing import Dict, Tuple, List, Optional
 import pandas as pd
 from ortools.sat.python import cp_model
 
+# Tuodaan puuttuva konfiguraatiofunktio
+from config import get_cpsat_phase2_threads
+
 # Valinnainen logger, jos käytettävissä
 try:
     from simulation_logger import get_logger
@@ -918,8 +921,8 @@ class CpSatPhase2Optimizer:
 
         # Aikaraja: luetaan config.py:stä (ympäristömuuttuja tai oletus)
         try:
-            from config import get_cp_sat_phase2_max_time
-            _time_limit = float(get_cp_sat_phase2_max_time())
+            from config import get_cpsat_phase2_max_time
+            _time_limit = float(get_cpsat_phase2_max_time())
         except Exception:
             _time_limit = 300.0
         self.solver.parameters.max_time_in_seconds = _time_limit

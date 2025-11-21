@@ -11,7 +11,7 @@
         "y_acceleration_time_s": 0.0,
         "y_deceleration_time_s": 0.0,
         "y_max_speed_mm_s": 0,
-        "z_total_distance_mm": 1500,
+        "z_total_distance_mm": 2500,
         "z_slow_distance_dry_mm": 300,
         "z_slow_distance_wet_mm": 1000,
         "z_slow_end_distance_mm": 50,
