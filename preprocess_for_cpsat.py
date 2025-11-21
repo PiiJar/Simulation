@@ -334,29 +334,30 @@ def preprocess_for_cpsat(output_dir):
                 stages_count = 0
                 max_proc = 0
             else:
-                # Muunna MaxTime sekunneiksi; tue sekä hh:mm:ss että sekuntimuotoa
+                # Muunna MinTime sekunneiksi; tue sekä hh:mm:ss että sekuntimuotoa
                 try:
-                    max_secs = pd.to_timedelta(stage_df["MaxTime"]).dt.total_seconds().fillna(0).astype(int)
+                    min_secs = pd.to_timedelta(stage_df["MinTime"]).dt.total_seconds().fillna(0).astype(int)
                 except Exception:
-                    max_secs = pd.to_numeric(stage_df["MaxTime"], errors="coerce").fillna(0).astype(int)
-                max_proc = int(max_secs.sum())
+                    min_secs = pd.to_numeric(stage_df["MinTime"], errors="coerce").fillna(0).astype(int)
+                min_proc = int(min_secs.sum())
                 stages_count = int(stage_df.shape[0])
 
             transfer_moves = stages_count  # s=1: start->st1, + väliin siirrot
             transfer_total_avg = int(round(transfer_moves * avg_transfer))
-            total_window = int(max_proc + transfer_total_avg)
+            total_window = int(min_proc + transfer_total_avg)
 
             rows.append({
                 "Treatment_program": int(prog),
                 "Stages": stages_count,
-                "MaxProcessTime_sum": int(max_proc),
+                "MinProcessTime_sum": int(min_proc),
                 "AvgTransferTime": float(round(avg_transfer, 3)),
                 "TransferMoves": int(transfer_moves),
                 "TransferAvgTotal": int(transfer_total_avg),
-                "TotalMaxWindow": int(total_window),
+                "TotalMinWindow": int(total_window),
             })
 
-        out_df = pd.DataFrame(rows).sort_values(["TotalMaxWindow", "Treatment_program"], ascending=[False, True]).reset_index(drop=True)
+        # Valitse lyhin (MinTime + siirrot) ramp-up laskentaan
+        out_df = pd.DataFrame(rows).sort_values(["TotalMinWindow", "Treatment_program"], ascending=[True, True]).reset_index(drop=True)
         if out_df.empty:
             print("  VAROITUS: Ei voitu laskea maksimi-ikkunaa (ei ohjelmia)")
             return
@@ -364,11 +365,11 @@ def preprocess_for_cpsat(output_dir):
         sel_row = {
             "Treatment_program": int(sel["Treatment_program"]),
             "Stages": int(sel["Stages"]),
-            "MaxProcessTime_sum": int(sel["MaxProcessTime_sum"]),
+            "MinProcessTime_sum": int(sel["MinProcessTime_sum"]),
             "AvgTransferTime": float(sel["AvgTransferTime"]),
             "TransferMoves": int(sel["TransferMoves"]),
             "TransferAvgTotal": int(sel["TransferAvgTotal"]),
-            "TotalMaxWindow": int(sel["TotalMaxWindow"]),
+            "TotalMinWindow": int(sel["TotalMinWindow"]),
             "SELECTED": True,
         }
         out_df["SELECTED"] = False
@@ -378,3 +379,105 @@ def preprocess_for_cpsat(output_dir):
         print(f"  Maksimi-ikkuna laskettu ja tallennettu: {out_path}")
     except Exception as e:
         print(f"  VAROITUS: Maksimi-ikkunan esilaskenta epäonnistui: {e}")
+
+    # --- Päivitä goals.json ramp_up:lla ja tarkalla kapasiteetilla ---
+    try:
+        import json
+        goals_path = os.path.join(init_dir, "goals.json")
+        if not os.path.exists(goals_path):
+            print(f"  VAROITUS: goals.json ei löytynyt päivitystä varten: {goals_path}")
+        else:
+            with open(goals_path, "r", encoding="utf-8") as f:
+                goals = json.load(f)
+
+            # Lue tarkka minimi prosessiaika ja siirtojen määrä sekä keskimääräinen siirtoaika
+            max_proc_path = os.path.join(cp_sat_dir, "cp_sat_maximum_process_time.csv")
+            if not os.path.exists(max_proc_path):
+                print(f"  VAROITUS: cp_sat_maximum_process_time.csv puuttuu, ramp_up-arvoa ei päivitetä")
+            else:
+                import pandas as pd
+                max_proc_df = pd.read_csv(max_proc_path)
+                # Valitse rivi, jossa SELECTED==True, muuten ensimmäinen
+                sel = max_proc_df[max_proc_df["SELECTED"] == True] if "SELECTED" in max_proc_df.columns else max_proc_df.iloc[[0]]
+                if sel.empty:
+                    sel = max_proc_df.iloc[[0]]
+                sel = sel.iloc[0]
+                # Käytä MinProcessTime_sum jos saatavilla, muuten fallback MaxProcessTime_sum
+                if "MinProcessTime_sum" in sel:
+                    min_process_time = int(sel["MinProcessTime_sum"])
+                else:
+                    min_process_time = int(sel.get("MaxProcessTime_sum", 0))
+                n_transfers = int(sel["TransferMoves"])
+                avg_transfer_time = float(sel["AvgTransferTime"])
+                ramp_up = min_process_time + n_transfers * avg_transfer_time
+
+                # Päivitä goals.json:iin ramp_up ja recalculated targets
+                # Oletetaan 8h simulaatio (tai haetaan se goalsista)
+                sim_hours = goals.get("simulation_goals", {}).get("simulation_period", {}).get("duration_hours", 8.0)
+                
+                # Laske tuottava aika simulaatiossa
+                productive_hours = sim_hours - (ramp_up / 3600.0)
+                if productive_hours < 0:
+                    productive_hours = 0
+
+                # --- KORJAUS: Laske vaadittu tahti (batches/h) perustuen vuositason tuottavaan aikaan ---
+                # 1. Hae vuositavoite ja vuositunnit goals.jsonista
+                annual_batches = goals.get("target_pace", {}).get("annual_batches", 0)
+                annual_hours = goals.get("target_pace", {}).get("annual_production_hours", 0)
+                
+                # 2. Laske vuositason ramp-up hukka
+                # Oletus: 1 vuoro/pv, 5 pv/vko, 48 vko/vuosi (nämä pitäisi olla customer.jsonissa, mutta arvioidaan tässä)
+                # Parempi tapa: annual_hours / 8h = vuorojen määrä (jos 8h vuoro)
+                shifts_per_year = annual_hours / 8.0 if annual_hours > 0 else 240 # fallback 240
+                annual_ramp_loss_hours = shifts_per_year * (ramp_up / 3600.0)
+                
+                # 3. Todellinen vuotuinen tuottava aika
+                annual_productive_hours = annual_hours - annual_ramp_loss_hours
+                if annual_productive_hours <= 0:
+                    annual_productive_hours = 1 # estä nollalla jako
+
+                # 4. Uusi, kireämpi tahti (batches per productive hour)
+                required_batches_per_hour = annual_batches / annual_productive_hours
+
+                # 5. Laske simulaation tavoite tällä kireämmällä tahdilla
+                new_total_batches = int(round(required_batches_per_hour * productive_hours))
+                
+                # Laske cycle time tälle tahdille
+                cycle_time_sec = round(3600 / required_batches_per_hour, 2) if required_batches_per_hour > 0 else None
+
+                # PÄIVITÄ goals.json tavoitteet
+                current_total = goals.get("totals", {}).get("total_simulation_batches", 0)
+                goals["totals"]["total_simulation_batches"] = new_total_batches
+                
+                # Päivitä myös simulation_targets
+                if "simulation_targets" in goals:
+                    for target in goals["simulation_targets"]:
+                        old_target = target.get("target_batches", 0)
+                        if current_total > 0:
+                            # Skaalaa suhteessa uuteen kokonaismäärään
+                            # Huom: Jos annual_batches oli oikein, tämä pitäisi täsmätä suoraan
+                            new_target = int(round(old_target * (new_total_batches / current_total)))
+                        else:
+                            new_target = 0
+                        target["target_batches"] = new_target
+                        target["target_pieces"] = new_target * target.get("pieces_per_batch", 1)
+
+                # Kirjoita tiedot goals.json:iin
+                goals["target_pace"]["ramp_up_seconds"] = ramp_up
+                goals["target_pace"]["productive_hours"] = round(productive_hours, 3)
+                goals["target_pace"]["batches_per_hour_productive"] = round(required_batches_per_hour, 3)
+                goals["target_pace"]["cycle_time_seconds_productive"] = cycle_time_sec
+                goals["target_pace"]["annual_productive_hours"] = round(annual_productive_hours, 1)
+                goals["target_pace"]["ramp_up_calculation"] = {
+                    "min_process_time": min_process_time,
+                    "n_transfers": n_transfers,
+                    "avg_transfer_time": avg_transfer_time,
+                    "formula": "ramp_up = min_process_time + n_transfers * avg_transfer_time"
+                }
+                goals["target_pace"]["update_note"] = "Target recalculated based on REAL productive hours (annual - ramp_up_loss)"
+
+                with open(goals_path, "w", encoding="utf-8") as f:
+                    json.dump(goals, f, indent=2, ensure_ascii=False)
+                print(f"  goals.json päivitetty ramp_up:lla ja kapasiteetilla: {goals_path}")
+    except Exception as e:
+        print(f"  VAROITUS: goals.json päivitys epäonnistui: {e}")
