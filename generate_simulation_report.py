@@ -37,7 +37,7 @@ class EnhancedSimulationReport(FPDF):
         self.customer = customer
         self.plant = plant
         self.timestamp = timestamp
-        # Levennä vain vasenta marginaalia, oikea pysyy oletuksessa (10mm)
+        # Levennä vain vasenta marginaalia, oikea pysyy oletussa (10mm)
         self.set_left_margin(20)
         self.set_auto_page_break(auto=True, margin=15)
         
@@ -640,6 +640,11 @@ def _load_transporter_physics(output_dir):
     z_slow_dry = get_col(df, 'Z_slow_distance_dry (mm)', 'z_slow_dry')
     z_slow_wet = get_col(df, 'Z_slow_distance_wet (mm)', 'z_slow_wet')
     z_slow_end = get_col(df, 'Z_slow_end_distance (mm)', 'z_slow_end')
+    z_slow_speed = get_col(df, 'Z_slow_speed (mm/s)', 'z_slow_speed')
+    z_fast_speed = get_col(df, 'Z_fast_speed (mm/s)', 'z_fast_speed')
+    x_max_speed = get_col(df, 'X_max_speed (mm/s)', 'x_max_speed')
+    x_acc_time = get_col(df, 'X_acceleration_time (s)', 'x_acceleration')
+    x_dec_time = get_col(df, 'X_deceleration_time (s)', 'x_deceleration')
 
     # Build normalized rows
     rows = []
@@ -659,6 +664,12 @@ def _load_transporter_physics(output_dir):
         ZD = min(num(r[z_slow_dry.name]) if z_slow_dry is not None else 0.0, ZT)
         ZW = min(num(r[z_slow_wet.name]) if z_slow_wet is not None else 0.0, ZT)
         ZE = min(num(r[z_slow_end.name]) if z_slow_end is not None else 0.0, ZT)
+        ZS = num(r[z_slow_speed.name]) if z_slow_speed is not None else 100.0
+        ZF = num(r[z_fast_speed.name]) if z_fast_speed is not None else 200.0
+        
+        XS = num(r[x_max_speed.name]) if x_max_speed is not None else 1000.0
+        XA = num(r[x_acc_time.name]) if x_acc_time is not None else 1.0
+        XD = num(r[x_dec_time.name]) if x_dec_time is not None else 1.0
 
         rows.append({
             'Transporter': t,
@@ -666,6 +677,11 @@ def _load_transporter_physics(output_dir):
             'Z_slow_dry': ZD,
             'Z_slow_wet': ZW,
             'Z_slow_end': ZE,
+            'Z_slow_speed': ZS,
+            'Z_fast_speed': ZF,
+            'X_speed': XS,
+            'X_acc_time': XA,
+            'X_dec_time': XD
         })
 
     rows = [r for r in rows if r['Z_total'] > 0]
@@ -839,6 +855,162 @@ def assign_transporter_colors(transporters):
     return color_map
 
 
+def generate_z_profile_chart(transporter_id, physics, output_dir):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Unpack physics
+    z_total = physics.get('Z_total', 0)
+    z_slow_dry = physics.get('Z_slow_dry', 0)
+    z_slow_wet = physics.get('Z_slow_wet', 0)
+    z_slow_end = physics.get('Z_slow_end', 0)
+    z_slow_speed = physics.get('Z_slow_speed', 1)
+    z_fast_speed = physics.get('Z_fast_speed', 1)
+    
+    if z_slow_speed <= 0: z_slow_speed = 1
+    if z_fast_speed <= 0: z_fast_speed = 1
+
+    def get_lift_profile(slow_dist):
+        # 0 -> slow_dist (slow) -> fast -> z_total - slow_end (fast) -> z_total (slow)
+        # Clamp distances
+        s_dist = min(slow_dist, z_total)
+        e_dist = min(z_slow_end, z_total)
+        if s_dist + e_dist > z_total:
+            # Overlap, adjust? Just clamp e_dist
+            e_dist = max(0, z_total - s_dist)
+            
+        fast_dist = max(0, z_total - s_dist - e_dist)
+        
+        times = [0]
+        dists = [0]
+        
+        # Phase 1: Slow up
+        t1 = s_dist / z_slow_speed
+        times.append(t1)
+        dists.append(s_dist)
+        
+        # Phase 2: Fast up
+        t2 = t1 + fast_dist / z_fast_speed
+        times.append(t2)
+        dists.append(s_dist + fast_dist)
+        
+        # Phase 3: Slow end
+        t3 = t2 + e_dist / z_slow_speed
+        times.append(t3)
+        dists.append(z_total)
+        
+        return times, dists
+
+    def get_sink_profile(slow_dist):
+        # z_total -> fast -> slow_dist (fast ends) -> 0 (slow)
+        s_dist = min(slow_dist, z_total)
+        fast_dist = max(0, z_total - s_dist)
+        
+        times = [0]
+        dists = [z_total]
+        
+        # Phase 1: Fast down
+        t1 = fast_dist / z_fast_speed
+        times.append(t1)
+        dists.append(z_total - fast_dist) # should be s_dist
+        
+        # Phase 2: Slow down
+        t2 = t1 + s_dist / z_slow_speed
+        times.append(t2)
+        dists.append(0)
+        
+        return times, dists
+
+    # Generate data
+    dry_lift_t, dry_lift_z = get_lift_profile(z_slow_dry)
+    wet_lift_t, wet_lift_z = get_lift_profile(z_slow_wet)
+    dry_sink_t, dry_sink_z = get_sink_profile(z_slow_dry) # Assuming dry sink uses dry slow zone
+    wet_sink_t, wet_sink_z = get_sink_profile(z_slow_wet)
+    
+    # Plot
+    plt.figure(figsize=(10, 4))
+    plt.plot(dry_lift_t, dry_lift_z, label='Dry Lift (Type 0)', color='blue')
+    plt.plot(dry_sink_t, dry_sink_z, label='Dry Sink (Type 0)', color='cyan', linestyle='--')
+    plt.plot(wet_lift_t, wet_lift_z, label='Wet Lift (Type 1)', color='green')
+    plt.plot(wet_sink_t, wet_sink_z, label='Wet Sink (Type 1)', color='lime', linestyle='--')
+    
+    plt.title(f'Transporter {transporter_id} Z movement')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Distance (mm)')
+    plt.grid(True)
+    plt.legend()
+    
+    images_dir = os.path.join(output_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    filename = f'transporter_{transporter_id}_z_movement.png'
+    filepath = os.path.join(images_dir, filename)
+    plt.savefig(filepath)
+    plt.close()
+    return filepath
+
+
+def generate_x_speed_chart(transporter_id, physics, output_dir):
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+    import numpy as np
+    
+    x_speed = physics.get('X_speed', 1000)
+    x_acc_time = physics.get('X_acc_time', 1)
+    x_dec_time = physics.get('X_dec_time', 1)
+    
+    distances = [500, 2500, 5000]
+    colors = ['red', 'blue', 'green']
+    
+    plt.figure(figsize=(10, 4))
+    
+    for dist, color in zip(distances, colors):
+        # Calculate profile
+        accel = x_speed / x_acc_time if x_acc_time > 0 else x_speed
+        decel = x_speed / x_dec_time if x_dec_time > 0 else x_speed
+        
+        s_accel = 0.5 * accel * x_acc_time**2
+        s_decel = 0.5 * decel * x_dec_time**2
+        
+        times = []
+        speeds = []
+        
+        if dist < s_accel + s_decel:
+            # Triangle profile
+            # v_peak = sqrt(2 * dist * (accel * decel) / (accel + decel))
+            v_peak = np.sqrt(2 * dist * (accel * decel) / (accel + decel))
+            t1 = v_peak / accel
+            t2 = t1 + v_peak / decel
+            
+            times = [0, t1, t2]
+            speeds = [0, v_peak, 0]
+        else:
+            # Trapezoid profile
+            t1 = x_acc_time
+            s_const = dist - s_accel - s_decel
+            t_const = s_const / x_speed
+            t2 = t1 + t_const
+            t3 = t2 + x_dec_time
+            
+            times = [0, t1, t2, t3]
+            speeds = [0, x_speed, x_speed, 0]
+            
+        plt.plot(times, speeds, label=f'{dist} mm', color=color)
+        
+    plt.title(f'Transporter {transporter_id} X movement speed profile')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Speed (mm/s)')
+    plt.grid(True)
+    plt.legend()
+    plt.gca().xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    
+    images_dir = os.path.join(output_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    filename = f'transporter_{transporter_id}_x_speed.png'
+    filepath = os.path.join(images_dir, filename)
+    plt.savefig(filepath)
+    plt.close()
+    return filepath
+
 def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
     """Add one PDF page per transporter with a simple vertical bar:
     - Total height (full bar)
@@ -884,726 +1056,33 @@ def add_per_transporter_physics_pages(output_dir, pdf, color_map=None):
         text_width_full = pdf.w - pdf.l_margin - pdf.r_margin
         pdf.set_xy(pdf.l_margin, pdf.get_y())
         pdf.multi_cell(text_width_full, 6, description)
-        pdf.ln(2)
+        pdf.ln(10)
 
-        # Draw the Z-profile bar as before
-        left = pdf.l_margin + 2
-        bar_width = 12
-        top = pdf.get_y() + 4
-        max_bar_height = max(100, pdf.h * 0.45)
-        bar_height = min(max_bar_height, pdf.h - top - 70)
-        bar_height = bar_height * float(Z_BAR_VERTICAL_SCALE)
-        scale = bar_height / ZT if ZT > 0 else 1.0
+        # --- Z-Movement Chart ---
+        chart_path = generate_z_profile_chart(t, r, output_dir)
+        if os.path.exists(chart_path):
+            img_y = pdf.get_y() + 2
+            img_w = pdf.w - pdf.l_margin - pdf.r_margin
+            pdf.image(chart_path, x=pdf.l_margin, y=img_y, w=img_w)
 
-        fill_color = top_color
-        if color_map and t in color_map:
-            try:
-                hexc = color_map[t]
-                rcol, gcol, bcol = tuple(int(hexc.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
-                fill_color = (rcol, gcol, bcol)
-            except Exception:
-                pass
-        pdf.set_draw_color(*border)
-        pdf.set_fill_color(*fill_color)
-        pdf.rect(left, top, bar_width, bar_height, 'F')
-        pdf.rect(left, top, bar_width, bar_height, 'D')
-
-        # --- NEW: Speed vs Time plot for x-movement (horizontal) ---
-        # Read transporter x-physics from CSV
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import tempfile
-        import pandas as pd
-        # Find transporter row in physics CSV
-        candidates = [
-            os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
-            os.path.join(output_dir, 'initialization', 'transporters.csv'),
-        ]
-        path = next((p for p in candidates if os.path.exists(p)), None)
-        if path:
-            df = pd.read_csv(path)
-            tid_col = None
-            for key in ['Transporter_id', 'Transporter', 'Id']:
-                if key in df.columns:
-                    tid_col = key
-                    break
-            if tid_col is None:
-                tid_col = df.columns[0]
-            row = df[df[tid_col] == t]
-            if row.empty:
-                row = df[df[tid_col].astype(str) == str(t)]
-            if not row.empty:
-                row = row.iloc[0]
-                # Get physics params
-                max_speed = float(row.get('Max_speed (mm/s)', 0.0))
-                acc_time = float(row.get('Acceleration_time (s)', 0.0))
-                dec_time = float(row.get('Deceleration_time (s)', 0.0))
-                # Only plot if all params are positive
-                if max_speed > 0 and acc_time > 0 and dec_time > 0:
-                    def speed_profile(distance):
-                        # Returns (t, v) arrays for the move
-                        accel = max_speed / acc_time
-                        decel = max_speed / dec_time
-                        t_accel_full = max_speed / accel
-                        t_decel_full = max_speed / decel
-                        s_accel_full = 0.5 * accel * t_accel_full ** 2
-                        s_decel_full = 0.5 * decel * t_decel_full ** 2
-                        
-                        if distance < s_accel_full + s_decel_full:
-                            # Triangular profile - doesn't reach max_speed
-                            # v_peak^2 = 2 * accel * s_accel
-                            # v_peak^2 = 2 * decel * s_decel
-                            # s_accel + s_decel = distance
-                            # Solve: v_peak = sqrt(2 * distance * accel * decel / (accel + decel))
-                            v_peak = np.sqrt(2 * distance * accel * decel / (accel + decel))
-                            t_accel = v_peak / accel
-                            t_decel = v_peak / decel
-                            t_total = t_accel + t_decel
-                            t = np.linspace(0, t_total, 100)
-                            v = np.where(t < t_accel, 
-                                        accel * t, 
-                                        v_peak - decel * (t - t_accel))
-                            v = np.clip(v, 0, v_peak)
-                        else:
-                            # Trapezoidal profile
-                            s_const = distance - s_accel_full - s_decel_full
-                            t_const = s_const / max_speed
-                            t1 = np.linspace(0, t_accel_full, 40)
-                            t2 = np.linspace(t_accel_full, t_accel_full + t_const, 20)
-                            t3 = np.linspace(t_accel_full + t_const, t_accel_full + t_const + t_decel_full, 40)
-                            v1 = accel * t1
-                            v2 = np.full_like(t2, max_speed)
-                            v3 = max_speed - decel * (t3 - (t_accel_full + t_const))
-                            t = np.concatenate([t1, t2, t3])
-                            v = np.concatenate([v1, v2, v3])
-                            v = np.clip(v, 0, max_speed)
-                        return t, v
-
-                    # increase figure size to make the X-graph taller; was (5.5,2.2)
-                    fig, ax = plt.subplots(figsize=(8.5, 4.2))
-                    # Use transporter color for all curves
-                    transporter_color = fill_color  # Using the same color as the Z-profile bar
-                    # Convert RGB tuple (0-255) to hex for matplotlib
-                    if isinstance(transporter_color, tuple) and len(transporter_color) == 3:
-                        transporter_hex = '#{:02x}{:02x}{:02x}'.format(
-                            int(transporter_color[0]), 
-                            int(transporter_color[1]), 
-                            int(transporter_color[2])
-                        )
-                    else:
-                        transporter_hex = '#3498db'  # fallback blue
-                    
-                    dists = [500, 2500, 5000]
-                    labels = ['500 mm move', '2500 mm move', '5000 mm move']
-                    all_tmax = []
-                    all_vmax = []
-                    for i, dist in enumerate(dists):
-                        tvals, vvals = speed_profile(dist)
-                        all_tmax.append(np.max(tvals) if len(tvals) else 0)
-                        all_vmax.append(np.max(vvals) if len(vvals) else 0)
-                        ax.plot(tvals, vvals, color=transporter_hex, label=labels[i], alpha=0.7 + i*0.15, linewidth=2)
-
-                    # Determine axis bounds: origin at (0,0) in lower-left
-                    import math
-                    max_t = max(all_tmax) if all_tmax else 0
-                    max_v = max(all_vmax) if all_vmax else 0
-                    # Ceil to next full second for nicer integer ticks
-                    max_t_ceiled = max(1, int(math.ceil(max_t)))
-                    max_v_ceiled = max(1, int(math.ceil(max_v)))
-                    # Add small margin to ensure rightmost gridline is visible
-                    ax.set_xlim(0, max_t_ceiled + 0.5)
-                    ax.set_ylim(0, max_v_ceiled)
-
-                    # Set x-axis ticks to full-second integer ticks
-                    xticks = np.arange(0, max_t_ceiled + 1, 1)
-                    ax.set_xticks(xticks)
-
-                    # Ensure spine/axis placement is the conventional lower-left origin
-                    ax.spines['top'].set_visible(False)
-                    ax.spines['right'].set_visible(False)
-                    ax.xaxis.set_ticks_position('bottom')
-                    ax.yaxis.set_ticks_position('left')
-
-                    # No tick marks - only labels
-                    ax.tick_params(axis='x', which='major', length=0, width=0)
-                    ax.tick_params(axis='y', which='major', length=0, width=0)
-                    ax.minorticks_off()
-
-                    # Use consistent font sizes optimized for visual appearance in PDF
-                    # These sizes are tuned to match the upper Z-graph visual appearance
-                    ax.set_xlabel('Time (s)', fontsize=10)
-                    ax.set_ylabel('Speed (mm/s)', fontsize=10)
-                    ax.tick_params(axis='both', which='major', labelsize=10)
-
-                    # No standalone title per request; legend removed
-                    ax.grid(alpha=0.3)
-                    
-                    # Add distance labels at end of each curve (right-aligned near endpoint, above X-axis)
-                    for i, (dist, label_text) in enumerate(zip(dists, ['500 mm', '2500 mm', '5000 mm'])):
-                        tvals, vvals = speed_profile(dist)
-                        if len(tvals) > 0:
-                            # Get endpoint coordinates
-                            t_end = tvals[-1]
-                            # Place text above X-axis (positive Y), slightly left of endpoint
-                            ax.text(t_end - 0.3, max_v_ceiled * 0.05, label_text, 
-                                   ha='right', va='bottom', fontsize=10, color='black',
-                                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='none', alpha=0.8))
-                    
-                    plt.tight_layout()
-                    # Save to temp file and insert into PDF
-                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpf:
-                        fig.savefig(tmpf.name, dpi=120, bbox_inches='tight')
-                        plt.close(fig)
-                        img_x = left + bar_width + 15
-                        img_y = top + bar_height + 15
-                        img_w = pdf.w - pdf.l_margin - img_x - 2
-                        # triple the previous image height to make the X-graph three times taller, then reduce by 10%
-                        img_h = 38 * 3 * 0.9  # mm (reduced by 10%)
-                        # Place image full width below Z-bar with increased margin
-                        pdf.set_xy(pdf.l_margin, top + bar_height + 15)
-                        pdf.image(tmpf.name, x=pdf.l_margin, y=top + bar_height + 15, w=pdf.w - pdf.l_margin - pdf.r_margin, h=img_h)
-        # --- END NEW ---
-
-        # Restore horizontal change-point marker lines (thin black lines) without any
-        # textual annotations or legend — user did not ask to remove the lines.
-        pdf.set_draw_color(0, 0, 0)
-        # Draw thin horizontal lines at key change points: dry start, wet start, fast-end and total
-        for val in (ZD, ZW, Z_fast_end, ZT):
-            try:
-                if val is None:
-                    continue
-                y_pos = top + bar_height - (val * scale)
-                # Clip inside bar
-                if y_pos < top:
-                    y_pos = top
-                if y_pos > top + bar_height:
-                    y_pos = top + bar_height
-                # Draw a short horizontal marker starting at the bar's left edge
-                # and extending a few mm past the right edge for visibility.
-                pdf.set_line_width(0.3)
-                pdf.line(left, y_pos, left + bar_width + 4, y_pos)
-                # Draw right-side millimetre label for this marker (e.g., '300 mm')
-                try:
-                    label_val = int(round(val))
-                    label_txt = f"{label_val} mm"
-                except Exception:
-                    label_txt = ''
-                if label_txt:
-                    # Small font for the labels; don't change main cursor vertically
-                    label_x = left + bar_width + 6
-                    label_h = 4
-                    pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 1))
-                    pdf.set_text_color(0, 0, 0)
-                    pdf.set_xy(label_x, y_pos - (label_h / 2))
-                    pdf.cell(0, label_h, label_txt, ln=0, align='L')
-                    # Restore x back to left margin
-                    pdf.set_x(pdf.l_margin)
-            except Exception:
-                continue
-        pdf.set_line_width(0.0)
-
-        # Draw coordinate axes to the right of the Z bar (no functions plotted yet)
-        try:
-            # Move axes further right from the Z bar and use full available width to the
-            # right margin for the horizontal axis.
-            axis_x = left + bar_width + 28  # larger gap between bar and axis (mm)
-            axis_top = top
-            axis_bottom = top + bar_height
-            # Use the maximum available width up to the right margin
-            axis_width = max(40, pdf.w - pdf.r_margin - axis_x - 2)
-            pdf.set_draw_color(0, 0, 0)
-            # Try to compute data-driven total seconds for this transporter from physics
-            data_max_time = 0.0
-            try:
-                phys_candidates = [
-                    os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters_physics.csv'),
-                    os.path.join(output_dir, 'initialization', 'transporters _physics.csv'),
-                    os.path.join(output_dir, 'initialization', 'transporters_physics.csv'),
-                    os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
-                    os.path.join(output_dir, 'initialization', 'transporters.csv'),
-                ]
-                phys_path = next((p for p in phys_candidates if os.path.exists(p)), None)
-                if phys_path:
-                    p_df = pd.read_csv(phys_path)
-                    id_col = next((c for c in p_df.columns if c.lower().startswith('transporter')), p_df.columns[0])
-                    prow = None
-                    try:
-                        prow = p_df[p_df[id_col] == t].iloc[0]
-                    except Exception:
-                        try:
-                            prow = p_df[p_df[id_col].astype(str) == str(t)].iloc[0]
-                        except Exception:
-                            prow = None
-                    if prow is not None:
-                        def getnum(keylist):
-                            for col in p_df.columns:
-                                for k in keylist:
-                                    if col.replace(' ', '').lower().startswith(k.replace(' ', '').lower()):
-                                        try:
-                                            return float(prow[col])
-                                        except Exception:
-                                            try:
-                                                return float(str(prow[col]).strip())
-                                            except Exception:
-                                                return None
-                            return None
-
-                        ZT = getnum(['Z_total_distance', 'Z_total']) or 0.0
-                        ZD = getnum(['Z_slow_distance_dry', 'Z_slow_dry']) or 0.0
-                        ZW = getnum(['Z_slow_distance_wet', 'Z_slow_wet']) or 0.0
-                        ZE = getnum(['Z_slow_end_distance', 'Z_slow_end']) or 0.0
-                        slow_speed = getnum(['Z_slow_speed']) or 0.0
-                        fast_speed = getnum(['Z_fast_speed']) or 0.0
-
-                        def max_time_for(bottom):
-                            bottom = max(0.0, min(bottom, ZT))
-                            top_seg = max(0.0, min(ZE, ZT - bottom))
-                            middle = max(0.0, ZT - bottom - top_seg)
-                            total = 0.0
-                            if bottom > 0 and slow_speed > 0:
-                                total += bottom / slow_speed
-                            if middle > 0 and fast_speed > 0:
-                                total += middle / fast_speed
-                            if top_seg > 0 and slow_speed > 0:
-                                total += top_seg / slow_speed
-                            return total
-
-                        mt0 = max_time_for(ZD)
-                        mt1 = max_time_for(ZW)
-                        data_max_time = max(mt0, mt1)
-            except Exception:
-                data_max_time = 0.0
-
-            pdf.set_draw_color(0, 0, 0)
-            pdf.set_line_width(0.5)
-            # Vertical axis (height) aligned with Z bar
-            pdf.line(axis_x, axis_bottom, axis_x, axis_top)
-
-            # Horizontal helper lines across the axes at measurement levels (behind curves)
-            try:
-                pdf.set_line_width(0.2)
-                pdf.set_draw_color(200, 200, 200)
-                for val in (ZD, ZW, Z_fast_end, ZT):
-                    if val is None:
-                        continue
-                    y_pos = top + bar_height - (val * scale)
-                    if y_pos < top:
-                        y_pos = top
-                    if y_pos > top + bar_height:
-                        y_pos = top + bar_height
-                    # draw faint horizontal line across the time-axis area
-                    pdf.line(axis_x, y_pos, axis_x + axis_width, y_pos)
-            except Exception:
-                pass
-
-            # Vertical ticks aligned with the bar's marker lines
-            for val in (ZD, ZW, Z_fast_end, ZT):
-                try:
-                    if val is None:
-                        continue
-                    y_pos = top + bar_height - (val * scale)
-                    if y_pos < top:
-                        y_pos = top
-                    if y_pos > top + bar_height:
-                        y_pos = top + bar_height
-                    # small tick to the right of the axis (no label; heights are on Z bar)
-                    pdf.line(axis_x, y_pos, axis_x + 3, y_pos)
-                except Exception:
-                    continue
-
-            # Horizontal axis (time) at axis_bottom - BLACK color
-            pdf.set_draw_color(0, 0, 0)
-            pdf.set_line_width(0.5)
-            pdf.line(axis_x, axis_bottom, axis_x + axis_width, axis_bottom)
-            # choose mm per 0.5s
-            mm_per_half_sec = 10
-            # limit by axis_width
-            num_div = int(axis_width // mm_per_half_sec)
-            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 1))
-            # Determine effective total seconds for axis labels
-            # compute axis seconds: prefer data_max_time, round up to nearest whole second
-            axis_min_seconds = (num_div * 0.5) if num_div > 0 else 0.0
-            raw_total = max(data_max_time or 0.0, axis_min_seconds, 1e-6)
-            # round up to integer seconds for clean tick labels
-            total_seconds_for_axis = float(int(math.ceil(raw_total)))
-            # Decide tick delta in seconds (1s grid). Compute number of seconds to show
-            tick_seconds = 1
-            num_seconds = int(max(1, total_seconds_for_axis))
-            # map seconds to positions across axis_width
-            pdf.set_text_color(0, 0, 0)
-            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 1))
-            # Draw faint vertical grid lines at each full second across the axes
-            for s in range(0, num_seconds + 1, tick_seconds):
-                frac = s / float(max(1, num_seconds))
-                x_tick = axis_x + frac * axis_width
-                # grid line (light gray) - keep for time reference
-                pdf.set_draw_color(200, 200, 200)
-                pdf.set_line_width(0.2)
-                pdf.line(x_tick, axis_bottom, x_tick, axis_top)
-                # tick mark REMOVED per user request - no black marks on X-axis
-                # Label only (black text)
-                pdf.set_draw_color(0, 0, 0)
-                txt = f"{s:d}"
-                pdf.set_xy(x_tick - 6, axis_bottom + 1)
-                pdf.cell(12, 4, txt, ln=0, align='C')
-                pdf.set_x(pdf.l_margin)
-
-            # Axis titles
-            # NOTE: per request, do not render the Y-axis 'Height (mm)' label to reduce clutter
-            pdf.set_text_color(0, 0, 0)
-            pdf.set_font(BODY_FONT_NAME, '', max(8, BODY_FONT_SIZE - 1))
-            pdf.set_xy(axis_x + axis_width/2 - 10, axis_bottom + 6)
-            pdf.cell(0, 4, 'Time (s)', ln=0)
-            pdf.set_line_width(0.0)
-        except Exception:
-            # don't fail the whole page if axes drawing fails
-            pass
-        # Draw transporter dynamics curves directly on the axes using physics data
-        try:
-            # load physics CSV (prefer snapshot cp_sat physics, then initialization)
-            candidates = [
-                os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters_physics.csv'),
-                os.path.join(output_dir, 'initialization', 'transporters _physics.csv'),
-                os.path.join(output_dir, 'initialization', 'transporters_physics.csv'),
-                os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
-                os.path.join(output_dir, 'initialization', 'transporters.csv'),
-            ]
-            phys_path = next((p for p in candidates if os.path.exists(p)), None)
-            if phys_path:
-                pdf.set_line_width(0.6)
-                try:
-                    p_df = pd.read_csv(phys_path)
-                    # normalize id col
-                    id_col = next((c for c in p_df.columns if c.lower().startswith('transporter')), None)
-                    if id_col is None:
-                        id_col = p_df.columns[0]
-                    row = None
-                    try:
-                        row = p_df[p_df[id_col] == t].iloc[0]
-                    except Exception:
-                        try:
-                            row = p_df[p_df[id_col].astype(str) == str(t)].iloc[0]
-                        except Exception:
-                            row = None
-
-                    if row is not None:
-                        # read distances and speeds
-                        def get(k):
-                            for col in p_df.columns:
-                                if col.replace(' ', '').lower().startswith(k.replace(' ', '').lower()):
-                                    try:
-                                        return float(row[col])
-                                    except Exception:
-                                        try:
-                                            return float(str(row[col]).strip())
-                                        except Exception:
-                                            return None
-                            return None
-
-                        ZT = get('Z_total_distance') or get('Z_total') or 0.0
-                        ZD = get('Z_slow_distance_dry') or 0.0
-                        ZW = get('Z_slow_distance_wet') or 0.0
-                        ZE = get('Z_slow_end_distance') or 0.0
-                        slow_speed = get('Z_slow_speed') or get('Z_slow_speed (mm/s)') or 0.0
-                        fast_speed = get('Z_fast_speed') or get('Z_fast_speed (mm/s)') or 0.0
-
-                        if ZT > 0 and (slow_speed and fast_speed):
-                            # build piecewise profiles
-                            def build_profile(bottom_slow_len):
-                                bottom = max(0.0, min(bottom_slow_len, ZT))
-                                top = max(0.0, min(ZE, ZT - bottom))
-                                middle = max(0.0, ZT - bottom - top)
-                                pts_x = []
-                                pts_y = []
-                                # sample bottom slow
-                                if bottom > 0:
-                                    n = max(4, int(min(40, bottom/5)))
-                                    xs = [i*(bottom/(n-1)) for i in range(n)]
-                                    ts = [x/slow_speed for x in xs]
-                                    pts_x.extend(ts)
-                                    pts_y.extend(xs)
-                                # sample middle fast
-                                if middle > 0:
-                                    n = max(4, int(min(80, middle/5)))
-                                    xs_m = [bottom + i*(middle/(n-1)) for i in range(n)]
-                                    ts_m = [(x-bottom)/fast_speed + (pts_x[-1] if pts_x else 0) for x in xs_m]
-                                    pts_x.extend(ts_m)
-                                    pts_y.extend(xs_m)
-                                # sample top slow
-                                if top > 0:
-                                    n = max(4, int(min(40, top/5)))
-                                    xs_t = [bottom + middle + i*(top/(n-1)) for i in range(n)]
-                                    ts_t = [(x-(bottom+middle))/slow_speed + (pts_x[-1] if pts_x else 0) for x in xs_t]
-                                    pts_x.extend(ts_t)
-                                    pts_y.extend(xs_t)
-                                # ensure monotonic times
-                                # normalize times to start at 0
-                                if len(pts_x) > 0:
-                                    base = pts_x[0]
-                                    pts_x = [p - base for p in pts_x]
-                                return pts_x, pts_y
-
-                            profiles = []
-                            # type0 lift (bottom->top)
-                            p_lift_0 = build_profile(ZD)
-                            profiles.append((p_lift_0, 'type0 lift'))
-                            # type0 sink (top->bottom): build explicitly so sink starts fast
-                            if ZT > 0:
-                                try:
-                                    # change_point is the position (mm from bottom) where the sink should switch to slow
-                                    change_point_dry = ZD
-                                    # build sink profile starting at ZT down to 0, switching to slow when <= change_point
-                                    def build_sink_profile(change_point):
-                                        pts_t = []
-                                        pts_p = []
-                                        # fast segment: from ZT down to change_point
-                                        if change_point < ZT:
-                                            length_fast = ZT - change_point
-                                            n_fast = max(4, int(min(80, length_fast/5)))
-                                            for i in range(n_fast):
-                                                p = ZT - i * (length_fast / (n_fast - 1))
-                                                pts_p.append(p)
-                                        # slow segment: from change_point down to 0
-                                        if change_point > 0:
-                                            length_slow = change_point
-                                            n_slow = max(4, int(min(80, length_slow/5)))
-                                            for i in range(n_slow):
-                                                p = change_point - i * (length_slow / (n_slow - 1))
-                                                pts_p.append(p)
-                                        # ensure monotonic (descending) and unique
-                                        # compute times based on speeds
-                                        if not pts_p:
-                                            return [], []
-                                        times = [0.0]
-                                        for prev, cur in zip(pts_p, pts_p[1:]):
-                                            seg = abs(prev - cur)
-                                            speed = fast_speed if prev > change_point else slow_speed
-                                            dt = seg / (speed if speed > 0 else 1.0)
-                                            times.append(times[-1] + dt)
-                                        return times, pts_p
-
-                                    times0, pos0 = build_sink_profile(change_point_dry)
-                                    profiles.append(((times0, pos0), 'type0 sink'))
-                                except Exception:
-                                    pass
-                            # type1 lift
-                            p_lift_1 = build_profile(ZW)
-                            profiles.append((p_lift_1, 'type1 lift'))
-                            # type1 sink (top->bottom): build explicitly so sink starts fast
-                            if ZT > 0:
-                                try:
-                                    change_point_wet = ZW
-                                    def build_sink_profile(change_point):
-                                        pts_t = []
-                                        pts_p = []
-                                        if change_point < ZT:
-                                            length_fast = ZT - change_point
-                                            n_fast = max(4, int(min(80, length_fast/5)))
-                                            for i in range(n_fast):
-                                                p = ZT - i * (length_fast / (n_fast - 1))
-                                                pts_p.append(p)
-                                        if change_point > 0:
-                                            length_slow = change_point
-                                            n_slow = max(4, int(min(80, length_slow/5)))
-                                            for i in range(n_slow):
-                                                p = change_point - i * (length_slow / (n_slow - 1))
-                                                pts_p.append(p)
-                                        if not pts_p:
-                                            return [], []
-                                        times = [0.0]
-                                        for prev, cur in zip(pts_p, pts_p[1:]):
-                                            seg = abs(prev - cur)
-                                            speed = fast_speed if prev > change_point else slow_speed
-                                            dt = seg / (speed if speed > 0 else 1.0)
-                                            times.append(times[-1] + dt)
-                                        return times, pts_p
-
-                                    times1, pos1 = build_sink_profile(change_point_wet)
-                                    profiles.append(((times1, pos1), 'type1 sink'))
-                                except Exception:
-                                    pass
-
-                            # map to PDF coords and draw
-                            default_hex = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
-                            # compute effective total seconds from data (use axis tick range as minimum)
-                            max_time_in_profiles = 0.0
-                            for prof, _lbl in profiles:
-                                tvals, _p = prof
-                                if tvals:
-                                    max_time_in_profiles = max(max_time_in_profiles, max(tvals))
-                            axis_min_seconds = (num_div * 0.5) if num_div > 0 else 0.0
-                            effective_total_seconds = max(max_time_in_profiles, axis_min_seconds, 1e-6)
-                            # collect midpoints for smarter label placement after drawing
-                            midpoints = {}
-                            for idx, (prof, lbl) in enumerate(profiles):
-                                times, poss = prof
-                                if not times or not poss:
-                                    continue
-                                # choose color
-                                col = None
-                                try:
-                                    if color_map and t in color_map:
-                                        col = color_map[t]
-                                except Exception:
-                                    col = None
-                                if not col:
-                                    col = default_hex[idx % len(default_hex)]
-                                rcol, gcol, bcol = tuple(int(col.lstrip('#')[i:i+2], 16) for i in (0,2,4))
-                                pdf.set_draw_color(rcol, gcol, bcol)
-                                pdf.set_line_width(0.4)
-                                # draw polyline via small segments
-                                prev = None
-                                for time_val, pos_val in zip(times, poss):
-                                    # map time to x using data-driven scale into axis_width
-                                    frac = min(max(time_val / effective_total_seconds, 0.0), 1.0)
-                                    x = axis_x + frac * axis_width
-                                    # map pos to y
-                                    y = axis_bottom - (pos_val * scale)
-                                    if prev is not None:
-                                        pdf.line(prev[0], prev[1], x, y)
-                                    prev = (x, y)
-                                # store midpoint for this profile for deferred labeling
-                                try:
-                                    map_lbl = {
-                                        'type0 lift': 'Dry Lift',
-                                        'type0 sink': 'Dry Sink',
-                                        'type1 lift': 'Wet Lift',
-                                        'type1 sink': 'Wet Sink'
-                                    }
-                                    label_text = map_lbl.get(lbl, lbl)
-                                    mid_idx = max(0, min(len(times) - 1, len(times) // 2))
-                                    time_mid = times[mid_idx]
-                                    pos_mid = poss[mid_idx]
-                                    frac_mid = min(max(time_mid / float(effective_total_seconds or 1.0), 0.0), 1.0)
-                                    x_mid = axis_x + frac_mid * axis_width
-                                    y_mid = axis_bottom - (pos_mid * scale)
-                                    midpoints[lbl] = (x_mid, y_mid, label_text)
-                                except Exception:
-                                    pass
-                            # place labels after plotting all profiles using deterministic rules:
-                            # - Lifts: vertical position = ZW (upper speed-change height)
-                            # - Sinks: vertical position = ZD (lower speed-change height)
-                            # - Horizontal anchor: profile_end_time - 2.0 seconds (clamped to axis)
-                            try:
-                                pdf.set_font(BODY_FONT_NAME, '', max(7, BODY_FONT_SIZE - 3))
-                                pdf.set_text_color(0, 0, 0)
-
-                                # determine profile end time from drawn profiles
-                                profile_end_time = 0.0
-                                for prof, _lbl in profiles:
-                                    tvals, _ = prof
-                                    if tvals:
-                                        profile_end_time = max(profile_end_time, max(tvals))
-                                # fallback to effective_total_seconds if nothing found
-                                profile_end_time = max(profile_end_time, float(effective_total_seconds or 0.0))
-
-                                anchor_time = profile_end_time - 2.0
-                                if anchor_time < 0.5:
-                                    anchor_time = 0.5
-
-                                def time_to_x_coord(tval):
-                                    frac = min(max(float(tval) / float(effective_total_seconds or 1.0), 0.0), 1.0)
-                                    return axis_x + frac * axis_width
-
-                                def z_to_y_coord(zval):
-                                    # map mm to y coordinate on the axis
-                                    try:
-                                        y = axis_bottom - (float(zval) * scale)
-                                    except Exception:
-                                        y = axis_bottom
-                                    # clamp into axis vertical range
-                                    if y < axis_top:
-                                        y = axis_top
-                                    if y > axis_bottom:
-                                        y = axis_bottom
-                                    return y
-
-                                # prepare label text lookup (use midpoints text if available)
-                                lbl_map = {}
-                                for k, v in midpoints.items():
-                                    # v = (x_mid, y_mid, label_text)
-                                    lbl_map[k] = v[2]
-
-                                # Draw each label using its own profile end time as anchor (end_time - 2s)
-                                min_x = axis_x + 2
-                                max_x = axis_x + axis_width - 4
-                                y_lift = z_to_y_coord(ZW)
-                                y_sink = z_to_y_coord(ZD)
-
-                                # Build a map of label -> profile end time (seconds)
-                                end_time_map = {}
-                                for prof, lbl in profiles:
-                                    tvals, _p = prof
-                                    label_key = lbl
-                                    if tvals:
-                                        end_time_map[label_key] = max(tvals)
-                                    else:
-                                        end_time_map[label_key] = float(effective_total_seconds or 0.0)
-
-                                def compute_anchor_x_for_label(end_time_val):
-                                    # desired anchor time
-                                    at = float(end_time_val or 0.0) - 2.0
-                                    if at < 0.5:
-                                        at = 0.5
-                                    ax = time_to_x_coord(at)
-                                    # clamp to axis bounds
-                                    if ax < min_x:
-                                        ax = min_x
-                                    if ax > max_x:
-                                        ax = max_x
-                                    return ax
-
-                                # helper to ensure text fits in axis: if text overruns right edge, shift left
-                                def fit_text_x(x_start, text):
-                                    try:
-                                        tw = pdf.get_string_width(text)
-                                    except Exception:
-                                        tw = len(text) * 2.5
-                                    # if text would overflow right bound, move left so it fits
-                                    if x_start + tw > max_x:
-                                        x_start = max(min_x, max_x - tw)
-                                    return x_start
-
-                                # Draw labels per-profile (left edge anchored at computed x)
-                                # Raise labels higher (y - 6 instead of y - 2) to prevent overlap with grid lines
-                                if 'type1 lift' in lbl_map:
-                                    et = end_time_map.get('type1 lift', effective_total_seconds)
-                                    lx = compute_anchor_x_for_label(et)
-                                    lx = fit_text_x(lx, lbl_map['type1 lift'])
-                                    pdf.set_xy(lx, y_lift - 6)
-                                    pdf.cell(0, 4, lbl_map['type1 lift'], ln=0, align='L')
-
-                                if 'type0 lift' in lbl_map:
-                                    et = end_time_map.get('type0 lift', effective_total_seconds)
-                                    lx = compute_anchor_x_for_label(et)
-                                    lx = fit_text_x(lx, lbl_map['type0 lift'])
-                                    pdf.set_xy(lx, y_lift - 6)
-                                    pdf.cell(0, 4, lbl_map['type0 lift'], ln=0, align='L')
-
-                                if 'type1 sink' in lbl_map:
-                                    et = end_time_map.get('type1 sink', effective_total_seconds)
-                                    lx = compute_anchor_x_for_label(et)
-                                    lx = fit_text_x(lx, lbl_map['type1 sink'])
-                                    pdf.set_xy(lx, y_sink + 2)
-                                    pdf.cell(0, 4, lbl_map['type1 sink'], ln=0, align='L')
-
-                                if 'type0 sink' in lbl_map:
-                                    et = end_time_map.get('type0 sink', effective_total_seconds)
-                                    lx = compute_anchor_x_for_label(et)
-                                    lx = fit_text_x(lx, lbl_map['type0 sink'])
-                                    pdf.set_xy(lx, y_sink + 2)
-                                    pdf.cell(0, 4, lbl_map['type0 sink'], ln=0, align='L')
-
-                                pdf.set_x(pdf.l_margin)
-                            except Exception:
-                                pass
-                            # restore color
-                            pdf.set_draw_color(0,0,0)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+        # --- X-Movement Speed Profile Chart ---
+        x_speed_chart_path = generate_x_speed_chart(t, r, output_dir)
+        if os.path.exists(x_speed_chart_path):
+            # Estimate Z-chart height (aspect ratio 10:4)
+            img_w = pdf.w - pdf.l_margin - pdf.r_margin
+            z_chart_h = img_w * 0.4
+            
+            # Position X-chart below Z-chart
+            # Z-chart was placed at pdf.get_y() + 2
+            # So X-chart should be at (pdf.get_y() + 2) + z_chart_h + 5
+            x_chart_y = (pdf.get_y() + 2) + z_chart_h + 10
+            
+            # Check page break
+            if x_chart_y + z_chart_h > pdf.h - pdf.b_margin:
+                pdf.add_page()
+                x_chart_y = pdf.t_margin
+                
+            pdf.image(x_speed_chart_path, x=pdf.l_margin, y=x_chart_y, w=img_w)
 
 def create_transporter_temporal_load_chart(output_dir, reports_dir, color_map=None):
     """Luo ajallinen kuormituskaavio nostimille (5 min ikkunat)
@@ -1816,136 +1295,204 @@ def create_station_usage_chart(output_dir, reports_dir):
     return chart_path
 
 
-def create_transporter_batch_occupation_chart(output_dir, reports_dir, color_map=None):
-    """Luo kaavio nostimien keskimääräisestä eräkohtaisesta varausajasta
-
-    color_map: optional dict {transporter_id: hexcolor}
-    """
-    # Käytä transporters_movement.csv, joka sisältää kaikki vaiheet (0-6)
-    movement_file = os.path.join(output_dir, 'logs', 'transporters_movement.csv')
-    
-    if not os.path.exists(movement_file):
-        print(f"[WARN] Movement file not found: {movement_file}")
-        return None
-    
-    movements = pd.read_csv(movement_file)
-    
-    # Laske kunkin vaiheen kesto
-    movements['PhaseDuration'] = movements['End_Time'] - movements['Start_Time']
-    
-    # Suodata vain aktiiviset vaiheet 1-4 (ei idle)
-    # Vaiheet: 1=Move to lift, 2=Lifting, 3=Move to sink, 4=Sinking
-    active_phases = movements[movements['Phase'].isin([1, 2, 3, 4])].copy()
-    
-    # Laske jokaiselle nostimelle: sum(PhaseDuration) per Batch (vaiheet 1-4)
-    batch_occupation = active_phases.groupby(['Transporter', 'Batch'])['PhaseDuration'].sum().reset_index()
-    batch_occupation.rename(columns={'PhaseDuration': 'TotalOccupationTime'}, inplace=True)
-    
-    # Laske keskiarvo per transporter (eräkohtainen summa / erien määrä)
-    avg_occupation = batch_occupation.groupby('Transporter')['TotalOccupationTime'].mean().reset_index()
-    avg_occupation.rename(columns={'TotalOccupationTime': 'AvgOccupationPerBatch'}, inplace=True)
-    avg_occupation['AvgOccupationPerBatch_min'] = avg_occupation['AvgOccupationPerBatch'] / 60
-    
-    # Järjestä transporterit
-    avg_occupation = avg_occupation.sort_values('Transporter')
-
-def create_transporter_batch_occupation_chart(output_dir, reports_dir, color_map=None):
-    """Luo kaavio nostimien keskimääräisestä eräkohtaisesta varausajasta
-
-    color_map: optional dict {transporter_id: hexcolor}
-    """
-    # Laske ja piirrä kaavio uudelleen tässä funktiossa
-    movement_file = os.path.join(output_dir, 'logs', 'transporters_movement.csv')
-    if not os.path.exists(movement_file):
-        print(f"[WARN] Movement file not found: {movement_file}")
-        return None
-
-    movements = pd.read_csv(movement_file)
-    movements['PhaseDuration'] = movements['End_Time'] - movements['Start_Time']
-    active_phases = movements[movements['Phase'].isin([1, 2, 3, 4])].copy()
-    batch_occupation = active_phases.groupby(['Transporter', 'Batch'])['PhaseDuration'].sum().reset_index()
-    batch_occupation.rename(columns={'PhaseDuration': 'TotalOccupationTime'}, inplace=True)
-    avg_occupation = batch_occupation.groupby('Transporter')['TotalOccupationTime'].mean().reset_index()
-    avg_occupation.rename(columns={'TotalOccupationTime': 'AvgOccupationPerBatch'}, inplace=True)
-    avg_occupation['AvgOccupationPerBatch_min'] = avg_occupation['AvgOccupationPerBatch'] / 60
-    avg_occupation = avg_occupation.sort_values('Transporter')
-
-    # Luo pylväskaavio
-    fig, ax = plt.subplots(figsize=(10, 5))
-    transporters = [f"Transporter {int(t)}" for t in avg_occupation['Transporter']]
-    occupation_times = avg_occupation['AvgOccupationPerBatch_min'].values
-
-    # Värit
-    default_colors = ['#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#e74c3c', '#34495e']
-    bar_colors = []
-    for i, t in enumerate(transporters):
-        try:
-            tid = int(t.split()[-1]) if isinstance(t, str) and ' ' in t else int(t)
-        except Exception:
-            tid = None
-        if tid and color_map and tid in color_map:
-            bar_colors.append(color_map[tid])
-        else:
-            bar_colors.append(default_colors[i % len(default_colors)])
-
-    bars = ax.bar(transporters, occupation_times, color=bar_colors, edgecolor='black', linewidth=0.8)
-
-    # Lisää arvot palkkien päälle
-    for bar, value in zip(bars, occupation_times):
-        height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2., height,
-                f'{value:.1f}',
-                ha='center', va='bottom', fontsize=10, fontweight='bold')
-
-    ax.set_xlabel('')
-    ax.set_ylabel('min', fontsize=12)
-    ax.grid(axis='y', alpha=0.3, linestyle='--')
-
-    plt.tight_layout()
-    images_dir = os.path.join(reports_dir, 'images')
-    os.makedirs(images_dir, exist_ok=True)
-    chart_path = os.path.join(images_dir, 'transporter_batch_occupation.png')
-    plt.savefig(chart_path, dpi=150, bbox_inches='tight')
-    plt.close()
-
-    return chart_path
-
-
-def create_batch_leadtime_chart(output_dir, reports_dir):
-    """Luo erän läpimenoaikakaavio"""
+def create_station_radar_chart(output_dir, reports_dir):
+    """Luo asemaryhmien kuormitus-radarkaavio (pullonkaula-analyysi)"""
+    station_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_station_schedule.csv'))
     batch_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv'))
     
-    # Laske läpimenoajat
-    batch_times = batch_schedule.groupby('Batch').agg({'EntryTime': 'min', 'ExitTime': 'max'})
-    batch_times['LeadTime'] = (batch_times['ExitTime'] - batch_times['EntryTime']) / 60  # minuutteina
-    batch_times = batch_times.sort_index()
+    # Load stations from JSON
+    from load_stations_json import load_stations_from_json
+    init_dir = os.path.join(output_dir, 'initialization')
+    stations_df = load_stations_from_json(init_dir)
     
-    fig, ax = plt.subplots(figsize=(12, 6))
+    # Laske kunkin aseman työaika
+    station_schedule['Duration'] = station_schedule['ExitTime'] - station_schedule['EntryTime']
     
-    batches = [f"B{int(b)}" for b in batch_times.index]
-    lead_times = batch_times['LeadTime'].values
+    # Lisää asemaryhmä- ja nimitiedot
+    station_info = stations_df.set_index('Number')[['Group', 'Name']].to_dict('index')
+    station_schedule['Group'] = station_schedule['Station'].map(lambda s: station_info.get(s, {}).get('Group', 0))
     
-    bars = ax.bar(range(len(batches)), lead_times, color='#9b59b6')
-    ax.set_xlabel('Batch', fontsize=12)
-    ax.set_ylabel('Lead Time (minutes)', fontsize=12)
-    ax.set_title('Batch Lead Time Distribution', fontsize=14, fontweight='bold')
-    ax.set_xticks(range(len(batches)))
-    ax.set_xticklabels(batches, rotation=45, ha='right')
-    ax.grid(axis='y', alpha=0.3)
+    # Laske kokonaistyöaika per ryhmä
+    group_work_time = station_schedule.groupby('Group')['Duration'].sum()
     
-    # Keskiarvo-viiva
-    avg_leadtime = lead_times.mean()
-    ax.axhline(y=avg_leadtime, color='#e74c3c', linestyle='--', linewidth=2, label=f'Average: {avg_leadtime:.1f} min')
-    ax.legend()
+    # Asemien määrä per ryhmä
+    stations_per_group = stations_df.groupby('Group').size()
+    
+    # Erät yhteensä
+    total_batches = batch_schedule['Batch'].nunique()
+    if total_batches == 0:
+        return None
+
+    # Laske "Group Cycle Time" = (TotalWorkTime / TotalBatches) / NumStations
+    group_cycle_times = {}
+    all_groups = sorted(stations_df['Group'].unique())
+    
+    for group in all_groups:
+        total_duration = group_work_time.get(group, 0)
+        num_stations = stations_per_group.get(group, 1)
+        cycle_time = (total_duration / total_batches) / num_stations
+        group_cycle_times[group] = cycle_time
+        
+    # Etsi pullonkaula (maksimi cycle time)
+    if not group_cycle_times:
+        return None
+        
+    max_cycle_time = max(group_cycle_times.values())
+    if max_cycle_time == 0:
+        return None
+
+    # Laske suhteellinen kuormitus (Load %)
+    group_loads = []
+    group_labels = []
+    
+    # Järjestys: Asemaryhmäjärjestys (oletetaan numeerinen järjestys Group ID:n mukaan)
+    for group in all_groups:
+        load_pct = (group_cycle_times[group] / max_cycle_time) * 100
+        group_loads.append(load_pct)
+        
+        # Hae ryhmän nimi (ensimmäinen asema)
+        group_stations = stations_df[stations_df['Group'] == group]
+        if not group_stations.empty:
+            group_labels.append(group_stations.iloc[0]['Name'])
+        else:
+            group_labels.append(f"G{group}")
+
+    # --- Plotting Radar Chart ---
+    N = len(group_labels)
+    theta = np.linspace(0.0, 2 * np.pi, N, endpoint=False)
+    width = 2 * np.pi / N
+    
+    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={'projection': 'polar'})
+    
+    # Set start to top (pi/2) and direction clockwise (-1)
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+    
+    # Draw bars
+    bars = ax.bar(theta, group_loads, width=width, bottom=0.0, color='#3498db', alpha=0.6, edgecolor='white')
+    
+    # Labels
+    ax.set_xticks(theta)
+    ax.set_xticklabels(group_labels)
+    
+    # Y-axis (Load %)
+    ax.set_ylim(0, 100)
+    ax.set_yticks([20, 40, 60, 80, 100])
+    ax.set_yticklabels(['20%', '40%', '60%', '80%', '100%'], color='gray', size=8)
+    
+    ax.set_title('Bottleneck Analysis: Relative Load per Station Group\n(100% = Bottleneck Pace)', va='bottom', fontsize=14, fontweight='bold')
+    
+    # Highlight bottleneck (100%)
+    for bar, val in zip(bars, group_loads):
+        if val >= 99.9:
+            bar.set_color('#e74c3c') # Red for bottleneck
+            bar.set_alpha(0.8)
     
     plt.tight_layout()
     images_dir = os.path.join(reports_dir, 'images')
     os.makedirs(images_dir, exist_ok=True)
-    chart_path = os.path.join(images_dir, 'batch_leadtime_chart.png')
+    chart_path = os.path.join(images_dir, 'station_radar_chart.png')
     plt.savefig(chart_path, dpi=150, bbox_inches='tight')
     plt.close()
     
     return chart_path
+
+
+def _load_transporter_physics(output_dir):
+    """Load transporter physics parameters and normalize columns.
+
+    Returns a list of dict rows with keys:
+      Transporter, Z_total, Z_slow_dry, Z_slow_wet, Z_slow_end
+    """
+    import pandas as pd
+    # Prefer cp_sat snapshot if available, else initialization physics.
+    candidates = [
+        os.path.join(output_dir, 'cp_sat', 'cp_sat_transporters.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters_physics.csv'),
+        os.path.join(output_dir, 'initialization', 'transporters _physics.csv'),  # fallback if naming has a space
+        os.path.join(output_dir, 'initialization', 'transporters.csv'),
+    ]
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if not path:
+        return []
+
+    df = pd.read_csv(path)
+
+    # Map potential column names (with or without units)
+    def get_col(df, preferred, fallback_prefix):
+        if preferred in df.columns:
+            return df[preferred]
+        # try to match without unit suffix
+        base = preferred.split(' (')[0]
+        for c in df.columns:
+            if c.split(' (')[0] == base:
+                return df[c]
+        # try explicit fallback_prefix
+        for c in df.columns:
+            if c.lower().startswith(fallback_prefix):
+                return df[c]
+        return None
+
+    tid_col = None
+    for key in ['Transporter_id', 'Transporter', 'Id']:
+        if key in df.columns:
+            tid_col = key
+            break
+    if tid_col is None:
+        # create a simple index-based id if not present
+        df['Transporter'] = list(range(1, len(df) + 1))
+        tid_col = 'Transporter'
+
+    z_total = get_col(df, 'Z_total_distance (mm)', 'z_total')
+    z_slow_dry = get_col(df, 'Z_slow_distance_dry (mm)', 'z_slow_dry')
+    z_slow_wet = get_col(df, 'Z_slow_distance_wet (mm)', 'z_slow_wet')
+    z_slow_end = get_col(df, 'Z_slow_end_distance (mm)', 'z_slow_end')
+    z_slow_speed = get_col(df, 'Z_slow_speed (mm/s)', 'z_slow_speed')
+    z_fast_speed = get_col(df, 'Z_fast_speed (mm/s)', 'z_fast_speed')
+    x_max_speed = get_col(df, 'X_max_speed (mm/s)', 'x_max_speed')
+    x_acc_time = get_col(df, 'X_acceleration_time (s)', 'x_acceleration')
+    x_dec_time = get_col(df, 'X_deceleration_time (s)', 'x_deceleration')
+
+    # Build normalized rows
+    rows = []
+    for _, r in df.iterrows():
+        try:
+            t = int(r[tid_col])
+        except Exception:
+            t = int(_ + 1)
+
+        def num(val):
+            try:
+                return float(val)
+            except Exception:
+                return 0.0
+
+        ZT = num(r[z_total.name]) if z_total is not None else 0.0
+        ZD = min(num(r[z_slow_dry.name]) if z_slow_dry is not None else 0.0, ZT)
+        ZW = min(num(r[z_slow_wet.name]) if z_slow_wet is not None else 0.0, ZT)
+        ZE = min(num(r[z_slow_end.name]) if z_slow_end is not None else 0.0, ZT)
+        ZS = num(r[z_slow_speed.name]) if z_slow_speed is not None else 100.0
+        ZF = num(r[z_fast_speed.name]) if z_fast_speed is not None else 200.0
+        
+        XS = num(r[x_max_speed.name]) if x_max_speed is not None else 1000.0
+        XA = num(r[x_acc_time.name]) if x_acc_time is not None else 1.0
+        XD = num(r[x_dec_time.name]) if x_dec_time is not None else 1.0
+
+        rows.append({
+            'Transporter': t,
+            'Z_total': ZT,
+            'Z_slow_dry': ZD,
+            'Z_slow_wet': ZW,
+            'Z_slow_end': ZE,
+            'Z_slow_speed': ZS,
+            'Z_fast_speed': ZF,
+            'X_speed': XS,
+            'X_acc_time': XA,
+            'X_dec_time': XD
+        })
+
+    rows = [r for r in rows if r['Z_total'] > 0]
+    return sorted(rows, key=lambda x: x['Transporter'])
 
 
 def generate_simulation_report(output_dir):
@@ -1966,28 +1513,22 @@ def generate_simulation_report(output_dir):
         plant = 'Plant'
     
     # Derive report timestamp from the simulation snapshot folder name when possible
-    # (so the front page shows the simulation run time, not the PDF creation time).
     folder_name = os.path.basename(os.path.abspath(output_dir))
     timestamp = None
     try:
         import re
-        # Expect folder names that contain a trailing timestamp like
-        # ..._YYYY-MM-DD_HH-MM-SS (e.g. 900135_-_Factory_..._2025-11-11_14-31-12)
         m = re.search(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})", folder_name)
         if m:
-            ts_fragment = m.group(1)  # '2025-11-11_14-31-12'
+            ts_fragment = m.group(1)
             date_part, time_part = ts_fragment.split('_', 1)
-            # convert time dashes to colons -> '14:31:12'
             time_part = time_part.replace('-', ':')
             ts_dt = datetime.strptime(f"{date_part} {time_part}", '%Y-%m-%d %H:%M:%S')
             timestamp = ts_dt.strftime('%Y-%m-%d %H:%M:%S')
         else:
-            # Fallback: use the snapshot folder's modification time
             mtime = os.path.getmtime(output_dir)
             ts_dt = datetime.fromtimestamp(mtime)
             timestamp = ts_dt.strftime('%Y-%m-%d %H:%M:%S')
     except Exception:
-        # Last-resort fallback: now
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     # Laske KPI:t
@@ -1996,7 +1537,6 @@ def generate_simulation_report(output_dir):
     # Lataa transporterien metatiedot ja määritä värit
     transporters_info = load_transporter_info(output_dir)
     color_map = assign_transporter_colors(transporters_info)
-    # Tallenna color map reports-kansioon
     os.makedirs(reports_dir, exist_ok=True)
     try:
         import json
@@ -2005,27 +1545,24 @@ def generate_simulation_report(output_dir):
     except Exception:
         pass
 
-    # Luo kaaviot (pass color_map jotta värit lukittuvat koko raporttiin)
-    # Piirakkakaaviot luodaan jo aiemmin, käytä niitä
+    # Luo kaaviot
     transporter_pie_charts = []
-    for i in range(1, 30):  # Etsi transporterit 1-29
+    for i in range(1, 30):
         pie_path = os.path.join(reports_dir, f'transporter_{i}_phases_pie.png')
         if os.path.exists(pie_path):
             transporter_pie_charts.append(pie_path)
 
     temporal_load_chart = create_transporter_temporal_load_chart(output_dir, reports_dir, color_map=color_map)
-    task_distribution_chart = create_transporter_task_distribution_chart(output_dir, reports_dir, color_map=color_map)
-    batch_occupation_chart = create_transporter_batch_occupation_chart(output_dir, reports_dir, color_map=color_map)
     station_chart = create_station_usage_chart(output_dir, reports_dir)
-    leadtime_chart = create_batch_leadtime_chart(output_dir, reports_dir)
-    vertical_speed_chart = create_vertical_speed_change_chart(output_dir, reports_dir)
-    
+    leadtime_chart = None
+    vertical_speed_chart = None
+
     # Luo PDF
     pdf = EnhancedSimulationReport(customer, plant, timestamp)
     
     # ===== ETUSIVU =====
     pdf.add_page()
-    pdf.set_y(25)  # Pienennetty 40 -> 25
+    pdf.set_y(25)
     
     # Otsikko
     pdf.set_font('Arial', 'B', 28)
@@ -2036,7 +1573,7 @@ def generate_simulation_report(output_dir):
     # Asiakastiedot
     pdf.set_font('Arial', '', 14)
     pdf.set_text_color(52, 73, 94)
-    pdf.cell(0, 8, customer, ln=1, align='C')  # 10 -> 8
+    pdf.cell(0, 8, customer, ln=1, align='C')
     pdf.set_font('Arial', 'B', 12)
     pdf.cell(0, 7, plant, ln=1, align='C')  # 8 -> 7
     pdf.ln(4)  # 5 -> 4
@@ -2236,7 +1773,7 @@ def generate_simulation_report(output_dir):
             prod_pieces = prod.get('pieces', '-')
 
         pdf.add_page()
-        pdf.chapter_title('Customer and Plant Information')
+        pdf.chapter_title('Basic Information')
         pdf.ln(8)
         pdf.set_font(BODY_FONT_NAME, '', 12)
 
@@ -2366,6 +1903,18 @@ def generate_simulation_report(output_dir):
             pdf.write(7, f"{batches_per_hour:.2f} batches/hour")
             pdf.ln()
             pdf.set_font(BODY_FONT_NAME, '', 12)
+
+            # Add average cycle time
+            if batches_per_hour > 0:
+                seconds_per_batch = 3600 / batches_per_hour
+                m, s = divmod(seconds_per_batch, 60)
+                h, m = divmod(m, 60)
+                cycle_time_str = "{:02d}:{:02d}:{:02d}".format(int(h), int(m), int(s))
+                
+                pdf.cell(label_width, 7, "----> ", ln=0)
+                pdf.set_font(BODY_FONT_NAME, 'B', 12)
+                pdf.cell(value_width, 7, f"{cycle_time_str} average cycle time", ln=1)
+                pdf.set_font(BODY_FONT_NAME, '', 12)
         
         pdf.ln(8)  # Blank line
         
@@ -2402,11 +1951,11 @@ def generate_simulation_report(output_dir):
     pdf.add_page()
     pdf.chapter_title('Table of Contents')
     toc_items = [
-        ('Customer and Plant Information', '3'),
+        ('Basic Information', '3'),
         ('Executive Summary', '4'),
-        ('Transporter Performance Analysis', 'xx'),
-        ('Station Occupation Analysis', 'xx'),
-        ('Conclusions', 'xx'),
+        ('Transporter - Physics Profile', '5'),
+        ('Transporter - Performance', '6'),
+        ('Station Occupation Analysis', '7'),
         ('Appendix 1 - Stations', None),
         ('Appendix 2 - Transporters', None),
         ('Appendix 3 - Treatment programs', None),
@@ -2432,35 +1981,24 @@ def generate_simulation_report(output_dir):
     # ===== EXECUTIVE SUMMARY =====
     pdf.add_page()
     pdf.chapter_title('Executive Summary')
+    # Lyhyt yhteenveto (Moved here)
     pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    pdf.multi_cell(0, 6, 
-        "Key performance indicators from the simulation run. "
-        "These metrics provide a high-level overview of production efficiency, "
-        "resource utilization, and throughput.")
+    summary_text = (
+        f"The simulation successfully scheduled {metrics['total_batches']} batches with a total production time "
+        f"of {metrics['makespan_formatted']}. "
+        f"Average batch process time was {metrics['avg_lead_time_formatted']}. "
+    )
+    
+    # Lisää utilization-info
+    util_values = [metrics[k] for k in metrics.keys() if k.startswith('transporter_') and k.endswith('_utilization')]
+    if util_values:
+        avg_util = sum(util_values) / len(util_values)
+        summary_text += f"Transporter utilization averaged {avg_util:.1f}%. "
+    
+    summary_text += f"Bottleneck station: '{metrics['most_used_station_name']}' with {metrics['bottleneck_rate']:.1f} min/station capacity (utilization: {metrics['most_used_station_utilization']:.1f}%)."
+    
+    pdf.multi_cell(0, 6, summary_text)
     pdf.ln(5)
-
-    # Add production status cards (3 across)
-    cards_dir = os.path.join(output_dir, 'reports', 'images')
-    card_files = [
-        'card_annual_production.png',
-        'card_performance.png',
-        'card_workload_balance.png'
-    ]
-    cards_exist = all(os.path.exists(os.path.join(cards_dir, cf)) for cf in card_files)
-    if cards_exist:
-        y_start = pdf.get_y()
-        # Use same layout as KPI boxes: 3 cards across with consistent spacing
-        card_width_mm = 55  # Same width as KPI boxes
-        card_height_mm = 55  # Square cards
-        x_spacing = 62  # Same spacing as KPI boxes (55mm + 7mm gap)
-        x_start = pdf.l_margin
-        for idx, card_file in enumerate(card_files):
-            card_path = os.path.join(cards_dir, card_file)
-            x = x_start + idx * x_spacing
-            pdf.image(card_path, x=x, y=y_start, w=card_width_mm, h=card_height_mm)
-        # Move below the cards
-        pdf.set_y(y_start + card_height_mm + 8)
-    pdf.ln(3)
     
     # KPI-laatikot uudessa järjestyksessä
     kpi_data = []
@@ -2525,23 +2063,7 @@ def generate_simulation_report(output_dir):
     
     pdf.ln(5)
     
-    # Lyhyt yhteenveto
-    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    summary_text = (
-        f"The simulation successfully scheduled {metrics['total_batches']} batches with a total production time "
-        f"of {metrics['makespan_formatted']}. "
-        f"Average batch process time was {metrics['avg_lead_time_formatted']}. "
-    )
-    
-    # Lisää utilization-info
-    util_values = [metrics[k] for k in metrics.keys() if k.startswith('transporter_') and k.endswith('_utilization')]
-    if util_values:
-        avg_util = sum(util_values) / len(util_values)
-        summary_text += f"Transporter utilization averaged {avg_util:.1f}%. "
-    
-    summary_text += f"Bottleneck station: '{metrics['most_used_station_name']}' with {metrics['bottleneck_rate']:.1f} min/station capacity (utilization: {metrics['most_used_station_utilization']:.1f}%)."
-    
-    pdf.multi_cell(0, 6, summary_text)
+    # Summary text moved to top of page
     
     # ===== PER-TRANSPORTER PAGES =====
     # Color mapping is already written to reports/transporter_colors.json; per-transporter
@@ -2555,47 +2077,52 @@ def generate_simulation_report(output_dir):
 
     # ===== PERFORMANCE ANALYSIS =====
     pdf.add_page()
-    pdf.chapter_title('Performance Analysis - Transporters')
+    pdf.chapter_title('Transporter - Performance')
     
     pdf.section_title('Transporter Utilization')
     pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
     pdf.multi_cell(0, 6, 
         "Transporter utilization shows the percentage of time each transporter spent on different phases. "
-        "Phases include: Idle (0), Lifting (1), Moving (2-5), and Sinking (6). "
+        "Phases include: Idle (0), Moving to lifting station (1), Lifting (2), Moving to sinking station (3), Sinking (4). "
         "Higher productive time (non-idle) indicates better resource usage.")
     pdf.ln(3)
     
     # Näytä piirakkakaaviot rinnakkain (2 per rivi), keskitetty
     if transporter_pie_charts:
         charts_per_row = 2
-        # Pienennetään koko 70%:iin
-        available_width = (pdf.w - pdf.l_margin - pdf.r_margin - 10) * 0.7
-        chart_width = available_width / charts_per_row
+        # Käytetään koko sivun leveyttä
+        content_width = (pdf.w - pdf.l_margin - pdf.r_margin)
+        chart_width = (content_width - 10) / charts_per_row  # 10mm väli
         
-        # Laske keskitys
-        total_width = available_width + 10
-        page_width = pdf.w - pdf.l_margin - pdf.r_margin
-        left_margin = pdf.l_margin + (page_width - total_width) / 2
+        # Ryhmittele kuvat riveihin
+        rows = [transporter_pie_charts[i:i + charts_per_row] for i in range(0, len(transporter_pie_charts), charts_per_row)]
         
-        for idx, pie_chart in enumerate(transporter_pie_charts):
-            col = idx % charts_per_row
+        for row_idx, row_charts in enumerate(rows):
+            # Laske tämän rivin kuvien yhteisleveys
+            row_count = len(row_charts)
+            row_total_width = row_count * chart_width + (row_count - 1) * 10
             
-            # Uusi rivi joka toisen kuvan jälkeen
-            if col == 0 and idx > 0:
-                pdf.ln(5)
+            # Laske aloituskohta (x) jotta rivi on keskellä sivua
+            page_width = pdf.w - pdf.l_margin - pdf.r_margin
+            start_x = pdf.l_margin + (page_width - row_total_width) / 2
             
-            x_pos = left_margin + col * (chart_width + 10)
-            y_pos = pdf.get_y() if col == 0 else y_pos  # Säilytä y-positio rivillä
+            # Tallenna y-positio rivin alussa
+            y_start = pdf.get_y()
+            max_h = 0
             
-            with Image.open(pie_chart) as img:
-                img_w, img_h = img.size
-                h = (img_h / img_w) * chart_width
+            for col_idx, pie_chart in enumerate(row_charts):
+                x_pos = start_x + col_idx * (chart_width + 10)
+                
+                with Image.open(pie_chart) as img:
+                    img_w, img_h = img.size
+                    h = (img_h / img_w) * chart_width
+                    if h > max_h:
+                        max_h = h
+                
+                pdf.image(pie_chart, x=x_pos, y=y_start, w=chart_width)
             
-            pdf.image(pie_chart, x=x_pos, y=y_pos, w=chart_width)
-            
-            # Viimeisen kuvan jälkeen siirrä y-positio eteenpäin
-            if col == charts_per_row - 1 or idx == len(transporter_pie_charts) - 1:
-                pdf.set_y(y_pos + h)
+            # Siirry seuraavalle riville korkeimman kuvan mukaan
+            pdf.set_y(y_start + max_h + 5)
         
         pdf.ln(5)
     
@@ -2613,415 +2140,282 @@ def generate_simulation_report(output_dir):
         with Image.open(temporal_load_chart) as img:
             img_w, img_h = img.size
             h = (img_h / img_w) * w
-        pdf.image(temporal_load_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
+            
+            # Tarkista mahtuuko sivuun, jos ei, skaalaa pienemmäksi
+            space_left = pdf.h - pdf.b_margin - pdf.get_y()
+            if h > space_left:
+                scale_factor = space_left / h
+                w = w * scale_factor
+                h = space_left
+        
+        # Keskitä kuva
+        x_pos = pdf.l_margin + (pdf.w - pdf.l_margin - pdf.r_margin - w) / 2
+        pdf.image(temporal_load_chart, x=x_pos, y=pdf.get_y(), w=w)
         pdf.ln(h + 3)
     
-    # Tehtävien jakautuminen nostimien kesken
-    pdf.add_page()
-    pdf.section_title('Task Distribution')
-    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    pdf.multi_cell(0, 6,
-        "The chart below shows how tasks are distributed across transporters. "
-        "Uneven distribution may indicate imbalanced workload allocation.")
-    pdf.ln(2)
-    
-    if os.path.exists(task_distribution_chart):
-        w = pdf.w - pdf.l_margin - pdf.r_margin
-        with Image.open(task_distribution_chart) as img:
-            img_w, img_h = img.size
-            h = (img_h / img_w) * w
-        pdf.image(task_distribution_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
-        pdf.ln(h + 10)
 
-    # --- Transporter per-batch time analysis ---
-    pdf.section_title('Transporter Occupation by Batches')
+
+
+    # ===== STATION OCCUPATION ANALYSIS =====
+    pdf.add_page()
+    pdf.chapter_title('Station Occupation Analysis')
+    
+    # Generate radar chart
+    station_radar_chart = create_station_radar_chart(output_dir, reports_dir)
+    
     pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    pdf.multi_cell(0, 6,
-        "This chart shows the average active time each transporter spends per batch. "
-        "The calculation includes phases 1-4: Move to lifting station, Lifting, Move to sinking station, and Sinking. "
-        "Idle time (phase 0) is excluded. Higher values indicate transporters that handle more time-consuming tasks per batch.")
+    pdf.multi_cell(0, 6, 
+        "This chart shows the utilization of each station. "
+        "High utilization indicates potential bottlenecks.")
     pdf.ln(5)
     
-    if os.path.exists(batch_occupation_chart):
-        w = pdf.w - pdf.l_margin - pdf.r_margin
-        with Image.open(batch_occupation_chart) as img:
-            img_w, img_h = img.size
-            h = (img_h / img_w) * w
-        pdf.image(batch_occupation_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
-        pdf.ln(h + 10)
-
-    # --- Station Usage and following sections start on a new page ---
-    pdf.add_page()
-    pdf.chapter_title('Stations')
-    
-    # --- Stations Configuration Table ---
-    init_dir_abs = os.path.join(output_dir, '..', '..', 'initialization')
-    task_areas_csv = os.path.join(init_dir_abs, 'transporters _task_areas.csv')
-    
-    # Load stations from JSON
-    from load_stations_json import load_stations_from_json
-    stations_df = load_stations_from_json(init_dir_abs)
-    
-    # Load transporter task areas
-    task_areas = {}
-    if os.path.exists(task_areas_csv):
-        task_areas_df = pd.read_csv(task_areas_csv)
-        for _, tr in task_areas_df.iterrows():
-            tr_id = int(tr['Transporter_id'])
-            task_areas[tr_id] = {
-                'lift_min_100': int(tr['Min_Lift_Station_100']),
-                'lift_max_100': int(tr['Max_Lift_Station_100']),
-                'sink_min_100': int(tr['Min_Sink_Station_100']),
-                'sink_max_100': int(tr['Max_Sink_Station_100']),
-            }
-        
-        # Helper function to convert hex color to RGB tuple
-        def hex_to_rgb(hex_color):
-            """Convert hex color (#RRGGBB) to RGB tuple (R, G, B)"""
-            if hex_color.startswith('#'):
-                hex_color = hex_color[1:]
-            return (
-                int(hex_color[0:2], 16),
-                int(hex_color[2:4], 16),
-                int(hex_color[4:6], 16)
-            )
-        
-        pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-        pdf.multi_cell(0, 6,
-            "The table below shows the configuration of all stations in the production line, including their "
-            "tank assignments, positions, processing times, and equipment delays. 'X' symbols indicate transporter work zones "
-            "with colors matching each transporter. Stations with the same Group number are interchangeable in the process.")
-        pdf.ln(5)
-        
-        # Table configuration
-        pdf.set_font('Arial', 'B', 9)
-        pdf.set_fill_color(200, 200, 200)
-        
-        # Column widths - spans content width (210mm - 20mm left margin - 10mm right margin = 180mm total)
-        # Added Tank column, adjusted widths
-        col_widths = [14, 12, 12, 10, 10, 10, 10, 50, 16, 16, 16]
-        headers = ['Station', 'Tank', 'Group', 'L1', 'S1', 'L2', 'S2', 'Name', 'X Pos', 'Drop (s)', 'Device (s)']
-        
-        # Header row with colored transporter columns
-        for i, header in enumerate(headers):
-            # Color transporter headers to match their colors
-            if header == 'L1' or header == 'S1':
-                if color_map and 1 in color_map:
-                    r, g, b = hex_to_rgb(color_map[1])
-                    pdf.set_text_color(r, g, b)
-            elif header == 'L2' or header == 'S2':
-                if color_map and 2 in color_map:
-                    r, g, b = hex_to_rgb(color_map[2])
-                    pdf.set_text_color(r, g, b)
-            
-            pdf.cell(col_widths[i], 7, header, 1, 0, 'C', True)
-            
-            # Reset text color after colored headers
-            if header in ['L1', 'S1', 'L2', 'S2']:
-                pdf.set_text_color(0, 0, 0)
-        pdf.ln()
-        
-        # Data rows
-        pdf.set_font('Arial', '', 9)
-        for idx, row in stations_df.iterrows():
-            station_num = int(row['Number'])
-            tank_num = int(row['Tank'])
-            group_num = int(row['Group'])
-            
-            # Determine transporter zone symbols (all use 'X')
-            l1_has_mark = False  # Transporter 1 lift
-            s1_has_mark = False  # Transporter 1 sink
-            l2_has_mark = False  # Transporter 2 lift
-            s2_has_mark = False  # Transporter 2 sink
-            
-            if 1 in task_areas:
-                if task_areas[1]['lift_min_100'] <= station_num <= task_areas[1]['lift_max_100']:
-                    l1_has_mark = True
-                if task_areas[1]['sink_min_100'] <= station_num <= task_areas[1]['sink_max_100']:
-                    s1_has_mark = True
-            
-            if 2 in task_areas:
-                if task_areas[2]['lift_min_100'] <= station_num <= task_areas[2]['lift_max_100']:
-                    l2_has_mark = True
-                if task_areas[2]['sink_min_100'] <= station_num <= task_areas[2]['sink_max_100']:
-                    s2_has_mark = True
-            
-            # Alternate row background: white (False) and light gray (True)
-            fill = idx % 2 == 1
-            if fill:
-                pdf.set_fill_color(245, 245, 245)
-            
-            # Regular columns
-            pdf.cell(col_widths[0], 6, str(station_num), 1, 0, 'C', fill)
-            pdf.cell(col_widths[1], 6, str(tank_num), 1, 0, 'C', fill)
-            pdf.cell(col_widths[2], 6, str(group_num), 1, 0, 'C', fill)
-            
-            # Transporter zone columns with colored and bold 'X'
-            # L1 - Transporter 1 lift
-            if l1_has_mark and color_map and 1 in color_map:
-                r, g, b = hex_to_rgb(color_map[1])
-                pdf.set_text_color(r, g, b)
-                pdf.set_font('Arial', 'B', 9)  # Bold for X
-                pdf.cell(col_widths[3], 6, 'X', 1, 0, 'C', fill)
-                pdf.set_font('Arial', '', 9)  # Reset to regular
-                pdf.set_text_color(0, 0, 0)  # Reset to black
-            else:
-                pdf.cell(col_widths[3], 6, '', 1, 0, 'C', fill)
-            
-            # S1 - Transporter 1 sink
-            if s1_has_mark and color_map and 1 in color_map:
-                r, g, b = hex_to_rgb(color_map[1])
-                pdf.set_text_color(r, g, b)
-                pdf.set_font('Arial', 'B', 9)  # Bold for X
-                pdf.cell(col_widths[4], 6, 'X', 1, 0, 'C', fill)
-                pdf.set_font('Arial', '', 9)  # Reset to regular
-                pdf.set_text_color(0, 0, 0)
-            else:
-                pdf.cell(col_widths[4], 6, '', 1, 0, 'C', fill)
-            
-            # L2 - Transporter 2 lift
-            if l2_has_mark and color_map and 2 in color_map:
-                r, g, b = hex_to_rgb(color_map[2])
-                pdf.set_text_color(r, g, b)
-                pdf.set_font('Arial', 'B', 9)  # Bold for X
-                pdf.cell(col_widths[5], 6, 'X', 1, 0, 'C', fill)
-                pdf.set_font('Arial', '', 9)  # Reset to regular
-                pdf.set_text_color(0, 0, 0)
-            else:
-                pdf.cell(col_widths[5], 6, '', 1, 0, 'C', fill)
-            
-            # S2 - Transporter 2 sink
-            if s2_has_mark and color_map and 2 in color_map:
-                r, g, b = hex_to_rgb(color_map[2])
-                pdf.set_text_color(r, g, b)
-                pdf.set_font('Arial', 'B', 9)  # Bold for X
-                pdf.cell(col_widths[6], 6, 'X', 1, 0, 'C', fill)
-                pdf.set_font('Arial', '', 9)  # Reset to regular
-                pdf.set_text_color(0, 0, 0)
-            else:
-                pdf.cell(col_widths[6], 6, '', 1, 0, 'C', fill)
-            
-            # Rest of the columns
-            pdf.cell(col_widths[7], 6, str(row['Name']), 1, 0, 'L', fill)
-            pdf.cell(col_widths[8], 6, f"{int(row['X Position'])}", 1, 0, 'R', fill)
-            
-            # Drop (s) - bold if non-zero
-            drop_time = float(row['Dropping_Time'])
-            if drop_time != 0:
-                pdf.set_font('Arial', 'B', 9)
-                pdf.cell(col_widths[9], 6, f"{drop_time:.1f}", 1, 0, 'R', fill)
-                pdf.set_font('Arial', '', 9)
-            else:
-                pdf.cell(col_widths[9], 6, f"{drop_time:.1f}", 1, 0, 'R', fill)
-            
-            # Device (s) - bold if non-zero
-            device_delay = float(row['Device_delay'])
-            if device_delay != 0:
-                pdf.set_font('Arial', 'B', 9)
-                pdf.cell(col_widths[10], 6, f"{device_delay:.1f}", 1, 0, 'R', fill)
-                pdf.set_font('Arial', '', 9)
-            else:
-                pdf.cell(col_widths[10], 6, f"{device_delay:.1f}", 1, 0, 'R', fill)
-            
-            pdf.ln()
-        
-        pdf.ln(10)
-    
-    pdf.add_page()
-    pdf.section_title('Station Usage Frequency')
-    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    pdf.multi_cell(0, 6,
-        "This chart shows how many batches visited each station. Stations with high visit counts may be "
-        "potential bottlenecks and candidates for capacity expansion or process optimization.")
-    pdf.ln(5)
+    available_height = pdf.h - pdf.get_y() - pdf.b_margin
     
     if os.path.exists(station_chart):
-        # Laske kuvan korkeus suhteessa leveyteen
         w = pdf.w - pdf.l_margin - pdf.r_margin
+        x = pdf.l_margin
         with Image.open(station_chart) as img:
             img_w, img_h = img.size
             h = (img_h / img_w) * w
-        pdf.image(station_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
-        pdf.ln(h + 10)  # Kuvan korkeus + väli
-    
-    # ===== BATCH ANALYSIS =====
-    pdf.add_page()
-    pdf.chapter_title('Batch Analysis')
-    
-    pdf.section_title('Batch Lead Times')
-    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    pdf.multi_cell(0, 6,
-        "Lead time represents the total time from a batch entering the line to exiting. "
-        "Variations in lead time can indicate differences in treatment programs or resource contention.")
-    pdf.ln(5)
-    
-    if os.path.exists(leadtime_chart):
-        # Laske kuvan korkeus suhteessa leveyteen
+            
+            # If radar chart exists, limit height of the first chart to allow space
+            if station_radar_chart and os.path.exists(station_radar_chart):
+                max_h = available_height * 0.55
+                if h > max_h:
+                    scale = max_h / h
+                    h = max_h
+                    w = w * scale
+                    x = pdf.l_margin + (pdf.w - pdf.l_margin - pdf.r_margin - w) / 2
+        
+        pdf.image(station_chart, x=x, y=pdf.get_y(), w=w)
+        pdf.ln(h + 5)
+        
+    if station_radar_chart and os.path.exists(station_radar_chart):
         w = pdf.w - pdf.l_margin - pdf.r_margin
-        with Image.open(leadtime_chart) as img:
+        x = pdf.l_margin
+        with Image.open(station_radar_chart) as img:
             img_w, img_h = img.size
             h = (img_h / img_w) * w
-        pdf.image(leadtime_chart, x=pdf.l_margin, y=pdf.get_y(), w=w)
-        pdf.ln(h + 10)  # Kuvan korkeus + väli
-    
-    # Batch-taulukko
-    pdf.section_title('Batch Summary Table')
-    batch_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_batch_schedule.csv'))
-    batch_summary = batch_schedule.groupby('Batch').agg({
-        'EntryTime': 'min',
-        'ExitTime': 'max',
-        'Stage': 'count'
-    }).reset_index()
-    batch_summary['LeadTime_hrs'] = ((batch_summary['ExitTime'] - batch_summary['EntryTime']) / 3600).round(2)
-    batch_summary = batch_summary.rename(columns={'Stage': 'Stages'})
-    
-    pdf.set_font('Arial', 'B', 9)
-    pdf.set_fill_color(220, 220, 220)
-    
-    # Taulukon otsikot
-    col_widths = [20, 30, 30, 20, 30]
-    headers = ['Batch', 'Start (s)', 'End (s)', 'Stages', 'Lead Time (hrs)']
-    for i, header in enumerate(headers):
-        pdf.cell(col_widths[i], 8, header, 1, 0, 'C', True)
-    pdf.ln()
-    
-    # Data
-    pdf.set_font('Arial', '', 9)
-    for idx, row in batch_summary.head(15).iterrows():  # Näytä 15 ensimmäistä
-        pdf.cell(col_widths[0], 7, str(int(row['Batch'])), 1, 0, 'C')
-        pdf.cell(col_widths[1], 7, str(int(row['EntryTime'])), 1, 0, 'R')
-        pdf.cell(col_widths[2], 7, str(int(row['ExitTime'])), 1, 0, 'R')
-        pdf.cell(col_widths[3], 7, str(int(row['Stages'])), 1, 0, 'C')
-        pdf.cell(col_widths[4], 7, f"{row['LeadTime_hrs']:.2f}", 1, 0, 'R')
-        pdf.ln()
-    
-    if len(batch_summary) > 15:
-        pdf.ln(3)
-        pdf.set_font('Arial', 'I', 8)
-        pdf.cell(0, 5, f"... and {len(batch_summary) - 15} more batches", 0, 1, 'C')
-    
-    # ===== RECOMMENDATIONS =====
-    pdf.add_page()
-    pdf.chapter_title('Recommendations & Insights')
-    
-    pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-    
-    # Bottleneck-analyysi
-    pdf.section_title('Potential Bottlenecks')
-    station_schedule = pd.read_csv(os.path.join(output_dir, 'cp_sat', 'cp_sat_station_schedule.csv'))
-    usage_counts = station_schedule.groupby('Station').size().sort_values(ascending=False)
-    top_stations = usage_counts.head(3)
-    
-    bottleneck_text = "Stations with highest usage: "
-    for station, count in top_stations.items():
-        bottleneck_text += f"Station {int(station)} ({int(count)} visits), "
-    bottleneck_text = bottleneck_text.rstrip(', ') + ". "
-    bottleneck_text += "Consider adding capacity or optimizing process times at these stations."
-    pdf.multi_cell(0, 6, bottleneck_text)
-    pdf.ln(5)
-    
-    # Utilization-optimointi
-    pdf.section_title('Resource Optimization')
-    util_values = [(k, metrics[k]) for k in metrics.keys() if k.startswith('transporter_') and k.endswith('_utilization')]
-    if util_values:
-        min_util = min(util_values, key=lambda x: x[1])
-        max_util = max(util_values, key=lambda x: x[1])
-        
-        t_id_min = min_util[0].split('_')[1]
-        t_id_max = max_util[0].split('_')[1]
-        
-        util_text = (
-            f"Transporter {t_id_max} has the highest utilization ({max_util[1]:.1f}%), "
-            f"while Transporter {t_id_min} has the lowest ({min_util[1]:.1f}%). "
-            "Consider rebalancing workload or adjusting task assignments for more even utilization."
-        )
-        pdf.multi_cell(0, 6, util_text)
-    pdf.ln(5)
-    
-    # Lead time -vaihtelu
-    pdf.section_title('Lead Time Variability')
-    lead_times = batch_summary['LeadTime_hrs'].values
-    std_dev = np.std(lead_times)
-    cv = (std_dev / np.mean(lead_times)) * 100 if np.mean(lead_times) > 0 else 0
-    
-    leadtime_text = (
-        f"Batch lead time standard deviation is {std_dev:.2f} hours (CV = {cv:.1f}%). "
-    )
-    if cv > 20:
-        leadtime_text += "High variability suggests inconsistent processing times. Review treatment programs and station assignments."
-    else:
-        leadtime_text += "Low variability indicates consistent processing times across batches."
-    pdf.multi_cell(0, 6, leadtime_text)
-    pdf.ln(10)
-    
-    # Yleinen yhteenveto
-    pdf.section_title('Overall Assessment')
-    assessment = (
-        "The simulation demonstrates a feasible production schedule with acceptable resource utilization. "
-        "Key improvement opportunities include optimizing high-traffic stations and balancing transporter workloads. "
-        "Implementing these recommendations can improve throughput and reduce makespan by 10-20%."
-    )
-    pdf.multi_cell(0, 6, assessment)
-    
-    # ===== TECHNICAL APPENDIX =====
-    pdf.add_page()
-    pdf.chapter_title('Technical Appendix')
-    
-    pdf.section_title('Simulation Configuration')
-    pdf.set_font('Arial', '', 9)
-    
-    # Stations-taulukko (tiivistetty) - Load from JSON
-    from load_stations_json import load_stations_from_json
-    stations_df = load_stations_from_json(init_dir)
-    pdf.set_font('Arial', 'B', 9)
-    pdf.cell(0, 6, 'Stations Configuration', 0, 1)
-    pdf.set_font('Arial', '', 8)
-    pdf.multi_cell(0, 5, f"Total stations: {len(stations_df)}")
-    pdf.ln(3)
-    
-    # Transporters-info
-    transporter_phases = pd.read_csv(os.path.join(output_dir, 'reports', 'transporter_phases.csv'))
-    pdf.set_font('Arial', 'B', 9)
-    pdf.cell(0, 6, 'Transporter Configuration', 0, 1)
-    pdf.set_font('Arial', '', 8)
-    pdf.multi_cell(0, 5, f"Total transporters: {len(transporter_phases)}")
-    pdf.ln(3)
-    
-    # Solver info (jos saatavilla)
-    pdf.set_font('Arial', 'B', 9)
-    pdf.cell(0, 6, 'Solver Information', 0, 1)
-    pdf.set_font('Arial', '', 8)
-    # Yritä lukea Phase 2 status-tiedosto (ensin), sitten Phase 1; jos ei löydy, käytä fallback-heuristiikkaa
-    solver_status_text = "Status: Unknown"
-    try:
-        import json
-        phase2_status = os.path.join(output_dir, 'cp_sat', 'cp_sat_phase2_status.json')
-        phase1_status = os.path.join(output_dir, 'cp_sat', 'cp_sat_phase1_status.json')
-        if os.path.exists(phase2_status):
-            with open(phase2_status, 'r') as fh:
-                s = json.load(fh)
-                solver_status_text = f"Status: {s.get('status_name', 'UNKNOWN')} (Phase 2)"
-        elif os.path.exists(phase1_status):
-            with open(phase1_status, 'r') as fh:
-                s = json.load(fh)
-                solver_status_text = f"Status: {s.get('status_name', 'UNKNOWN')} (Phase 1)"
-        else:
-            # Fallback: jos konfliktit löytyvät, merkitse INFEASIBLE; jos hoist_schedule löytyy, merkitse SOLUTION FOUND
-            conflicts = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_conflicts.csv')
-            hoist = os.path.join(output_dir, 'cp_sat', 'cp_sat_hoist_schedule.csv')
-            if os.path.exists(conflicts):
-                solver_status_text = 'Status: INFEASIBLE (conflicts reported)'
-            elif os.path.exists(hoist):
-                solver_status_text = 'Status: SOLUTION FOUND (heuristic)'
-            else:
-                solver_status_text = 'Status: No solver output found'
-    except Exception:
-        solver_status_text = 'Status: Unknown (error reading status file)'
+            
+            # Fit to remaining space
+            space_left = pdf.h - pdf.get_y() - pdf.b_margin
+            if h > space_left:
+                scale = space_left / h
+                h = space_left
+                w = w * scale
+                x = pdf.l_margin + (pdf.w - pdf.l_margin - pdf.r_margin - w) / 2
+                
+        pdf.image(station_radar_chart, x=x, y=pdf.get_y(), w=w)
+        pdf.ln(h + 5)
 
-    pdf.multi_cell(0, 5, 
-        "Optimization engine: Google OR-Tools CP-SAT\n"
-        f"{solver_status_text}\n"
-        f"Total makespan: {metrics['makespan_seconds']} seconds")
+    # ===== APPENDIX 1 - STATIONS =====
+    pdf.add_page()
+    pdf.chapter_title('Appendix 1 - Stations')
+    
+    stations_json_path = os.path.join(output_dir, 'initialization', 'stations.json')
+    if os.path.exists(stations_json_path):
+        with open(stations_json_path, 'r') as f:
+            stations_data = json.load(f)
+            
+        stations = stations_data.get('stations', [])
+        
+        # Table configuration
+        # Adjust widths to fit page (A4 width ~210mm, margins 20+10=30mm, available ~180mm)
+        col_widths = [20, 85, 25, 25, 25]
+        headers = ['Number', 'Name', 'X Pos', 'Drop (s)', 'Devices (s)']
+        
+        # Header
+        pdf.set_font(BODY_FONT_NAME, 'B', 10)
+        pdf.set_fill_color(200, 200, 200)
+        for i, header in enumerate(headers):
+            pdf.cell(col_widths[i], 8, header, 1, 0, 'C', 1)
+        pdf.ln()
+        
+        # Rows
+        pdf.set_font(BODY_FONT_NAME, '', 9)
+        for station in stations:
+            # Check for page break
+            if pdf.get_y() > 270:
+                pdf.add_page()
+                # Re-print header
+                pdf.set_font(BODY_FONT_NAME, 'B', 10)
+                pdf.set_fill_color(200, 200, 200)
+                for i, header in enumerate(headers):
+                    pdf.cell(col_widths[i], 8, header, 1, 0, 'C', 1)
+                pdf.ln()
+                pdf.set_font(BODY_FONT_NAME, '', 9)
+
+            # Format floats
+            try:
+                drop_time = float(station.get('dropping_time', 0))
+                drop_str = f"{drop_time:.1f}"
+            except (ValueError, TypeError):
+                drop_str = "0.0"
+
+            try:
+                device_delay = float(station.get('device_delay', 0))
+                device_str = f"{device_delay:.1f}"
+            except (ValueError, TypeError):
+                device_str = "0.0"
+
+            pdf.cell(col_widths[0], 6, str(station.get('number', '')), 1, 0, 'C')
+            pdf.cell(col_widths[1], 6, str(station.get('name', '')), 1, 0, 'L')
+            pdf.cell(col_widths[2], 6, str(station.get('x_position', '')), 1, 0, 'C')
+            pdf.cell(col_widths[3], 6, drop_str, 1, 0, 'C')
+            pdf.cell(col_widths[4], 6, device_str, 1, 1, 'C')
+    else:
+        pdf.set_font(BODY_FONT_NAME, 'I', 11)
+        pdf.cell(0, 10, "Stations data not found.", 0, 1)
+
+    # ===== APPENDIX 2 - TRANSPORTERS =====
+    pdf.add_page()
+    pdf.chapter_title('Appendix 2 - Transporters')
+    
+    transporters_json_path = os.path.join(output_dir, 'initialization', 'transporters.json')
+    if os.path.exists(transporters_json_path):
+        with open(transporters_json_path, 'r') as f:
+            transporters_data = json.load(f)
+            
+        transporters = transporters_data.get('transporters', [])
+        
+        if transporters:
+            # Define rows (Attribute Label, Accessor Function)
+            rows_config = [
+                ('ID', lambda t: str(t.get('id', ''))),
+                ('Model', lambda t: str(t.get('model', ''))),
+                ('Start Station', lambda t: str(t.get('start_station', ''))),
+                ('X Accel Time (s)', lambda t: str(t.get('physics', {}).get('x_acceleration_time_s', ''))),
+                ('X Decel Time (s)', lambda t: str(t.get('physics', {}).get('x_deceleration_time_s', ''))),
+                ('X Max Speed (mm/s)', lambda t: str(t.get('physics', {}).get('x_max_speed_mm_s', ''))),
+                ('Z Total Dist (mm)', lambda t: str(t.get('physics', {}).get('z_total_distance_mm', ''))),
+                ('Z Slow Dry (mm)', lambda t: str(t.get('physics', {}).get('z_slow_distance_dry_mm', ''))),
+                ('Z Slow Wet (mm)', lambda t: str(t.get('physics', {}).get('z_slow_distance_wet_mm', ''))),
+                ('Z Slow End (mm)', lambda t: str(t.get('physics', {}).get('z_slow_end_distance_mm', ''))),
+                ('Z Slow Speed (mm/s)', lambda t: str(t.get('physics', {}).get('z_slow_speed_mm_s', ''))),
+                ('Z Fast Speed (mm/s)', lambda t: str(t.get('physics', {}).get('z_fast_speed_mm_s', ''))),
+                ('Avoid Dist (mm)', lambda t: str(t.get('physics', {}).get('avoid_distance_mm', ''))),
+            ]
+            
+            # Column widths
+            # First column (Labels): 60mm
+            # Data columns: Remaining width divided by num transporters (max 50mm per col)
+            label_col_width = 60
+            available_width = pdf.w - pdf.l_margin - pdf.r_margin - label_col_width
+            num_transporters = len(transporters)
+            data_col_width = min(50, available_width / num_transporters) if num_transporters > 0 else 50
+            
+            # Header Row (Transporter IDs)
+            pdf.set_font(BODY_FONT_NAME, 'B', 10)
+            pdf.set_fill_color(200, 200, 200)
+            
+            # Top-left cell
+            pdf.cell(label_col_width, 8, "Attribute", 1, 0, 'L', 1)
+            
+            for t in transporters:
+                t_name = f"Transporter {t.get('id', '?')}"
+                pdf.cell(data_col_width, 8, t_name, 1, 0, 'C', 1)
+            pdf.ln()
+            
+            # Data Rows
+            pdf.set_font(BODY_FONT_NAME, '', 10)
+            for label, accessor in rows_config:
+                pdf.set_font(BODY_FONT_NAME, 'B', 10)
+                pdf.cell(label_col_width, 7, label, 1, 0, 'L')
+                
+                pdf.set_font(BODY_FONT_NAME, '', 10)
+                for t in transporters:
+                    val = accessor(t)
+                    pdf.cell(data_col_width, 7, val, 1, 0, 'C')
+                pdf.ln()
+                
+        else:
+             pdf.set_font(BODY_FONT_NAME, 'I', 11)
+             pdf.cell(0, 10, "No transporters found in data.", 0, 1)
+             
+    else:
+        pdf.set_font(BODY_FONT_NAME, 'I', 11)
+        pdf.cell(0, 10, "Transporters data not found.", 0, 1)
+
+    # ===== APPENDIX 3 - TREATMENT PROGRAMS =====
+    pdf.add_page()
+    pdf.chapter_title('Appendix 3 - Treatment programs')
+    
+    # Load station names for mapping
+    station_names = {}
+    stations_json_path = os.path.join(output_dir, 'initialization', 'stations.json')
+    if os.path.exists(stations_json_path):
+        with open(stations_json_path, 'r') as f:
+            s_data = json.load(f)
+            for s in s_data.get('stations', []):
+                station_names[int(s.get('number'))] = s.get('name', '')
+
+    # Find treatment program files
+    init_dir = os.path.join(output_dir, 'initialization')
+    if os.path.exists(init_dir):
+        program_files = [f for f in os.listdir(init_dir) if f.startswith('treatment_program_') and f.endswith('.csv')]
+        program_files.sort()
+        
+        if not program_files:
+            pdf.set_font(BODY_FONT_NAME, 'I', 11)
+            pdf.cell(0, 10, "No treatment program files found.", 0, 1)
+        
+        for p_file in program_files:
+            pdf.section_title(f"Program: {p_file}")
+            
+            try:
+                df = pd.read_csv(os.path.join(init_dir, p_file))
+                
+                # Table config
+                # Columns: Stage, MinStat, MaxStat, Station Name, MinTime, MaxTime
+                # Widths: 15, 20, 20, 60, 25, 25 = 165
+                col_widths = [15, 20, 20, 60, 25, 25]
+                headers = ['Stage', 'Min', 'Max', 'Station Name', 'Min Time', 'Max Time']
+                
+                # Header
+                pdf.set_font(BODY_FONT_NAME, 'B', 10)
+                pdf.set_fill_color(200, 200, 200)
+                for i, header in enumerate(headers):
+                    pdf.cell(col_widths[i], 8, header, 1, 0, 'C', 1)
+                pdf.ln()
+                
+                # Rows
+                pdf.set_font(BODY_FONT_NAME, '', 9)
+                for _, row in df.iterrows():
+                    # Check page break
+                    if pdf.get_y() > 270:
+                        pdf.add_page()
+                        pdf.set_font(BODY_FONT_NAME, 'B', 10)
+                        pdf.set_fill_color(200, 200, 200)
+                        for i, header in enumerate(headers):
+                            pdf.cell(col_widths[i], 8, header, 1, 0, 'C', 1)
+                        pdf.ln()
+                        pdf.set_font(BODY_FONT_NAME, '', 9)
+                    
+                    min_stat = int(row.get('MinStat', 0))
+                    max_stat = int(row.get('MaxStat', 0))
+                    stat_name = station_names.get(min_stat, '')
+                    
+                    pdf.cell(col_widths[0], 6, str(row.get('Stage', '')), 1, 0, 'C')
+                    pdf.cell(col_widths[1], 6, str(min_stat), 1, 0, 'C')
+                    pdf.cell(col_widths[2], 6, str(max_stat), 1, 0, 'C')
+                    pdf.cell(col_widths[3], 6, str(stat_name), 1, 0, 'L')
+                    pdf.cell(col_widths[4], 6, str(row.get('MinTime', '')), 1, 0, 'C')
+                    pdf.cell(col_widths[5], 6, str(row.get('MaxTime', '')), 1, 1, 'C')
+                
+                pdf.ln(10)
+            except Exception as e:
+                pdf.set_font(BODY_FONT_NAME, 'I', 11)
+                pdf.cell(0, 10, f"Error reading {p_file}: {str(e)}", 0, 1)
+    else:
+        pdf.set_font(BODY_FONT_NAME, 'I', 11)
+        pdf.cell(0, 10, "Initialization directory not found.", 0, 1)
+
+
+    
+
+
+    
+
     
     # ===== APPENDIX 4 - FLOWCHART =====
     # Add matrix timeline pages (one per page, rotated 90 degrees counter-clockwise)
@@ -3029,16 +2423,6 @@ def generate_simulation_report(output_dir):
     matrix_pages = sorted([f for f in os.listdir(images_dir) if f.startswith('matrix_timeline_page_') and f.endswith('.png') and '_rotated' not in f])
     
     if matrix_pages:
-        # Add Appendix 4 title page
-        pdf.add_page()
-        pdf.chapter_title('Appendix 4 - Flowchart')
-        pdf.set_font(BODY_FONT_NAME, '', BODY_FONT_SIZE)
-        pdf.multi_cell(0, 6,
-            "Matrix timeline visualization showing batch flow through stations over time. "
-            "Each page displays a 5400-second (90-minute) window of the production schedule. "
-            "The flowchart is rotated 90 degrees counter-clockwise for optimal viewing.")
-        pdf.ln(5)
-        
         # Add each matrix page (one per PDF page, rotated)
         for i, matrix_page in enumerate(matrix_pages, 1):
             matrix_path = os.path.join(images_dir, matrix_page)
