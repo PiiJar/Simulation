@@ -165,11 +165,10 @@ def generate_goals(output_dir, treatment_programs=None, transfer_times=None):
     # Ramp-up produces nothing, so capacity must be calculated based on productive hours
     # Each shift has ramp-up at start and ramp-down at end
     shifts_per_year = weeks_per_year * days_per_week * shifts_per_day
-    # Estimate ramp times (these will be calculated more precisely during simulation)
-    estimated_ramp_up_per_shift_hours = 1.5  # ~1.5 hours typical ramp-up
-    estimated_ramp_down_per_shift_hours = 1.5  # ~1.5 hours typical ramp-down
-    total_ramp_hours_per_year = shifts_per_year * (estimated_ramp_up_per_shift_hours + estimated_ramp_down_per_shift_hours)
-    annual_steady_hours = annual_production_hours - total_ramp_hours_per_year
+    
+    # Use full annual hours for capacity calculation (standard approach)
+    # Ramp-up losses are considered part of the efficiency factor or analyzed separately
+    annual_steady_hours = annual_production_hours
     
     # Use steady hours for capacity calculation (since ramp-up produces no batches)
     annual_batches_per_hour = annual_batches / annual_steady_hours if annual_steady_hours > 0 else 0

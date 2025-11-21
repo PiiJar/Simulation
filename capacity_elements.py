@@ -45,21 +45,63 @@ def create_capacity_background(report_data_path, max_time_minutes=12, image_pixe
         with open(report_data_path, 'r') as f:
             data = json.load(f)
         
-        # Get simulated cycle time
-        simulated_cycle_time = data.get('simulation', {}).get('steady_state_avg_cycle_time_seconds', 0)
-        
-        # Get target cycle time from goals.json (not from report data)
-        target_cycle_time = 10 * 60  # Default fallback
-        goals_path = Path(report_data_path).parent.parent / 'initialization' / 'goals.json'
-        if goals_path.exists():
+        # Get simulated cycle time using the same logic as the summary page:
+        # 1) If available, compute from productive time: productive_time_seconds / productive_batches
+        # 2) Fallback to steady_state_avg_cycle_time_seconds
+        # 3) Fallback to batches_per_hour -> 3600 / bph
+        simulated_cycle_time = None
+        sim_section = data.get('simulation') or data.get('simulation_results') or {}
+        if sim_section:
+            # Try productive metrics first (this mirrors generate_simulation_report 'takt_time_seconds')
+            prod_batches = sim_section.get('productive_batches')
+            prod_time_sec = sim_section.get('productive_time_seconds')
             try:
-                with open(goals_path, 'r') as f:
-                    goals_data = json.load(f)
-                    target_pace = goals_data.get('target_pace', {})
-                    # Use the new annual target cycle time if available, otherwise fall back to average_batch_interval_seconds
-                    target_cycle_time = target_pace.get('target_cycle_time_seconds') or target_pace.get('average_batch_interval_seconds', 10 * 60)
-            except Exception as e:
-                print(f"Warning: Could not load target cycle time from goals.json: {e}")
+                if prod_batches and prod_time_sec and float(prod_batches) > 0 and float(prod_time_sec) > 0:
+                    simulated_cycle_time = float(prod_time_sec) / float(prod_batches)
+            except Exception:
+                simulated_cycle_time = None
+
+            # Fallback: steady-state average cycle time
+            if not simulated_cycle_time:
+                simulated_cycle_time = sim_section.get('steady_state_avg_cycle_time_seconds')
+
+            # Final fallback: batches_per_hour -> seconds per batch
+            if not simulated_cycle_time:
+                bph = None
+                if isinstance(sim_section.get('scaled_production_estimates'), dict):
+                    bph = sim_section.get('scaled_production_estimates', {}).get('batches_per_hour')
+                bph = bph or sim_section.get('batches_per_hour')
+                try:
+                    if bph and float(bph) > 0:
+                        simulated_cycle_time = 3600.0 / float(bph)
+                except Exception:
+                    simulated_cycle_time = None
+
+        # Get target cycle time from report_data (production_targets.target_cycle_time_seconds)
+        target_cycle_time = None
+        prod_targets = data.get('production_targets') or {}
+        if isinstance(prod_targets, dict):
+            target_cycle_time = prod_targets.get('target_cycle_time_seconds') or prod_targets.get('average_batch_interval_seconds')
+        elif isinstance(prod_targets, list) and len(prod_targets) > 0:
+            first = prod_targets[0]
+            if isinstance(first, dict):
+                target_cycle_time = first.get('target_cycle_time_seconds') or first.get('average_batch_interval_seconds')
+
+        # Fallback to older locations or goals.json if still missing
+        if not target_cycle_time:
+            # Check possible legacy key in root
+            target_cycle_time = data.get('target_cycle_time_seconds') or data.get('simulation', {}).get('target_cycle_time_seconds')
+        if not target_cycle_time:
+            target_cycle_time = 10 * 60
+            goals_path = Path(report_data_path).parent.parent / 'initialization' / 'goals.json'
+            if goals_path.exists():
+                try:
+                    with open(goals_path, 'r') as f:
+                        goals_data = json.load(f)
+                        target_pace = goals_data.get('target_pace', {})
+                        target_cycle_time = target_pace.get('target_cycle_time_seconds') or target_pace.get('average_batch_interval_seconds', 10 * 60)
+                except Exception as e:
+                    print(f"Warning: Could not load target cycle time from goals.json: {e}")
         
         # Get capacity constraints (three key cycle time limitations)
         capacity_constraints = data.get('capacity_constraints', {}).get('constraints', {})
@@ -92,6 +134,12 @@ def create_capacity_background(report_data_path, max_time_minutes=12, image_pixe
         point2_radius or 0,
         point3_radius or 0,
     )
+
+    # Log computed key values for diagnostics
+    try:
+        print(f"[capacity_elements] target_cycle_time={target_cycle_time}, simulated_cycle_time={simulated_cycle_time}")
+    except Exception:
+        pass
 
     # Axis endpoint: floor((max_needed + 120s) / 60s) * 60s
     # This ensures axes end at a full minute and extend at most 2 minutes beyond outermost circle

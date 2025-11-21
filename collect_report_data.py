@@ -89,6 +89,13 @@ def collect_report_data(output_dir: str):
             pass
         return 0
 
+    def seconds_to_hms(seconds):
+        """Convert seconds to HH:MM:SS string."""
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
     def calculate_stage_transfer_times(stage: int, min_station: int, max_station: int, df_transfer):
         """
         Calculate average transfer times for a specific stage.
@@ -467,13 +474,6 @@ def collect_report_data(output_dir: str):
             df_schedule = pd.read_csv(batch_schedule_path)
             
             if not df_schedule.empty:
-                
-                # Helper function for time formatting
-                def seconds_to_hms(seconds):
-                    h = int(seconds // 3600)
-                    m = int((seconds % 3600) // 60)
-                    s = int(seconds % 60)
-                    return f"{h:02d}:{m:02d}:{s:02d}"
                 
                 # Find first batch's completion time (ramp-up end)
                 # Steady state starts when first batch completes

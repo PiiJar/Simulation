@@ -421,61 +421,20 @@ def preprocess_for_cpsat(output_dir):
                 if productive_hours < 0:
                     productive_hours = 0
 
-                # --- KORJAUS: Laske vaadittu tahti (batches/h) perustuen vuositason tuottavaan aikaan ---
-                # 1. Hae vuositavoite ja vuositunnit goals.jsonista
-                annual_batches = goals.get("target_pace", {}).get("annual_batches", 0)
-                annual_hours = goals.get("target_pace", {}).get("annual_production_hours", 0)
+                # --- KORJAUS: ÄLÄ muuta tavoitteita ramp-upin perusteella ---
+                # Käytetään alkuperäisiä tavoitteita (Annual / Total Hours)
+                # Tämä pitää tavoitearvot johdonmukaisina ja selkeinä.
                 
-                # 2. Laske vuositason ramp-up hukka
-                # Oletus: 1 vuoro/pv, 5 pv/vko, 48 vko/vuosi (nämä pitäisi olla customer.jsonissa, mutta arvioidaan tässä)
-                # Parempi tapa: annual_hours / 8h = vuorojen määrä (jos 8h vuoro)
-                shifts_per_year = annual_hours / 8.0 if annual_hours > 0 else 240 # fallback 240
-                annual_ramp_loss_hours = shifts_per_year * (ramp_up / 3600.0)
-                
-                # 3. Todellinen vuotuinen tuottava aika
-                annual_productive_hours = annual_hours - annual_ramp_loss_hours
-                if annual_productive_hours <= 0:
-                    annual_productive_hours = 1 # estä nollalla jako
-
-                # 4. Uusi, kireämpi tahti (batches per productive hour)
-                required_batches_per_hour = annual_batches / annual_productive_hours
-
-                # 5. Laske simulaation tavoite tällä kireämmällä tahdilla
-                new_total_batches = int(round(required_batches_per_hour * productive_hours))
-                
-                # Laske cycle time tälle tahdille
-                cycle_time_sec = round(3600 / required_batches_per_hour, 2) if required_batches_per_hour > 0 else None
-
-                # PÄIVITÄ goals.json tavoitteet
-                current_total = goals.get("totals", {}).get("total_simulation_batches", 0)
-                goals["totals"]["total_simulation_batches"] = new_total_batches
-                
-                # Päivitä myös simulation_targets
-                if "simulation_targets" in goals:
-                    for target in goals["simulation_targets"]:
-                        old_target = target.get("target_batches", 0)
-                        if current_total > 0:
-                            # Skaalaa suhteessa uuteen kokonaismäärään
-                            # Huom: Jos annual_batches oli oikein, tämä pitäisi täsmätä suoraan
-                            new_target = int(round(old_target * (new_total_batches / current_total)))
-                        else:
-                            new_target = 0
-                        target["target_batches"] = new_target
-                        target["target_pieces"] = new_target * target.get("pieces_per_batch", 1)
-
-                # Kirjoita tiedot goals.json:iin
+                # Kirjoita vain ramp-up tiedot goals.json:iin, älä muuta tavoitteita
                 goals["target_pace"]["ramp_up_seconds"] = ramp_up
                 goals["target_pace"]["productive_hours"] = round(productive_hours, 3)
-                goals["target_pace"]["batches_per_hour_productive"] = round(required_batches_per_hour, 3)
-                goals["target_pace"]["cycle_time_seconds_productive"] = cycle_time_sec
-                goals["target_pace"]["annual_productive_hours"] = round(annual_productive_hours, 1)
                 goals["target_pace"]["ramp_up_calculation"] = {
                     "min_process_time": min_process_time,
                     "n_transfers": n_transfers,
                     "avg_transfer_time": avg_transfer_time,
                     "formula": "ramp_up = min_process_time + n_transfers * avg_transfer_time"
                 }
-                goals["target_pace"]["update_note"] = "Target recalculated based on REAL productive hours (annual - ramp_up_loss)"
+                goals["target_pace"]["update_note"] = "Ramp-up info added. Targets kept as Annual / Total Hours."
 
                 with open(goals_path, "w", encoding="utf-8") as f:
                     json.dump(goals, f, indent=2, ensure_ascii=False)

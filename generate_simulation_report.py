@@ -1751,9 +1751,10 @@ def generate_simulation_report(output_dir):
         m = int((productive_time_seconds % 3600) // 60)
         s = int(productive_time_seconds % 60)
         total_prod_time = f"{h:02d}:{m:02d}:{s:02d}"
-        ramp_up = '-'
-        steady = '-'
-        ramp_down = '-'
+        
+        ramp_up = sim_results.get('ramp_up_time', '-')
+        steady = sim_results.get('steady_state_time', '-')
+        ramp_down = sim_results.get('ramp_down_time', '-')
         
         # Read solver status
         solver_status = "Unknown"
@@ -1907,11 +1908,11 @@ def generate_simulation_report(output_dir):
             pdf.cell(label_width, 7, "----> ", ln=0)
             pdf.cell(value_width, 7, calculation_text, ln=1)
             
-            # Laske batches_per_hour ja cycle_time_seconds tuottavan ajan perusteella
-            batches_per_hour = (total_batches / (productive_time_seconds / 3600)) if productive_time_seconds > 0 else 0
+            # Laske batches_per_hour ja cycle_time_seconds VUOSITASOLLA
+            batches_per_hour = (total_batches / correct_total_hours) if correct_total_hours > 0 else 0
             pdf.set_font(BODY_FONT_NAME, '', 12)
             pdf.cell(label_width, 7, "----> ", ln=0)
-            text_before = f"{total_batches} / {productive_time_seconds/3600:.2f} = "
+            text_before = f"{total_batches:,.0f} / {correct_total_hours:,.1f} = "
             pdf.write(7, text_before)
             pdf.set_font(BODY_FONT_NAME, 'B', 12)
             pdf.write(7, f"{batches_per_hour:.2f} batches/hour")
@@ -1957,8 +1958,8 @@ def generate_simulation_report(output_dir):
             batches_per_hour = 0
         expected_batches = math.ceil(batches_per_hour * target_duration_hours)
         pdf.cell(label_width, 7, "Target batches:", ln=0)
-        pdf.write(7, f"{expected_batches} (Target time x Batches/hour)")
-        pdf.ln()
+        pdf.cell(value_width, 7, f"{expected_batches} (Target time x Batches/hour)", ln=1)
+        
         pdf.cell(label_width, 7, "Available units:", ln=0)
         pdf.cell(value_width, 7, f"{available_containers}", ln=1)
         pdf.cell(label_width, 7, "Total time:", ln=0)

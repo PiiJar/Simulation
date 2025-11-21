@@ -1012,6 +1012,7 @@ class CpSatPhase2Optimizer:
         self._write_transporter_schedule_snapshot()
         self._update_production_start_optimized()
         self._write_treatment_programs_optimized()
+        self._write_final_batch_schedule()
 
         if logger:
             logger.log("STEP", "STEP 2 COMPLETED: CP-SAT PHASE 2")
@@ -1154,6 +1155,64 @@ class CpSatPhase2Optimizer:
             pd.DataFrame(rows).to_csv(out_file, index=False)
             print(f"Tallennettu optimoitu ohjelma: {out_file}")
 
+    def _write_final_batch_schedule(self):
+        # Writes cp_sat_batch_schedule.csv with Phase 2 times
+        rows = []
+        bs_map = {}
+        for _, r in self.batch_sched.iterrows():
+            bs_map[(int(r["Batch"]), int(r["Stage"]))] = (int(r["Transporter"]), int(r["Station"]))
+
+        for _, brow in self.batches_df.iterrows():
+            b = int(brow["Batch"])
+            prog = self.programs[b]
+            tp = int(brow['Treatment_program'])
+            
+            for _, srow in prog.iterrows():
+                s = int(srow["Stage"])
+                if s == 0:
+                    continue
+                
+                if (b, s) not in bs_map:
+                    continue
+                    
+                t_id, station = bs_map[(b, s)]
+                # Check if variables exist (might be skipped in decomposition if not in window)
+                if (b, s) not in self.entry:
+                    continue
+
+                e = int(self.solver.Value(self.entry[(b, s)]))
+                x = int(self.solver.Value(self.exit[(b, s)]))
+                
+                rows.append({
+                    'Transporter': t_id,
+                    'Batch': b,
+                    'Treatment_program': tp,
+                    'Stage': s,
+                    'Station': station,
+                    'EntryTime': e,
+                    'ExitTime': x
+                })
+        
+        if not rows:
+            return
+
+        df = pd.DataFrame(rows)
+        df = df.sort_values(['Transporter', 'ExitTime'])
+        
+        cp_sat_dir = os.path.join(self.output_dir, "cp_sat")
+        result_path = os.path.join(cp_sat_dir, "cp_sat_batch_schedule.csv")
+        
+        # Handle decomposition append
+        from config import get_cpsat_phase2_decompose_append
+        do_append = get_cpsat_phase2_decompose_append()
+        if do_append and os.path.exists(result_path):
+            prev = pd.read_csv(result_path)
+            df = pd.concat([prev, df], ignore_index=True)
+            df = df.sort_values(['Transporter', 'ExitTime']).reset_index(drop=True)
+
+        df.to_csv(result_path, index=False)
+        print(f"Tallennettu lopullinen aikataulu: {result_path}")
+
 
 def optimize_phase_2(output_dir: str):
     """Pääfunktio Vaiheen 2 optimoinnille.
@@ -1224,7 +1283,7 @@ def optimize_phase_2(output_dir: str):
     # Tyhjennä aiemmat snapshotit yhdistelyä varten
     cp_dir = os.path.join(output_dir, "cp_sat")
     os.makedirs(cp_dir, exist_ok=True)
-    for f in ("cp_sat_hoist_schedule.csv", "cp_sat_station_schedule.csv"):
+    for f in ("cp_sat_hoist_schedule.csv", "cp_sat_station_schedule.csv", "cp_sat_batch_schedule.csv"):
         p = os.path.join(cp_dir, f)
         if os.path.exists(p):
             try:
