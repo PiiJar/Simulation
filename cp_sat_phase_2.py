@@ -849,6 +849,25 @@ class CpSatPhase2Optimizer:
                 if (b_prev, 1) in self.entry and (b_next, 1) in self.entry:
                     self.model.Add(self.entry[(b_prev, 1)] <= self.entry[(b_next, 1)])
 
+    def add_stage1_anchor_force_phase1_order(self):
+        """Pakota Phase-1 Stage1:n lähtöjärjestys sellaisena kuin snapshotissa kaikille erille.
+
+        Tämä lisää kovia rajoitteita: jos erä A oli Phase-1:n Stage1 EntryTime ennen B:tä,
+        niin Phase-2:n mallissa Entry_A_stage1 <= Entry_B_stage1.
+        Tämä vastaa käyttäjän toivetta, että Phase-2 kunnioittaa vaiheen 1 järjestystä.
+        """
+        stage1 = self.batch_sched[self.batch_sched["Stage"] == 1].copy()
+        if stage1.empty:
+            return
+        if "EntryTime" in stage1.columns:
+            stage1 = stage1.sort_values("EntryTime").reset_index(drop=True)
+        ordered = stage1["Batch"].astype(int).tolist()
+        for i in range(len(ordered) - 1):
+            b_prev = int(ordered[i])
+            b_next = int(ordered[i + 1])
+            if (b_prev, 1) in self.entry and (b_next, 1) in self.entry:
+                self.model.Add(self.entry[(b_prev, 1)] <= self.entry[(b_next, 1)])
+
     def set_objective(self):
         # Leksikografinen approksimaatio: w1*makespan + w3*stretch
         last_exits = []
@@ -916,6 +935,9 @@ class CpSatPhase2Optimizer:
         print(" - Ristikkäisten nostimien Avoid-rajoitteet lisätty")
         self.add_stage1_anchor_for_identical_programs()
         print(" - Stage 1 -ankkuri identtisille ohjelmille lisätty")
+        # Pakotetaan Phase-1 Stage1 järjestys säilymään kokonaisuudessaan
+        self.add_stage1_anchor_force_phase1_order()
+        print(" - Stage 1 järjestys pakotettu Phase-1:n mukaisesti (kovat rajoitteet)")
         self.set_objective()
         print(" - Tavoite asetettu")
 

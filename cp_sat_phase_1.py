@@ -306,6 +306,18 @@ class CpSatPhase1Optimizer:
                         exit_b2 = self.exit_times[(b2, s2)]
                         entry_b2 = self.entry_times[(b2, s2)]
 
+                        # Kevyt esikarsinta: jos molempien sallitut asemat ovat täsmälleen samat
+                        # ja joukko on pieni (<=2), pakotetaan deterministinen järjestys batch-id:n perusteella
+                        # sen sijaan, että luotaisiin raskaat Bool-muuttujat ja OnlyEnforceIf-parit.
+                        try:
+                            if allowed1 == allowed2 and len(allowed1) <= 2:
+                                # Pienissä, identtisissä domeeneissa järjestyksen vaihtelu ei tuota lisäarvoa
+                                # Pakotetaan b1 ennen b2 deterministisesti
+                                self.model.Add(entry_b1 <= entry_b2)
+                                continue
+                        except Exception:
+                            pass
+
                         # Sama asema? Vaihtoaika koskee vain tätä tapausta
                         same_station = self.model.NewBoolVar(f'same_station_{b1}_{s1}_{b2}_{s2}')
                         self.model.Add(station1 == station2).OnlyEnforceIf(same_station)

@@ -30,8 +30,26 @@
     "production_targets": {
       "annual": [
         {
-          "product_id": "XX",
-          "target_quantity": 210000,
+          "product_id": "X1",
+          "target_quantity": 63000,
+          "unit": "pieces",
+          "priority": 1
+        },
+        {
+          "product_id": "X2",
+          "target_quantity": 84000,
+          "unit": "pieces",
+          "priority": 1
+        },
+        {
+          "product_id": "X3",
+          "target_quantity": 42000,
+          "unit": "pieces",
+          "priority": 1
+        },
+        {
+          "product_id": "X4",
+          "target_quantity": 21000,
           "unit": "pieces",
           "priority": 1
         }
@@ -41,14 +59,86 @@
   },
   "products": [
     {
-      "id": "XX",
+      "id": "X1",
       "plant_id": "1",
-      "name": "--",
-      "description": "--",
+      "name": "X1",
+      "description": "Product X1",
       "properties": {
         "surface_area_mm2": 0,
         "weight_kg": 1.4,
         "treatment_program": 1,
+        "pieces_per_batch": 36,
+        "material": "--",
+        "coating_type": "--"
+      },
+      "dimensions": {
+        "length_mm": 500,
+        "width_mm": 200,
+        "height_mm": 100
+      },
+      "quality_requirements": {
+        "coating_thickness_min_um": 5.0,
+        "coating_thickness_max_um": 15.0,
+        "surface_finish": "Smooth"
+      }
+    },
+    {
+      "id": "X2",
+      "plant_id": "1",
+      "name": "X2",
+      "description": "Product X2",
+      "properties": {
+        "surface_area_mm2": 0,
+        "weight_kg": 1.4,
+        "treatment_program": 2,
+        "pieces_per_batch": 36,
+        "material": "--",
+        "coating_type": "--"
+      },
+      "dimensions": {
+        "length_mm": 500,
+        "width_mm": 200,
+        "height_mm": 100
+      },
+      "quality_requirements": {
+        "coating_thickness_min_um": 5.0,
+        "coating_thickness_max_um": 15.0,
+        "surface_finish": "Smooth"
+      }
+    },
+    {
+      "id": "X3",
+      "plant_id": "1",
+      "name": "X3",
+      "description": "Product X3",
+      "properties": {
+        "surface_area_mm2": 0,
+        "weight_kg": 1.4,
+        "treatment_program": 3,
+        "pieces_per_batch": 36,
+        "material": "--",
+        "coating_type": "--"
+      },
+      "dimensions": {
+        "length_mm": 500,
+        "width_mm": 200,
+        "height_mm": 100
+      },
+      "quality_requirements": {
+        "coating_thickness_min_um": 5.0,
+        "coating_thickness_max_um": 15.0,
+        "surface_finish": "Smooth"
+      }
+    },
+    {
+      "id": "X4",
+      "plant_id": "1",
+      "name": "X4",
+      "description": "Product X4",
+      "properties": {
+        "surface_area_mm2": 0,
+        "weight_kg": 1.4,
+        "treatment_program": 4,
         "pieces_per_batch": 36,
         "material": "--",
         "coating_type": "--"
