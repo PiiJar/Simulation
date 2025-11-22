@@ -41,8 +41,10 @@ def _ensure_dirs(*paths: str) -> None:
 
 def _calculate_change_time(transfer_df: pd.DataFrame) -> int:
     # Sama sääntö kuin vaiheessa 1: change_time = 2 * average_task_time
-    avg = int(round(float(transfer_df["TotalTaskTime"].mean())))
-    return 2 * avg
+    avg = float(transfer_df["TotalTaskTime"].mean())
+    val = int(round(2 * avg))
+    print(f"DEBUG: Phase 2 change_time calculation: avg={avg}, result={val}")
+    return val
 
 
 # ---------- Datan luku ----------
@@ -271,7 +273,10 @@ class CpSatPhase2Optimizer:
             b_id = int(b["Batch"])
             # Phase 1 ratkaisu on aina nopeampi -> ikkuna alkaa Entry:stä, ei ennen sitä
             start = int(entry_map.get(b_id, 0))  # EI miinusta marginia
-            end = int(exit_map.get(b_id, 48*3600)) + margin
+            # end = int(exit_map.get(b_id, 48*3600)) + margin
+            # KORJAUS: Vaihe 2 saa venyttää aikataulua vapaasti (deadheadit huomioiden)
+            # Asetetaan ylärajaksi 48h, jotta solverilla on tilaa löytää ratkaisu
+            end = 48 * 3600 
             start = max(0, start)
             end = min(48*3600, max(start + 1, end))
             windows[b_id] = (start, end)
@@ -294,8 +299,12 @@ class CpSatPhase2Optimizer:
                     if s <= 0:
                         continue
                     e = int(r["EntryTime"]); x = int(r["ExitTime"])
-                    a = max(0, e - m)
-                    bnd = min(48*3600, max(a+1, x + m))
+                    # a = max(0, e - m)
+                    # KORJAUS: Phase 1 on tiukin mahdollinen -> alaraja on e
+                    a = e
+                    # bnd = min(48*3600, max(a+1, x + m))
+                    # KORJAUS: Sallitaan vapaa venytys
+                    bnd = 48 * 3600
                     win[(b, s)] = (a, bnd)
                 except Exception:
                     continue
@@ -396,8 +405,12 @@ class CpSatPhase2Optimizer:
                         prev_exit = entry_t
                     else:
                         prev_exit = int(prev[1])
-                a = max(0, prev_exit - m)
-                bnd = min(48*3600, max(a + 1, entry_t + m))
+                # a = max(0, prev_exit - m)
+                # KORJAUS: Phase 1 on tiukin mahdollinen -> alaraja on prev_exit
+                a = prev_exit
+                # bnd = min(48*3600, max(a + 1, entry_t + m))
+                # KORJAUS: Sallitaan vapaa venytys
+                bnd = 48 * 3600
                 win[(int(b), int(s))] = (a, bnd)
         return win
 
@@ -424,8 +437,22 @@ class CpSatPhase2Optimizer:
         self.batch_sched = self.batch_sched.sort_values(["Batch", "Stage"]).reset_index(drop=True)
 
         # Luo batch-kohtaiset Stage 0 ExitTime muuttujat
+        # Hae Phase 1 EntryTime(1) ja käytä sitä alarajana Stage0Exitille (koska Stage0Exit = Entry(1) - transfer)
+        # Tai yksinkertaisemmin: Entry(1) >= Phase1_Entry(1).
+        # Rakennetaan kartta Phase 1 Entry-ajoista
+        p1_entry: Dict[Tuple[int, int], int] = {}
+        if "EntryTime" in self.batch_sched.columns:
+            for _, r in self.batch_sched.iterrows():
+                try:
+                    p1_entry[(int(r["Batch"]), int(r["Stage"]))] = int(r["EntryTime"])
+                except: pass
+
         for _, brow in self.batches_df.iterrows():
             b = int(brow["Batch"])
+            # Stage0Exit on käytännössä Entry(1) - transfer.
+            # Mutta koska emme tiedä transferia tässä (se on muuttuja/vakio),
+            # ja Entry(1) saa alarajan, Stage0Exit saa implisiittisesti järkevän arvon.
+            # Asetetaan 0 alarajaksi.
             self.stage0_exit[b] = self.model.NewIntVar(0, MAX_T, f"stage0_exit_{b}")
 
         # Luo päätösmuuttujat kaikille käsittelyvaiheille (Stage > 0)
@@ -439,8 +466,13 @@ class CpSatPhase2Optimizer:
                 min_t = int(prog.loc[prog["Stage"] == s, "MinTime_sec"].iloc[0])
                 max_t = int(prog.loc[prog["Stage"] == s, "MaxTime_sec"].iloc[0])
 
-                e = self.model.NewIntVar(0, MAX_T, f"entry_{b}_{s}")
-                x = self.model.NewIntVar(0, MAX_T, f"exit_{b}_{s}")
+                # KORJAUS: Käytä Phase 1 EntryTimea alarajana
+                # Koska Phase 1 on "tiukin mahdollinen", Phase 2 ei voi alittaa sitä.
+                # Relax slightly (-1) to avoid off-by-one rounding issues
+                lb_entry = max(0, p1_entry.get((b, s), 0) - 1)
+                
+                e = self.model.NewIntVar(lb_entry, MAX_T, f"entry_{b}_{s}")
+                x = self.model.NewIntVar(lb_entry + min_t, MAX_T, f"exit_{b}_{s}")
                 c = self.model.NewIntVar(min_t, max_t, f"calc_{b}_{s}")
                 self.entry[(b, s)] = e
                 self.exit[(b, s)] = x
@@ -933,11 +965,11 @@ class CpSatPhase2Optimizer:
         print(" - Nostinkohtaiset ei-päällekkäisyydet + deadhead lisätty")
         self.add_cross_transporter_avoid_constraints()
         print(" - Ristikkäisten nostimien Avoid-rajoitteet lisätty")
-        self.add_stage1_anchor_for_identical_programs()
-        print(" - Stage 1 -ankkuri identtisille ohjelmille lisätty")
+        # self.add_stage1_anchor_for_identical_programs()
+        # print(" - Stage 1 -ankkuri identtisille ohjelmille lisätty")
         # Pakotetaan Phase-1 Stage1 järjestys säilymään kokonaisuudessaan
-        self.add_stage1_anchor_force_phase1_order()
-        print(" - Stage 1 järjestys pakotettu Phase-1:n mukaisesti (kovat rajoitteet)")
+        # self.add_stage1_anchor_force_phase1_order()
+        print(" - Stage 1 järjestys pakotettu Phase-1:n mukaisesti (kovat rajoitteet) - DISABLED DEBUG")
         self.set_objective()
         print(" - Tavoite asetettu")
 

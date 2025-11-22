@@ -133,6 +133,9 @@ class CpSatPhase1Optimizer:
         xpos = pd.to_numeric(self.stations['X Position'], errors='coerce').fillna(0).round().astype(int)
         self.station_positions = dict(zip(self.stations['Number'].astype(int), xpos))
         
+        # Apulista Round Robin -kiinnitystä varten: järjestetyt erät
+        self.sorted_batch_ids = sorted(self.batches['Batch'].unique())
+
         # CP-SAT model
         self.model = cp_model.CpModel()
         self.solver = cp_model.CpSolver()
@@ -264,7 +267,7 @@ class CpSatPhase1Optimizer:
                 curr_station = self.station_assignments[(batch_id, curr_stage)]
                 next_station = self.station_assignments[(batch_id, next_stage)]
                 
-                # Vaatimusten mukaan siirtoaika on AINA täsmälleen average_task_time
+                # Vaatimusten mukaan siirtoaja on AINA täsmälleen average_task_time
                 curr_exit = self.exit_times[(batch_id, curr_stage)]
                 next_entry = self.entry_times[(batch_id, next_stage)]
                 self.model.Add(next_entry == curr_exit + self.average_task_time)
@@ -306,17 +309,9 @@ class CpSatPhase1Optimizer:
                         exit_b2 = self.exit_times[(b2, s2)]
                         entry_b2 = self.entry_times[(b2, s2)]
 
-                        # Kevyt esikarsinta: jos molempien sallitut asemat ovat täsmälleen samat
-                        # ja joukko on pieni (<=2), pakotetaan deterministinen järjestys batch-id:n perusteella
-                        # sen sijaan, että luotaisiin raskaat Bool-muuttujat ja OnlyEnforceIf-parit.
-                        try:
-                            if allowed1 == allowed2 and len(allowed1) <= 2:
-                                # Pienissä, identtisissä domeeneissa järjestyksen vaihtelu ei tuota lisäarvoa
-                                # Pakotetaan b1 ennen b2 deterministisesti
-                                self.model.Add(entry_b1 <= entry_b2)
-                                continue
-                        except Exception:
-                            pass
+                        # (Poistettu virheellinen optimointi, joka salli päällekkäisyyden identtisillä asemilla)
+                        # Aiemmin tässä oli lohko, joka pakotti järjestyksen mutta unohti change_time-välin.
+                        # Nyt annetaan alla olevan same_station -logiikan hoitaa kaikki tapaukset.
 
                         # Sama asema? Vaihtoaika koskee vain tätä tapausta
                         same_station = self.model.NewBoolVar(f'same_station_{b1}_{s1}_{b2}_{s2}')
@@ -499,6 +494,9 @@ class CpSatPhase1Optimizer:
         print("5. Lisätään asemaryhmien rajoitteet...")
         t0 = time.time(); self.add_station_group_constraints(); print(f"   -> {time.time() - t0:.2f}s")
 
+        print("6. Lisätään pullonkaulavihjeet...")
+        t0 = time.time(); self.add_bottleneck_hints(); print(f"   -> {time.time() - t0:.2f}s")
+
         self.set_objective()
         
         # Ratkaise malli
@@ -514,16 +512,16 @@ class CpSatPhase1Optimizer:
             print(f"   (CP-SAT) Säikeet: {_threads}")
         # Yleinen kytkin hakulokille (molemmille vaiheille): CPSAT_LOG_PROGRESS=1
         _log_progress = get_cpsat_log_progress()
-        if _log_progress:
-            self.solver.parameters.log_search_progress = True
-            self.solver.parameters.log_to_stdout = True
-            print("   (CP-SAT) Hakuloki: päällä (log_search_progress)")
+        # Pakota lokitus päälle, jotta käyttäjä näkee edistymisen
+        self.solver.parameters.log_search_progress = True
+        self.solver.parameters.log_to_stdout = True
+        print("   (CP-SAT) Hakuloki: pakotettu päälle (log_search_progress=True)")
 
         t0 = time.time(); status = self.solver.Solve(self.model); solve_time = time.time() - t0
         
         # Tulosta status
         status_name = self.solver.StatusName(status)
-        print(f"6. Ratkaisu valmis -> {solve_time:.2f}s, kokonaiskesto {time.time() - t_all:.2f}s")
+        print(f"7. Ratkaisu valmis -> {solve_time:.2f}s, kokonaiskesto {time.time() - t_all:.2f}s")
         print(f"   CP-SAT Phase 1 Status: {status_name}")
         # Kirjoita status-tiedosto cp_sat-kansioon, jotta raportit voivat lukea tarkan tilan
         try:
@@ -636,6 +634,163 @@ class CpSatPhase1Optimizer:
             print(f"Visualisoinnin luonti epäonnistui: {viz_err}")
         
         return df
+
+    def add_bottleneck_hints(self):
+        """
+        Analysoi pullonkaulat ja ratkaisee pienen aliongelman (Bottleneck Subproblem)
+        löytääkseen optimaalisen ajojärjestyksen.
+        """
+        print("Analysoidaan pullonkauloja ja ratkaistaan aliongelma...")
+        
+        # 1. Laske ryhmäkohtainen kuormitus ja kerää tehtävät
+        group_load = {} # {group_id: total_seconds}
+        group_tasks = {} # {group_id: [list of tasks]}
+        
+        # Apurakenne erän sisäisten pullonkaulavaiheiden linkitykseen
+        batch_bottleneck_stages = {} # {group_id: {batch_id: [list of (stage, duration, offset)]}}
+
+        for b_id, program in self.treatment_programs.items():
+            # Laske offset Stage 0:sta kuhunkin vaiheeseen (minimiaika)
+            current_offset = self.average_task_time # Stage 0 -> Stage 1 siirto
+            
+            # Järjestä vaiheet
+            sorted_stages = program[program['Stage'] > 0].sort_values('Stage')
+            
+            for _, row in sorted_stages.iterrows():
+                stage = int(row['Stage'])
+                duration = int(row['MinTime'])
+                
+                # Etsi ryhmä
+                stat = int(row['MinStat'])
+                group_id = self.station_groups.get(stat)
+                if group_id is None:
+                    # Etsi joku asema väliltä MinStat-MaxStat
+                    for s in range(int(row['MinStat']), int(row['MaxStat']) + 1):
+                        if s in self.station_groups:
+                            group_id = self.station_groups[s]
+                            break
+                
+                if group_id is not None:
+                    group_load[group_id] = group_load.get(group_id, 0) + duration
+                    
+                    if group_id not in batch_bottleneck_stages:
+                        batch_bottleneck_stages[group_id] = {}
+                    if b_id not in batch_bottleneck_stages[group_id]:
+                        batch_bottleneck_stages[group_id][b_id] = []
+                        
+                    batch_bottleneck_stages[group_id][b_id].append({
+                        'stage': stage,
+                        'duration': duration,
+                        'offset': current_offset
+                    })
+                
+                # Päivitä offset seuraavaa vaihetta varten
+                current_offset += duration + self.average_task_time
+
+        if not group_load:
+            return
+
+        # 2. Laske kapasiteetti
+        group_capacity = {g: len(s_list) for g, s_list in self.parallel_stations.items()}
+        
+        # 3. Etsi pullonkaula
+        normalized_load = {}
+        for g, load in group_load.items():
+            count = group_capacity.get(g, 1)
+            normalized_load[g] = load / count
+            
+        bottleneck_group = max(normalized_load, key=normalized_load.get)
+        max_norm_load = normalized_load[bottleneck_group]
+        capacity = group_capacity.get(bottleneck_group, 1)
+        
+        print(f"  Pääpullonkaula: Ryhmä {bottleneck_group} (Kapasiteetti: {capacity}, Kuorma/allas: {max_norm_load:.0f}s)")
+
+        # 4. Ratkaise aliongelma (Scheduling Subproblem)
+        print("  Ratkaistaan pullonkaulan aikataulutus...")
+        sub_model = cp_model.CpModel()
+        
+        # Muuttujat
+        horizon = int(sum(group_load.values()) * 2) # Riittävä horisontti
+        intervals = []
+        
+        # Tallennetaan viittaukset, jotta voidaan laskea hintit myöhemmin
+        # {batch_id: {'first_stage_start': var, 'first_stage_offset': int}}
+        batch_start_vars = {} 
+        
+        batches_in_bottleneck = batch_bottleneck_stages.get(bottleneck_group, {})
+        
+        for b_id, stages in batches_in_bottleneck.items():
+            # Järjestä vaiheet (varmuuden vuoksi)
+            stages.sort(key=lambda x: x['stage'])
+            
+            prev_end = None
+            prev_offset = 0
+            
+            for i, task in enumerate(stages):
+                stage = task['stage']
+                dur = task['duration']
+                offset = task['offset']
+                
+                start = sub_model.NewIntVar(0, horizon, f'start_{b_id}_{stage}')
+                end = sub_model.NewIntVar(0, horizon, f'end_{b_id}_{stage}')
+                interval = sub_model.NewIntervalVar(start, dur, end, f'interval_{b_id}_{stage}')
+                intervals.append(interval)
+                
+                # Jos tämä on erän ensimmäinen kerta pullonkaulalla, talleta tiedot hinttiä varten
+                if i == 0:
+                    batch_start_vars[b_id] = {
+                        'start_var': start,
+                        'offset': offset
+                    }
+                
+                # Jos erällä on useampi vaihe pullonkaulalla, varmista järjestys
+                if prev_end is not None:
+                    # Minimiviive vaiheiden välillä (offsettien erotus)
+                    gap = offset - (prev_offset + stages[i-1]['duration'])
+                    sub_model.Add(start >= prev_end + gap)
+                
+                prev_end = end
+                prev_offset = offset
+
+        # Rajoitteet: Kapasiteetti
+        if capacity == 1:
+            sub_model.AddNoOverlap(intervals)
+        else:
+            demands = [1] * len(intervals)
+            sub_model.AddCumulative(intervals, demands, capacity)
+            
+        # Tavoite: Minimoi valmistumisaika
+        # Yksinkertaistus: minimoi kaikkien aloitusaikojen summaa (tiivistää pakkaa)
+        all_starts = [v['start_var'] for v in batch_start_vars.values()]
+        sub_model.Minimize(sum(all_starts))
+        
+        # Ratkaise
+        sub_solver = cp_model.CpSolver()
+        sub_solver.parameters.max_time_in_seconds = 5.0
+        status = sub_solver.Solve(sub_model)
+        
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            print(f"  Aliongelma ratkaistu ({sub_solver.StatusName(status)}), objective: {sub_solver.ObjectiveValue()}")
+            
+            # 5. Aseta vihjeet
+            print("  Lisätään vihjeet pääongelmalle...")
+            
+            hints_added = 0
+            for b_id, data in batch_start_vars.items():
+                bn_start = sub_solver.Value(data['start_var'])
+                offset = data['offset']
+                
+                # Laske milloin erän pitäisi alkaa (Stage 0 Exit), jotta se osuisi tähän rakoon
+                ideal_batch_start = max(0, bn_start - offset)
+                
+                if b_id in self.batch_starts:
+                    self.model.AddHint(self.batch_starts[b_id], int(ideal_batch_start))
+                    hints_added += 1
+            
+            print(f"  Lisätty {hints_added} vihjettä.")
+                    
+        else:
+            print("  Aliongelmaa ei voitu ratkaista, ei vihjeitä.")
 
 def optimize_phase_1(output_dir):
     """Pääfunktio vaiheen 1 optimoinnille."""

@@ -33,9 +33,10 @@ def get_cpsat_phase1_max_time():
     Esimerkki: 300 = 5 minuuttia
     """
     try:
-        return float(os.getenv('CPSAT_PHASE1_MAX_TIME', '0') or '0')
+        # Oletusarvo muutettu 300 sekuntiin (5 min), jotta ei jää jumiin
+        return float(os.getenv('CPSAT_PHASE1_MAX_TIME', '300') or '300')
     except:
-        return 0.0
+        return 300.0
 
 def get_cpsat_phase1_threads():
     """Phase 1 säikeiden määrä (0 = automaattinen)
@@ -50,6 +51,19 @@ def get_cpsat_phase1_threads():
         return int(os.getenv('CPSAT_PHASE1_THREADS', '0') or '0')
     except:
         return 0
+
+def get_cpsat_phase1_round_robin():
+    """Käytetäänkö rinnakkaisasemien Round Robin -kiinnitystä Phase 1:ssä
+    
+    Jos päällä ('1'), optimoija ei saa valita rinnakkaisasemien (esim. 207, 208)
+    välillä vapaasti, vaan ne jaetaan erille vuorotellen (Round Robin).
+    
+    Oletus: '1' (käytössä)
+    Vaikutus: Nopeuttaa Phase 1:stä HUOMATTAVASTI, koska se poistaa
+              kombinatoriikkaa asemavalinnoista. Vähentää joustavuutta hieman,
+              mutta identtisillä asemilla tämä on yleensä haluttu käytös.
+    """
+    return os.getenv('CPSAT_PHASE1_ROUND_ROBIN', '1').strip().lower() in ('1', 'true', 'yes')
 
 # ============================================================================
 # CP-SAT PHASE 2 KONFIGURAATIOT
@@ -139,8 +153,7 @@ def get_cpsat_phase2_window_stage_margin_sec():
     
     Oletus: 300 sekuntia (5 minuuttia)
     Vaikutus: Tiukempi kuin batch-tason marginaali, koska stage on pienempi yksikkö.
-              Suurempi arvo = enemmän vapautta stage-tasolla.
-    Suositus: 300-600s, riippuen prosessin tarkkuusvaatimuksista
+              Suurempi arvo antaa enemmän joustavuutta, mutta voi hidastaa ratkaisua.
     """
     try:
         return int(float(os.getenv("CPSAT_PHASE2_WINDOW_STAGE_MARGIN_SEC", "300")))
@@ -148,9 +161,9 @@ def get_cpsat_phase2_window_stage_margin_sec():
         return 300
 
 def get_cpsat_phase2_overlap_mode():
-    """Päällekkäisyyden käsittelytapa aikaikkunoille
+    """Aikaikkunan päällekkäisyyden hallintatapa
     
-    Määrittää miten Phase 2 laskee aikaikkunat eri erille optimointia varten.
+    Määrittää kuinka eri erät voivat olla ajallisesti päällekkäin Phase 2:ssa.
     
     Vaihtoehdot:
     - 'phase1_with_margin': Käyttää Phase 1 ratkaisua + marginaalia (oletus, suositeltu)
